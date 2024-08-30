@@ -7,7 +7,7 @@ redirect_from:
   - /about.html
 ---
 
-I am a undergraduate student at UCLA interested in all types of AI!
+I am a undergraduate CS major at UCLA interested in all types of AI!
 
 <!-- ---
 permalink: /
