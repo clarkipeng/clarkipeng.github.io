@@ -1,7 +1,26 @@
 ---
-title: "Portfolio item number 1"
-excerpt: "Short description of portfolio item number 1<br/><img src='/images/500x300.png'>"
+title: "RL Hand+Target Project"
+excerpt: "Training a Hand and Arm to Pick up a Ball using Reinforcement Learning and Transfer learning (PPO) \n <br/><img width='500' height='300' src='/images/RLHandTarget.png' >"
 collection: portfolio
 ---
 
-This is an item in your portfolio. It can be have images or nice text. If you name the file .md, it will be parsed as markdown. If you name the file .html, it will be parsed as HTML. 
+2024 Summer Side Project
+
+[Repo](https://github.com/clarkipeng/RLHandTargetProject)
+
+
+
+# V0
+
+<iframe width="1440" height="609" src="https://www.youtube.com/embed/VgVqAIJxBvk?list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk" title="RLThrowingProject | Holding 1/5 (No velocity penalty)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+
+
+# V17
+
+<iframe width="1440" height="609" src="https://www.youtube.com/embed/_yNpbxOqKTU?list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk" title="RLThrowingProject | Holding 5/5 (All non-targeted auxiliary rewards)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+
+
+
+[Full Youtube Demonstration Playlist](https://www.youtube.com/watch?v=_yNpbxOqKTU&list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk&pp=gAQBiAQB)
