@@ -9,6 +9,12 @@ redirect_from:
 
 {% include base_path %}
 
+<object data="../files/2024_Clark Peng_CV.pdf" type="application/pdf" width="700px" height="700px">
+    <embed src="../files/2024_Clark Peng_CV.pdf">
+        <p>This browser does not support PDFs. Please download the PDF to view it: <a ref="../files/2024_Clark Peng_CV.pdf">Download PDF</a>.</p>
+    </embed>
+</object>
+
 Education
 ======
 * B.S.E in Computer Science, University of California Los Angeles, 2028 (expected)

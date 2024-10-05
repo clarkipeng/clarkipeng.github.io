@@ -4,7 +4,9 @@ excerpt: "Training a Hand and Arm to Pick up a Ball using Reinforcement Learning
 collection: portfolio
 ---
 
-2024 Summer Side Project
+2024 Summer Side Project.
+
+Made using Unity Physics Engine with MLAgents training interface. Models created in Blender.
 
 [Repo](https://github.com/clarkipeng/RLHandTargetProject)
 
