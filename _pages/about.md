@@ -13,9 +13,9 @@ Hello! My name is Clark Peng, and I am a first year undergrad CS student at UCLA
 
 My research interests include all aspects of AI. My current work at [UCLA's NLP Group](https://web.cs.ucla.edu/~kwchang/) involves improving physical commonsense in video generation and benchmarking video generation models. I am also actively involved many other AI projects on [kaggle](https://www.kaggle.com/werus23), where I've achieved top placements in competitions, and serve as a projects officer specializing in Competitions at ACM AI @ UCLA.
 
-Currently, I am working as a Generative AI Intern at Scale.ai, where I contribute to RLHF projects aiming at improving state-of-the-art models ability to reason and solve STEM-related problems.
+Currently, I am working as a Generative AI Intern at Scale.ai, where I work on RLHF projects aiming to improve state-of-the-art models ability to reason and solve difficult STEM problems.
 
-I also enjoy competitive programming and game creation!
+I also enjoy competitive programming and making games!
 
 <!-- ---
 permalink: /
