@@ -1,28 +1,13 @@
 ---
-title: "RL Hand+Target Project"
-excerpt: "Training a Hand and Arm to Pick up a Ball using Reinforcement Learning and Transfer learning (PPO) \n <br/><img width='500' height='300' src='/images/RLHandTarget.png' >"
+title: "Event Detection via Probability Density Function Regression"
+excerpt: "Novel Machine Learning method for Time Series Event Detection (ED) <br/><img width='500' height='300' src='/images/PDFR.gif' >"
 collection: portfolio
 ---
 
-2024 Summer Side Project.
+2024 Research Project.
 
-Made using Unity Physics Engine with MLAgents training interface. Models created in Blender.
+Idea originated from [this kaggle competition](https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/data).
 
-[Repo](https://github.com/clarkipeng/RLHandTargetProject)
+In our research on time series event detection, we developed a regression-based approach that predicts probability densities at event locations instead of relying on traditional segmentation methods. Our approach outperforms traditional segmentation techniques across various state-of-the-art networks and datasets, offering a more precise solution for specific event detection tasks.
 
-
-
-# V0
-
-<iframe width="1440" height="609" src="https://www.youtube.com/embed/VgVqAIJxBvk?list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk" title="RLThrowingProject | Holding 1/5 (No velocity penalty)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-
-
-
-# V17
-
-<iframe width="1440" height="609" src="https://www.youtube.com/embed/_yNpbxOqKTU?list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk" title="RLThrowingProject | Holding 5/5 (All non-targeted auxiliary rewards)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-
-
-
-
-[Full Youtube Demonstration Playlist](https://www.youtube.com/watch?v=_yNpbxOqKTU&list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk&pp=gAQBiAQB)
+[Repository Link](https://github.com/clarkipeng/EventDetectionPDF)
