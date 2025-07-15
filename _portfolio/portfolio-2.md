@@ -1,13 +1,20 @@
 ---
-title: "Event Detection via Probability Density Function Regression"
-excerpt: "Novel Machine Learning method for Time Series Event Detection (ED) <br/><img width='500' height='300' src='/images/PDFR.gif' >"
+title: "4D Fruit Merging Game"
+excerpt: "Created a 4D game + graphics engine from scratch \n <br/><img width='500' height='300' src='/images/gameImage.png' >"
 collection: portfolio
 ---
 
-2024 Research Project.
+<img width="200" alt="game photo" src="/images/gameImage.png"> 
+<!-- ![image](/images/gameImage.png) -->
+<!-- <img src="images/gameImage.png" alt="image" width="200"/>
+ -->
 
-Idea originated from [this kaggle competition](https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/data).
+2025 Summer Side Project. 
 
-In our research on time series event detection, we developed a regression-based approach that predicts probability densities at event locations instead of relying on traditional segmentation methods. Our approach outperforms traditional segmentation techniques across various state-of-the-art networks and datasets, offering a more precise solution for specific event detection tasks.
+Made using only OpenGL and C++.
 
-[Repository Link](https://github.com/clarkipeng/EventDetectionPDF)
+[Repository](https://github.com/clarkipeng/4dsuika) [Itch.io](https://werus23.itch.io/4d-suika)
+
+# Game Demo
+
+<iframe width="720" height="540" src="https://www.youtube.com/embed/5Bj0ZGDzans" title="4D Suika Game | Demo Video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
