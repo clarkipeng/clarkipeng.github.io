@@ -2,16 +2,16 @@
 permalink: /
 title: "Clark Peng"
 author_profile: true
-redirect_from: 
+redirect_from:
   - /about/
   - /about.html
 ---
 
-CS @ UCLA | AI @ Camfer (YC S24) | Research @ UCLA NLP| GenAI @ Scale
+CS @ UCLA | AI @ camfer | Research @ UCLA NLP | GenAI @ Scale
 
 Hello! I'm Clark, a Computer Science student at UCLA. I'm broadly interested in AI, and my passion is for building systems that bridge the gap between novel research and practical application.
 
-Currently, I'm an intern at Camfer (YC S24), where I'm fortunate to work with a brilliant team on building the world's first text-to-CAD foundation model. As a generalist on a small team, my work touches everything from standard full-stack engineering on our products to the core challenges of training and evaluating our models.
+Currently, I'm an intern at camfer, where I'm fortunate to work with a brilliant team on building the world's first text-to-CAD foundation model. As a generalist on a small team, my work touches everything from standard full-stack engineering on our products to the core challenges of training and evaluating our models.
 
 This role builds on my previous research experiences, where I've focused on controlling and understanding generative models across different domains. At the UCLA NLP Group, I worked on benchmarking physical commonsense in video generation. At the HMC Music Retrieval Lab, I explored how to steer music models using techniques like DPO and self-distillation.
 

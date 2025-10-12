@@ -4,9 +4,8 @@ collection: publications
 category: preprints
 permalink: /publications/VideoPhy2
 excerpt: 'A Challenging Action-Centric Physical Commonsense Evaluation in Video Generation'
-# date: 2025-
-venue: 'Arxiv'
-# weburl: 'https://videophy2.github.io/'
+date: 2025-03-11
+venue: 'Preprint'
 paperurl: 'https://arxiv.org/abs/2503.06800'
 ---
 

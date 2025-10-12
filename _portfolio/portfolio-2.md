@@ -1,20 +1,22 @@
 ---
-title: "4D Fruit Merging Game"
-excerpt: "Created a 4D game + graphics engine from scratch \n <br/><img width='500' height='300' src='/images/gameImage.png' >"
+title: "VideoPhy-2"
+excerpt: "Benchmark for evaluating physical commonsense in AI-generated videos with UCLA NLP and Google Research. <br/><img src='/images/videophy2_long.png' style='width: 100% !important; height: 400px !important; object-fit: cover !important; border-radius: 8px !important; max-width: 600px !important; display: block !important; margin: 1em auto !important;'>"
 collection: portfolio
 ---
 
-<img width="200" alt="game photo" src="/images/gameImage.png"> 
-<!-- ![image](/images/gameImage.png) -->
-<!-- <img src="images/gameImage.png" alt="image" width="200"/>
- -->
+2025 Research Project at [UCLA NLP](https://web.cs.ucla.edu/~kwchang/members/) in collaboration with [Google Research](https://research.google/).
 
-2025 Summer Side Project. 
+Video generative models have the potential to serve as general-purpose physical world simulators, but their understanding of real-world physics remains unclear. To address this, we introduce VideoPhy2, a benchmark designed to assess physical commonsense in AI-generated videos. Featuring 200 diverse actions and curated prompts, our dataset enables human evaluation of semantic accuracy, physics adherence, and rule grounding. Our findings reveal significant limitations, with top models achieving only 22% joint performance on challenging tasks, particularly struggling with conservation laws like mass and momentum. We also introduce VideoPhy2-eval, an automated evaluation tool for scalable assessment. VideoPhy2 highlights critical gaps in current models and paves the way for future improvements in physics-aware video generation.
 
-Made using only OpenGL and C++.
+<img src="/images/videophy2_long.png" alt="VideoPhy-2 Benchmark">
 
-[Repository](https://github.com/clarkipeng/4dsuika) [Itch.io](https://werus23.itch.io/4d-suika)
+<div class="link-badges">
+  <a href="https://github.com/clarkipeng/VideoPhy-2" class="badge-link" target="_blank">Repository</a>
+  <a href="https://arxiv.org/abs/2503.07248" class="badge-link" target="_blank">Paper</a>
+  <a href="https://videophy2.github.io/" class="badge-link" target="_blank">Project Website</a>
+</div>
 
-# Game Demo
-
-<iframe width="720" height="540" src="https://www.youtube.com/embed/5Bj0ZGDzans" title="4D Suika Game | Demo Video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div style="display: flex; justify-content: center; align-items: center; gap: 2em; margin: 2em 0;">
+  <img src="/images/ucla.png" alt="UCLA" style="width: 150px; height: auto; box-shadow: none; margin: 0;">
+  <img src="/images/google_research.png" alt="Google Research" style="width: 150px; height: auto; box-shadow: none; margin: 0;">
+</div>

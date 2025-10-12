@@ -10,3 +10,8 @@ Gemfile.lock
 # Ingore files created by npm
 node_modules
 package-lock.json
+
+# Local reference documents
+CLAUDE.md
+IMPROVEMENT_PLAN.md
+CHANGES_SUMMARY.md

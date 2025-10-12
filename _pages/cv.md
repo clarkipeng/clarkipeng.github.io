@@ -14,12 +14,6 @@ redirect_from:
         <p>This browser does not support PDFs. Please download the PDF to view it: <a ref="../files/ClarkPeng2025Resume.pdf">Download PDF</a>.</p>
     </embed>
 </object>
-
-Publications
-======
-  <ul>{% for post in site.publications reversed %}
-    {% include archive-single-cv.html %}
-  {% endfor %}</ul>
   
 <!-- Talks
 ======
