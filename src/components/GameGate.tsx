@@ -1,255 +1,375 @@
-import { useState, useEffect, useRef } from 'react';
-import { useTheme } from '../context/ThemeContext';
+import { useEffect, useRef, useMemo, createContext, useContext, Suspense } from 'react';
+import { Canvas, useFrame, useThree, useLoader } from '@react-three/fiber';
+import { Physics, RigidBody, BallCollider, TrimeshCollider } from '@react-three/rapier';
+// @ts-ignore
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
+import * as THREE from 'three';
 
-interface GameGateProps {
-    onWin: () => void;
-}
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+const CONFIG = {
+    camera: { baseDistance: 80 },
+    gravity: { strength: 30, tiltSpeed: 0.8 },
+    marble: { radius: 0.5, mass: 1, color: '#ff6688' },
+    maze: {
+        path: '/models/perplexus.stl',  // Using optimized version
+        color: '#6644ff',
+        scale: 12,
+        offsetY: 8,
+    },
+    container: { radius: 28, opacity: 0.15, color: '#88ccff' },
+    background: '#1a2838',
+};
 
-export const GameGate = ({ onWin }: GameGateProps) => {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [score, setScore] = useState(0);
-    const [gameOver, setGameOver] = useState(false);
-    const [gameStarted, setGameStarted] = useState(false);
-    // Use theme to style the game (optional, but nice)
-    // We force dark mode look for the "Hacker/Game" portal usually
+// ============================================================================
+// CONTEXT
+// ============================================================================
+type Ctx = { tiltX: React.MutableRefObject<number>; tiltZ: React.MutableRefObject<number> };
+const GameCtx = createContext<Ctx>(null!);
 
-    // Game constants
-    const CELL_SIZE = 20;
-    const GRID_SIZE = 20; // 20x20 grid
-    const TARGET_SCORE = 5;
+// ============================================================================
+// SHARED STATE
+// ============================================================================
+const worldRotation = { current: new THREE.Quaternion() };
+const ballPosition = { current: new THREE.Vector3(0, 10, 0) };
 
-    // Game state refs (to avoid closure staleness in game loop)
-    const snakeRef = useRef([{ x: 10, y: 10 }]);
-    const foodRef = useRef({ x: 15, y: 5 });
-    const dirRef = useRef({ x: 0, y: 0 });
-    const nextDirRef = useRef({ x: 0, y: 0 });
-    const speedRef = useRef(150);
-    const scoreRef = useRef(0);
-
-    // Initialize/Reset Game
-    const resetGame = () => {
-        snakeRef.current = [{ x: 10, y: 10 }];
-        spawnFood();
-        dirRef.current = { x: 0, y: 0 };
-        nextDirRef.current = { x: 0, y: 0 };
-        scoreRef.current = 0;
-        setScore(0);
-        setGameOver(false);
-        setGameStarted(false);
-    };
-
-    const spawnFood = () => {
-        const x = Math.floor(Math.random() * GRID_SIZE);
-        const y = Math.floor(Math.random() * GRID_SIZE);
-        foodRef.current = { x, y };
-    };
-
-    // Input handling
+// ============================================================================
+// KEYBOARD
+// ============================================================================
+const useKeys = () => {
+    const k = useRef({ w: false, a: false, s: false, d: false });
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            const { key } = e;
-            // Prevent scrolling with arrows
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(key)) {
-                e.preventDefault();
-            }
+        const dn = (e: KeyboardEvent) => { const key = e.key.toLowerCase(); if (key in k.current) k.current[key as keyof typeof k.current] = true; };
+        const up = (e: KeyboardEvent) => { const key = e.key.toLowerCase(); if (key in k.current) k.current[key as keyof typeof k.current] = false; };
+        window.addEventListener('keydown', dn);
+        window.addEventListener('keyup', up);
+        return () => { window.removeEventListener('keydown', dn); window.removeEventListener('keyup', up); };
+    }, []);
+    return k;
+};
 
-            if (gameOver) {
-                if (key === 'Enter' || key === ' ') resetGame();
-                return;
-            }
+// ============================================================================
+// TILT CONTROLLER
+// ============================================================================
+const TiltController = () => {
+    const keys = useKeys();
+    const { tiltX, tiltZ } = useContext(GameCtx);
 
-            if (!gameStarted && (key.startsWith('Arrow') || ['w', 'a', 's', 'd'].includes(key.toLowerCase()))) {
-                setGameStarted(true);
-            }
+    useFrame((state, dt) => {
+        const speed = CONFIG.gravity.tiltSpeed * dt;
+        const camera = state.camera;
 
-            const current = dirRef.current;
-            switch (key) {
-                case 'ArrowUp':
-                case 'w':
-                case 'W':
-                    if (current.y === 0) nextDirRef.current = { x: 0, y: -1 };
-                    break;
-                case 'ArrowDown':
-                case 's':
-                case 'S':
-                    if (current.y === 0) nextDirRef.current = { x: 0, y: 1 };
-                    break;
-                case 'ArrowLeft':
-                case 'a':
-                case 'A':
-                    if (current.x === 0) nextDirRef.current = { x: -1, y: 0 };
-                    break;
-                case 'ArrowRight':
-                case 'd':
-                case 'D':
-                    if (current.x === 0) nextDirRef.current = { x: 1, y: 0 };
-                    break;
-            }
+        const cameraDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+
+        const deltaQuat = new THREE.Quaternion();
+
+        if (keys.current.w) deltaQuat.multiply(new THREE.Quaternion().setFromAxisAngle(cameraRight, speed));
+        if (keys.current.s) deltaQuat.multiply(new THREE.Quaternion().setFromAxisAngle(cameraRight, -speed));
+        if (keys.current.a) deltaQuat.multiply(new THREE.Quaternion().setFromAxisAngle(cameraDir, speed));
+        if (keys.current.d) deltaQuat.multiply(new THREE.Quaternion().setFromAxisAngle(cameraDir, -speed));
+
+        worldRotation.current.premultiply(deltaQuat);
+        worldRotation.current.normalize();
+
+        const gravityDir = new THREE.Vector3(0, -1, 0).applyQuaternion(worldRotation.current);
+        tiltX.current = gravityDir.x;
+        tiltZ.current = gravityDir.z;
+    });
+    return null;
+};
+
+// ============================================================================
+// CAMERA (follows ball, fixed angle)
+// ============================================================================
+const Camera = () => {
+    const { camera } = useThree();
+    const zoom = useRef(1);
+
+    useEffect(() => {
+        const wheel = (e: WheelEvent) => {
+            e.preventDefault();
+            zoom.current = Math.max(0.4, Math.min(2, zoom.current + e.deltaY * 0.001));
         };
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [gameOver, gameStarted]);
-
-    // Game Loop
-    useEffect(() => {
-        if (gameOver) return;
-
-        const loop = setInterval(() => {
-            if (!gameStarted) return;
-
-            // Move
-            dirRef.current = nextDirRef.current;
-            const dir = dirRef.current;
-
-            // If strictly no movement yet (start), don't update
-            if (dir.x === 0 && dir.y === 0) return;
-
-            const head = { ...snakeRef.current[0] };
-            head.x += dir.x;
-            head.y += dir.y;
-
-            // Check collision with walls
-            if (head.x < 0 || head.x >= GRID_SIZE || head.y < 0 || head.y >= GRID_SIZE) {
-                setGameOver(true);
-                return;
-            }
-
-            // Check collision with self
-            if (snakeRef.current.some(segment => segment.x === head.x && segment.y === head.y)) {
-                setGameOver(true);
-                return;
-            }
-
-            // Move snake
-            snakeRef.current.unshift(head);
-
-            // Check Food
-            if (head.x === foodRef.current.x && head.y === foodRef.current.y) {
-                scoreRef.current += 1;
-                setScore(scoreRef.current);
-                spawnFood();
-
-                // Win Condition
-                if (scoreRef.current >= TARGET_SCORE) {
-                    onWin();
-                }
-            } else {
-                snakeRef.current.pop();
-            }
-
-        }, speedRef.current);
-
-        return () => clearInterval(loop);
-    }, [gameStarted, gameOver]);
-
-    // Render Loop
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        const render = () => {
-            // Clear
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Draw Grid (subtle)
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 1;
-            for (let i = 0; i <= GRID_SIZE; i++) {
-                ctx.beginPath();
-                ctx.moveTo(i * CELL_SIZE, 0);
-                ctx.lineTo(i * CELL_SIZE, GRID_SIZE * CELL_SIZE);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(0, i * CELL_SIZE);
-                ctx.lineTo(GRID_SIZE * CELL_SIZE, i * CELL_SIZE);
-                ctx.stroke();
-            }
-
-            // Draw Food
-            ctx.fillStyle = '#FF9D9D'; // Pink food
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = '#FF9D9D';
-            ctx.fillRect(
-                foodRef.current.x * CELL_SIZE + 2,
-                foodRef.current.y * CELL_SIZE + 2,
-                CELL_SIZE - 4,
-                CELL_SIZE - 4
-            );
-            ctx.shadowBlur = 0;
-
-            // Draw Snake
-            ctx.fillStyle = '#a78bfa'; // Purple/White theme
-            snakeRef.current.forEach((segment, index) => {
-                // Head is brighter
-                ctx.fillStyle = index === 0 ? '#FFFFFFFF' : '#a78bfa';
-                ctx.fillRect(
-                    segment.x * CELL_SIZE + 1,
-                    segment.y * CELL_SIZE + 1,
-                    CELL_SIZE - 2,
-                    CELL_SIZE - 2
-                );
-            });
-
-            // Draw Win/Game Over text handled by React overlay
-            requestAnimationFrame(render);
-        };
-
-        const animId = requestAnimationFrame(render);
-        return () => cancelAnimationFrame(animId);
+        window.addEventListener('wheel', wheel, { passive: false });
+        return () => window.removeEventListener('wheel', wheel);
     }, []);
 
+    useFrame(() => {
+        const dist = CONFIG.camera.baseDistance * zoom.current;
+
+        // Fixed offset behind and above the ball, rotated with world
+        const offset = new THREE.Vector3(0, dist * 0.4, dist).applyQuaternion(worldRotation.current);
+        const targetPos = ballPosition.current.clone().add(offset);
+
+        // Up vector follows world rotation
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(worldRotation.current);
+
+        camera.position.lerp(targetPos, 0.08);
+        camera.up.lerp(up, 0.08);
+        camera.lookAt(ballPosition.current);
+    });
+    return null;
+};
+
+// ============================================================================
+// MOUSE GRAVITY CONTROLLER (drag to tilt gravity / "move" the ball)
+// ============================================================================
+const MouseGravityController = () => {
+    const isDragging = useRef(false);
+    const lastMouse = useRef({ x: 0, y: 0 });
+    const { camera } = useThree();
+
+    useEffect(() => {
+        const mouseDown = (e: MouseEvent) => {
+            isDragging.current = true;
+            lastMouse.current = { x: e.clientX, y: e.clientY };
+        };
+
+        const mouseUp = () => {
+            isDragging.current = false;
+        };
+
+        const mouseMove = (e: MouseEvent) => {
+            if (!isDragging.current) return;
+
+            const dx = e.clientX - lastMouse.current.x;
+            const dy = e.clientY - lastMouse.current.y;
+            lastMouse.current = { x: e.clientX, y: e.clientY };
+
+            // Get camera's right and forward directions
+            const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            const cameraDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+
+            // Tilt gravity based on mouse movement
+            const speed = 0.003;
+            const deltaQuat = new THREE.Quaternion();
+
+            // Horizontal drag: rotate around camera's forward axis
+            deltaQuat.multiply(new THREE.Quaternion().setFromAxisAngle(cameraDir, dx * speed));
+            // Vertical drag: rotate around camera's right axis  
+            deltaQuat.multiply(new THREE.Quaternion().setFromAxisAngle(cameraRight, dy * speed));
+
+            worldRotation.current.premultiply(deltaQuat);
+            worldRotation.current.normalize();
+        };
+
+        window.addEventListener('mousedown', mouseDown);
+        window.addEventListener('mouseup', mouseUp);
+        window.addEventListener('mousemove', mouseMove);
+
+        return () => {
+            window.removeEventListener('mousedown', mouseDown);
+            window.removeEventListener('mouseup', mouseUp);
+            window.removeEventListener('mousemove', mouseMove);
+        };
+    }, [camera]);
+
+    return null;
+};
+
+// ============================================================================
+// GRAVITY ARROW
+// ============================================================================
+const GravityArrow = () => {
+    const arrowRef = useRef<THREE.Group>(null);
+
+    useFrame(() => {
+        if (!arrowRef.current) return;
+        const gravityDir = new THREE.Vector3(0, -1, 0).applyQuaternion(worldRotation.current);
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), gravityDir);
+        arrowRef.current.quaternion.copy(quaternion);
+    });
+
     return (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0f0f0f] text-white overflow-hidden">
-            <h1 className="font-h1 text-4xl mb-2 text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-purple-400">
-                SYSTEM LOCKED
-            </h1>
-            <p className="font-paragraph text-gray-400 mb-8 max-w-md text-center">
-                Collect <span className="text-white font-bold">{TARGET_SCORE}</span> data packets to authenticate and access the portfolio.
-            </p>
+        <group ref={arrowRef}>
+            <mesh position={[0, -5, 0]}>
+                <cylinderGeometry args={[0.3, 0.3, 10, 8]} />
+                <meshStandardMaterial color="#ff0000" emissive="#ff0000" emissiveIntensity={0.5} />
+            </mesh>
+            <mesh position={[0, -11, 0]}>
+                <coneGeometry args={[1, 3, 8]} />
+                <meshStandardMaterial color="#ff0000" emissive="#ff0000" emissiveIntensity={0.5} />
+            </mesh>
+        </group>
+    );
+};
 
-            <div className="relative border-4 border-gray-800 rounded-lg p-1 bg-[#1a1a1a] shadow-2xl">
-                <canvas
-                    ref={canvasRef}
-                    width={GRID_SIZE * CELL_SIZE}
-                    height={GRID_SIZE * CELL_SIZE}
-                    className="block"
-                />
+// ============================================================================
+// MARBLE (with Rapier physics)
+// ============================================================================
+const Marble = () => {
+    const { radius, color } = CONFIG.marble;
+    const rigidBodyRef = useRef<any>(null);
 
-                {(!gameStarted && !gameOver) && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                        <div className="text-center">
-                            <p className="font-mono text-sm text-gray-300 mb-2">Use Arrow Keys or WASD</p>
-                            <p className="font-bold text-white blink">Press Any Key to Start</p>
-                        </div>
-                    </div>
-                )}
+    useFrame((_, dt) => {
+        if (!rigidBodyRef.current) return;
 
-                {gameOver && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-red-900/50 backdrop-blur-sm">
-                        <div className="text-center">
-                            <h2 className="text-2xl font-bold text-red-500 mb-2">ACCESS DENIED</h2>
-                            <button
-                                onClick={resetGame}
-                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors"
-                            >
-                                RETRY AUTHENTICATION
-                            </button>
-                        </div>
-                    </div>
-                )}
+        // Track ball position for camera
+        const pos = rigidBodyRef.current.translation();
+        ballPosition.current.set(pos.x, pos.y, pos.z);
+
+        // Get gravity direction and apply force (delta time independent)
+        const gravityDir = new THREE.Vector3(0, -1, 0).applyQuaternion(worldRotation.current);
+        const force = gravityDir.multiplyScalar(CONFIG.gravity.strength * dt);
+
+        rigidBodyRef.current.applyImpulse({ x: force.x, y: force.y, z: force.z }, true);
+    });
+
+    return (
+        <RigidBody ref={rigidBodyRef} position={[0, 10, 0]} colliders={false} linearDamping={0.5} angularDamping={0.5}>
+            <BallCollider args={[radius]} />
+            <mesh castShadow>
+                <sphereGeometry args={[radius, 32, 32]} />
+                <meshStandardMaterial color={color} roughness={0.3} metalness={0.6} />
+            </mesh>
+        </RigidBody>
+    );
+};
+
+// ============================================================================
+// CONTAINER (glass sphere with collision)
+// ============================================================================
+const Container = () => {
+    const { radius, opacity, color } = CONFIG.container;
+
+    // Create inverted sphere vertices for inside collision
+    const { vertices, indices } = useMemo(() => {
+        const geo = new THREE.SphereGeometry(radius, 24, 24);
+        const positions = geo.attributes.position.array as Float32Array;
+
+        // Negate vertices to flip normals inward
+        const verts = new Float32Array(positions.length);
+        for (let i = 0; i < positions.length; i++) {
+            verts[i] = -positions[i];
+        }
+
+        // Reverse winding order
+        const idx = geo.index!.array;
+        const inds = new Uint32Array(idx.length);
+        for (let i = 0; i < idx.length; i += 3) {
+            inds[i] = idx[i];
+            inds[i + 1] = idx[i + 2];
+            inds[i + 2] = idx[i + 1];
+        }
+
+        return { vertices: verts, indices: inds };
+    }, [radius]);
+
+    return (
+        <RigidBody type="fixed" colliders={false}>
+            <TrimeshCollider args={[vertices, indices]} />
+            <mesh>
+                <sphereGeometry args={[radius, 48, 48]} />
+                <meshStandardMaterial color={color} transparent opacity={opacity} side={THREE.BackSide} />
+            </mesh>
+        </RigidBody>
+    );
+};
+
+// ============================================================================
+// MAZE (with Rapier Trimesh collision)
+// ============================================================================
+const MazeContent = () => {
+    const geo = useLoader(STLLoader, CONFIG.maze.path);
+
+    const { vertices, indices, visualGeo } = useMemo(() => {
+        const g = geo.clone();
+        g.center();
+        g.computeVertexNormals();
+
+        const scale = CONFIG.maze.scale;
+        const positions = g.attributes.position.array;
+
+        // Scale vertices
+        const verts = new Float32Array(positions.length);
+        for (let i = 0; i < positions.length; i++) {
+            verts[i] = positions[i] * scale;
+        }
+
+        // Get or generate indices
+        let inds: Uint32Array;
+        if (g.index) {
+            const arr = g.index.array;
+            inds = new Uint32Array(arr.length);
+            for (let i = 0; i < arr.length; i++) inds[i] = arr[i];
+        } else {
+            inds = new Uint32Array(g.attributes.position.count);
+            for (let i = 0; i < inds.length; i++) inds[i] = i;
+        }
+
+        // Visual geometry
+        const visual = geo.clone();
+        visual.center();
+        visual.computeVertexNormals();
+        visual.scale(scale, scale, scale);
+
+        console.log(`Maze loaded: ${g.attributes.position.count} vertices, ${inds.length / 3} triangles`);
+
+        return { vertices: verts, indices: inds, visualGeo: visual };
+    }, [geo]);
+
+    return (
+        <RigidBody type="fixed" position={[0, 0, CONFIG.maze.offsetY]} colliders={false}>
+            <TrimeshCollider args={[vertices, indices]} />
+            <mesh geometry={visualGeo} castShadow receiveShadow>
+                <meshStandardMaterial color={CONFIG.maze.color} roughness={0.4} metalness={0.5} side={THREE.DoubleSide} />
+            </mesh>
+        </RigidBody>
+    );
+};
+
+const Maze = () => (
+    <Suspense fallback={null}>
+        <MazeContent />
+    </Suspense>
+);
+
+// ============================================================================
+// SCENE
+// ============================================================================
+const Scene = () => (
+    <Physics gravity={[0, 0, 0]}>
+        <TiltController />
+        <Camera />
+        <MouseGravityController />
+        <GravityArrow />
+        <Container />
+        <Maze />
+        <Marble />
+    </Physics>
+);
+
+// ============================================================================
+// MAIN
+// ============================================================================
+interface Props { onWin: () => void }
+
+export const GameGate = ({ onWin }: Props) => {
+    const tiltX = useRef(0);
+    const tiltZ = useRef(0);
+
+    return (
+        <div style={{ width: '100vw', height: '100vh', background: CONFIG.background }}>
+            <div style={{ position: 'absolute', top: 24, left: 24, color: '#fff', zIndex: 10 }}>
+                <h2 style={{ margin: 0, fontSize: 28, fontWeight: 700 }}>GRAVITY SHIFT</h2>
+                <p style={{ margin: 4, opacity: 0.6 }}>WASD to tilt • Scroll to zoom</p>
             </div>
 
-            <div className="mt-8 font-mono text-xl">
-                AUTHENTICATION PROGRESS: {score} / {TARGET_SCORE}
-            </div>
+            <GameCtx.Provider value={{ tiltX, tiltZ }}>
+                <Canvas shadows>
+                    <color attach="background" args={[CONFIG.background]} />
+                    <ambientLight intensity={0.5} />
+                    <directionalLight position={[30, 40, 30]} intensity={1.5} castShadow />
+                    <pointLight position={[-20, -20, -20]} intensity={0.3} color="#4488ff" />
+                    <Scene />
+                </Canvas>
+            </GameCtx.Provider>
 
-            <div className="absolute bottom-8 text-xs text-gray-600">
-                SECURE GATEWAY v1.0.0 // CLARK_PENG_PORTFOLIO
-            </div>
+            <button onClick={onWin} style={{ position: 'absolute', top: 24, right: 24, padding: '12px 24px', background: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', zIndex: 100 }}>
+                Skip
+            </button>
         </div>
     );
 };
