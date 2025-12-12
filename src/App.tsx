@@ -6,6 +6,7 @@ import HomePage from './pages/HomePage';
 import PortfolioPage from './pages/PortfolioPage';
 import CVPage from './pages/CVPage';
 import PublicationsPage from './pages/PublicationsPage';
+import SmokePage from './pages/SmokePage';
 import { GameGate } from './components/GameGate';
 
 function App() {
@@ -13,11 +14,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user has already won the game
     const unlocked = localStorage.getItem('portfolio_unlocked');
-    if (unlocked === 'true') {
-      setAccessGranted(true);
-    }
+    if (unlocked === 'true') setAccessGranted(true);
     setIsLoading(false);
   }, []);
 
@@ -34,14 +32,14 @@ function App() {
         <GameGate onWin={handleWin} />
       ) : (
         <BrowserRouter>
-          <div className="flex flex-col min-h-screen items-start gap-2.5 p-2.5 
-                          bg-white dark:bg-[#0f0f0f] transition-colors duration-300">
+          <div className="flex flex-col min-h-screen items-start gap-2.5 p-2.5 bg-white dark:bg-[#0f0f0f] transition-colors duration-300">
             <Header />
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/portfolio" element={<PortfolioPage />} />
               <Route path="/cv" element={<CVPage />} />
               <Route path="/publications" element={<PublicationsPage />} />
+              <Route path="/smoke" element={<SmokePage />} />
             </Routes>
           </div>
         </BrowserRouter>
