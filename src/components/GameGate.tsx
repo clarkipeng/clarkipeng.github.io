@@ -7,6 +7,7 @@ interface FluidConfig {
 
 interface GameGateProps {
     onWin?: () => void;
+    onNextImage?: () => void;
     width?: number;
     height?: number;
     style?: React.CSSProperties;
@@ -14,11 +15,13 @@ interface GameGateProps {
     backgroundColor?: string;
     showUI?: boolean;
     initialImage?: string;
+    initialCaption?: string;
     config?: FluidConfig;
 }
 
 export const GameGate = ({
     onWin = () => { },
+    onNextImage,
     width,
     height,
     style,
@@ -26,6 +29,7 @@ export const GameGate = ({
     backgroundColor = '#1a1a1a',
     showUI = true,
     initialImage,
+    initialCaption,
     config = {}
 }: GameGateProps) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,8 +69,8 @@ export const GameGate = ({
         renderModeRef.current = newVal;
     };
 
-    const [velocityDecay, setVelocityDecay] = useState(config.velocityDecay ?? 0.2);
-    const velocityDecayRef = useRef(config.velocityDecay ?? 0.5);
+    const [velocityDecay, setVelocityDecay] = useState(config.velocityDecay ?? 0.9);
+    const velocityDecayRef = useRef(config.velocityDecay ?? 0.9);
     const handleVelocityDecayChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = parseFloat(e.target.value);
         setVelocityDecay(val);
@@ -81,14 +85,14 @@ export const GameGate = ({
         smokeDiffusionRateRef.current = val;
     };
 
-    const MINRES = 150;
+    const MINRES = 130;
     const UPSCALE = 2;
 
     const OMEGA = 1.7;
     const BRUSH_FORCE = 1.0;
     const SMOKE_TEMP = 100;
     const AMBIENT_TEMP = 20;
-    const NOISE_STRENGTH = 0.8;
+    const NOISE_STRENGTH = 10;
     const GRAVITY = 1;
     const BUOYANCY_FACTOR_TEMP = 0.1;
     const BUOYANCY_FACTOR_SMOKE = 0.0;//0.002;
@@ -170,8 +174,8 @@ export const GameGate = ({
         }
     }, [width, height]);
 
-    // Shared image loading logic
-    const loadImageToGrid = (img: HTMLImageElement) => {
+    // Shared image loading logic (with optional caption rendered as smoke text)
+    const loadImageToGrid = (img: HTMLImageElement, caption?: string) => {
         const containerW = width || window.innerWidth;
         const containerH = height || window.innerHeight;
         const cs = gridSizeRef.current.cellSize;
@@ -190,6 +194,19 @@ export const GameGate = ({
         const ctx = offscreen.getContext('2d');
         if (ctx) {
             ctx.drawImage(img, 0, 0, w, h);
+
+            // Draw caption text on top of image
+            if (caption) {
+                ctx.fillStyle = '#fff';
+                ctx.strokeStyle = '#ffffffff';
+                ctx.lineWidth = 0;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.font = `20px "Space Grotesk"`;
+                ctx.strokeText(caption, w / 2, h - 10);
+                ctx.fillText(caption, w / 2, h - 10);
+            }
+
             const data = ctx.getImageData(0, 0, w, h).data;
             const board = boardRef.current;
             for (let j = 0; j < h; j++) {
@@ -211,14 +228,63 @@ export const GameGate = ({
         img.src = URL.createObjectURL(file);
     };
 
-    // Autoload initialImage on mount
+    // Render text to grid as smoke
+    const loadTextToGrid = (text: string) => {
+        const containerW = width || window.innerWidth;
+        const containerH = height || window.innerHeight;
+        const cs = gridSizeRef.current.cellSize;
+        const maxCols = Math.floor(containerW / cs);
+        const maxRows = Math.floor(containerH / cs);
+
+        // Use fixed grid dimensions for text
+        const w = maxCols;
+        const h = maxRows;
+        initGrid(w, h);
+
+        const offscreen = document.createElement('canvas');
+        offscreen.width = w;
+        offscreen.height = h;
+        const ctx = offscreen.getContext('2d');
+        if (ctx) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, w, h);
+
+            // Draw text
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `14px "Space Grotesk"`;
+            ctx.fillText(text, w / 2, h / 2);
+
+            const data = ctx.getImageData(0, 0, w, h).data;
+            const board = boardRef.current;
+            for (let j = 0; j < h; j++) {
+                for (let i = 0; i < w; i++) {
+                    if (i > 0 && i < w - 1 && j > 0 && j < h - 1) {
+                        const idx = (j * w + i) * 4;
+                        const brightness = data[idx];
+                        if (brightness > 50) {
+                            board[i][j].smoke = { r: 255, g: 255, b: 255, t: SMOKE_TEMP };
+                            board[i][j].isSolid = true;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
     useEffect(() => {
-        if (!initialImage) return;
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => loadImageToGrid(img);
-        img.src = initialImage;
-    }, [initialImage]);
+        if (initialImage) {
+            // Load image with optional caption overlay
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => loadImageToGrid(img, initialCaption);
+            img.src = initialImage;
+        } else if (initialCaption) {
+            // Text-only mode (no image)
+            loadTextToGrid(initialCaption);
+        }
+    }, [initialImage, initialCaption]);
 
     // Shared helper: interpolate velocityX at position (x, y) in cell units
     // velocityX[i][j] is at (i + 0.5, j)
@@ -266,6 +332,9 @@ export const GameGate = ({
 
     const sampleSmoke = (x: number, y: number): { r: number; g: number; b: number; t: number } => {
         const smoke = boardRef.current;
+        const cols = gridSizeRef.current.cols;
+        const rows = gridSizeRef.current.rows;
+
         const sx = x - 0.5;
         const sy = y - 0.5;
         const i = Math.floor(sx);
@@ -273,10 +342,15 @@ export const GameGate = ({
         const fx = sx - i;
         const fy = sy - j;
 
-        const i0 = Math.max(0, Math.min(i, gridSizeRef.current.cols - 1));
-        const i1 = Math.max(0, Math.min(i + 1, gridSizeRef.current.cols - 1));
-        const j0 = Math.max(0, Math.min(j, gridSizeRef.current.rows - 1));
-        const j1 = Math.max(0, Math.min(j + 1, gridSizeRef.current.rows - 1));
+        const i0 = Math.max(0, Math.min(i, cols - 1));
+        const i1 = Math.max(0, Math.min(i + 1, cols - 1));
+        const j0 = Math.max(0, Math.min(j, rows - 1));
+        const j1 = Math.max(0, Math.min(j + 1, rows - 1));
+
+        // Safety check - verify cells exist
+        if (!smoke[i0]?.[j0] || !smoke[i1]?.[j0] || !smoke[i0]?.[j1] || !smoke[i1]?.[j1]) {
+            return { r: 0, g: 0, b: 0, t: AMBIENT_TEMP };
+        }
 
         return {
             r: (1 - fx) * (1 - fy) * smoke[i0][j0].smoke.r + fx * (1 - fy) * smoke[i1][j0].smoke.r + (1 - fx) * fy * smoke[i0][j1].smoke.r + fx * fy * smoke[i1][j1].smoke.r,
@@ -367,15 +441,24 @@ export const GameGate = ({
         let lastTime = performance.now();
 
         const physics = () => {
+            const cols = gridSizeRef.current.cols;
+            const rows = gridSizeRef.current.rows;
+
             const board = boardRef.current;
             const velocityX = velocityXRef.current;
             const velocityY = velocityYRef.current;
+
+            // Don't run physics until board is initialized
+            if (!board || board.length === 0 || !velocityX.length || !velocityY.length) {
+                requestAnimationFrame(physics);
+                return;
+            }
 
             const now = performance.now();
             const dt = Math.min((now - lastTime) / 1000, 0.1); // clamp to avoid instability
             lastTime = now;
 
-            const vel_decay = Math.exp(dt * Math.log(velocityDecayRef.current));
+            const vel_decay = dt * velocityDecayRef.current;//Math.exp(dt * Math.log(velocityDecayRef.current));
             // Linear diffusion rate based on slider
             const diffuse_rate = Math.max(0, Math.min(1, smokeDiffusionRateRef.current * dt));
 
@@ -389,8 +472,8 @@ export const GameGate = ({
             const newSmoke = tempSmokeRef.current;
 
             // Advect velocityX
-            for (let i = 0; i < gridSizeRef.current.cols; i++) {
-                for (let j = 0; j < gridSizeRef.current.rows; j++) {
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
                     // smoke calculation
                     const x = i + 0.5;
                     const y = j + 0.5;
@@ -401,7 +484,7 @@ export const GameGate = ({
                     newSmoke[i][j] = sampleSmoke(prevX, prevY);
 
                     // Position of this velocity sample in cell units
-                    if (i < gridSizeRef.current.cols - 1) {
+                    if (i < cols - 1) {
                         const x = i + 0.5;
                         const y = j;
 
@@ -412,11 +495,11 @@ export const GameGate = ({
 
                         let additional = 0;
                         if (brushModeRef.current == "havoc") {
-                            additional += (Math.random() * 2 - 1) * NOISE_STRENGTH;
+                            additional += (Math.random() * 2 - 1) * NOISE_STRENGTH * dt;
                         }
                         newVelocityX[i][j] = sampleVX(prevX, prevY) + additional;
                     }
-                    if (j < gridSizeRef.current.rows - 1) {
+                    if (j < rows - 1) {
                         const x = i;
                         const y = j + 0.5;
 
@@ -426,13 +509,14 @@ export const GameGate = ({
                         const prevY = y - vy * dt;
 
                         const s = sampleSmoke(prevX, prevY);
+
                         const reltemp = s.t - AMBIENT_TEMP;
                         const smoke_conc = s.r + s.g + s.b;
                         const buoyancy = (-BUOYANCY_FACTOR_TEMP * reltemp + BUOYANCY_FACTOR_SMOKE * smoke_conc) * GRAVITY;
 
                         let additional = buoyancy * dt
                         if (brushModeRef.current == "havoc") {
-                            additional += (Math.random() * 2 - 1) * NOISE_STRENGTH;
+                            additional += (Math.random() * 2 - 1) * NOISE_STRENGTH * dt;
                         }
                         newVelocityY[i][j] = sampleVY(prevX, prevY) + additional;
                     }
@@ -440,62 +524,68 @@ export const GameGate = ({
                 }
             }
             // Copy new velocities back
-            for (let i = 0; i < gridSizeRef.current.cols; i++) {
-                for (let j = 0; j < gridSizeRef.current.rows; j++) {
-                    if (i < gridSizeRef.current.cols - 1) {
-                        velocityX[i][j] = vel_decay * newVelocityX[i][j];
-                    }
-                    if (j < gridSizeRef.current.rows - 1) {
-                        velocityY[i][j] = vel_decay * newVelocityY[i][j];
-                    }
-
-                    // Enforce boundary conditions (Closed box)
-                    if (i === 0) velocityX[0][j] = 0;
-                    if (i === gridSizeRef.current.cols - 2) velocityX[gridSizeRef.current.cols - 2][j] = 0;
-                    if (j === 0) velocityY[i][0] = 0;
-                    if (j === gridSizeRef.current.rows - 2) velocityY[i][gridSizeRef.current.rows - 2] = 0;
-
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
                     const cell = board[i][j];
-                    if (cell.isSolid) continue;
+                    const prevSolid = cell.isSolid;
+                    if (i < cols - 1) {
+                        velocityX[i][j] = (1 - vel_decay) * newVelocityX[i][j];
+
+                        const rightSolid = board[i + 1][j].isSolid;
+                        if (prevSolid || rightSolid) velocityX[i][j] = 0;
+                    }
+                    if (j < rows - 1) {
+                        velocityY[i][j] = (1 - vel_decay) * newVelocityY[i][j];
+
+                        const bottomSolid = board[i][j + 1].isSolid;
+                        if (prevSolid || bottomSolid) velocityY[i][j] = 0;
+                    }
+
+                    if (prevSolid) continue;
 
                     //diffuse smoke from neighbors 
                     let laplacian = { r: 0, g: 0, b: 0, t: 0 }
+                    let tot = 0
                     if (!board[i - 1][j].isSolid) {
                         laplacian.r += newSmoke[i - 1][j].r;
                         laplacian.g += newSmoke[i - 1][j].g;
                         laplacian.b += newSmoke[i - 1][j].b;
                         laplacian.t += newSmoke[i - 1][j].t;
+                        tot++;
                     }
                     if (!board[i + 1][j].isSolid) {
                         laplacian.r += newSmoke[i + 1][j].r;
                         laplacian.g += newSmoke[i + 1][j].g;
                         laplacian.b += newSmoke[i + 1][j].b;
                         laplacian.t += newSmoke[i + 1][j].t;
+                        tot++;
                     }
                     if (!board[i][j - 1].isSolid) {
                         laplacian.r += newSmoke[i][j - 1].r;
                         laplacian.g += newSmoke[i][j - 1].g;
                         laplacian.b += newSmoke[i][j - 1].b;
                         laplacian.t += newSmoke[i][j - 1].t;
+                        tot++;
                     }
                     if (!board[i][j + 1].isSolid) {
                         laplacian.r += newSmoke[i][j + 1].r;
                         laplacian.g += newSmoke[i][j + 1].g;
                         laplacian.b += newSmoke[i][j + 1].b;
                         laplacian.t += newSmoke[i][j + 1].t;
+                        tot++;
                     }
                     cell.smoke = {
-                        r: newSmoke[i][j].r + (laplacian.r / 4 - newSmoke[i][j].r) * diffuse_rate,
-                        g: newSmoke[i][j].g + (laplacian.g / 4 - newSmoke[i][j].g) * diffuse_rate,
-                        b: newSmoke[i][j].b + (laplacian.b / 4 - newSmoke[i][j].b) * diffuse_rate,
-                        t: newSmoke[i][j].t + (laplacian.t / 4 - newSmoke[i][j].t) * diffuse_rate
+                        r: newSmoke[i][j].r + (laplacian.r / tot - newSmoke[i][j].r) * diffuse_rate,
+                        g: newSmoke[i][j].g + (laplacian.g / tot - newSmoke[i][j].g) * diffuse_rate,
+                        b: newSmoke[i][j].b + (laplacian.b / tot - newSmoke[i][j].b) * diffuse_rate,
+                        t: newSmoke[i][j].t + (laplacian.t / tot - newSmoke[i][j].t) * diffuse_rate
                     };
                 }
             }
             // === PRESSURE SOLVE ===
             for (let iter = 0; iter < 10; iter++) {
-                for (let i = 1; i < gridSizeRef.current.cols - 1; i++) {
-                    for (let j = 1; j < gridSizeRef.current.rows - 1; j++) {
+                for (let i = 1; i < cols - 1; i++) {
+                    for (let j = 1; j < rows - 1; j++) {
                         const cell = board[i][j];
                         if (cell.isSolid) continue;
 
@@ -518,9 +608,9 @@ export const GameGate = ({
                         const p = -div / s * OMEGA;
                         // Update velocities to cancel divergence
                         if (!board[i - 1][j].isSolid && i > 0) velocityX[i - 1][j] -= p;
-                        if (!board[i + 1][j].isSolid && i < gridSizeRef.current.cols - 1) velocityX[i][j] += p;
+                        if (!board[i + 1][j].isSolid && i < cols - 1) velocityX[i][j] += p;
                         if (!board[i][j - 1].isSolid && j > 0) velocityY[i][j - 1] -= p;
-                        if (!board[i][j + 1].isSolid && j < gridSizeRef.current.rows - 1) velocityY[i][j] += p;
+                        if (!board[i][j + 1].isSolid && j < rows - 1) velocityY[i][j] += p;
 
                         cell.div = div;
                     }
@@ -539,58 +629,81 @@ export const GameGate = ({
         if (!ctx) return;
 
         const render = () => {
-            const width = gridSizeRef.current.cols * gridSizeRef.current.cellSize;
-            const height = gridSizeRef.current.rows * gridSizeRef.current.cellSize;
+            const cols = gridSizeRef.current.cols;
+            const rows = gridSizeRef.current.rows;
+            const cellSize = gridSizeRef.current.cellSize;
+            const pixelWidth = cols * cellSize;
+            const pixelHeight = rows * cellSize;
             const board = boardRef.current;
+            const mode = renderModeRef.current;
 
-            // Clear
-            ctx.fillStyle = backgroundColor;
-            ctx.fillRect(0, 0, width, height);
+            // Create or reuse ImageData
+            const imageData = ctx.createImageData(pixelWidth, pixelHeight);
+            const data = imageData.data;
 
-            // Draw cells and velocity arrows
-            const drawSize = gridSizeRef.current.cellSize / UPSCALE;
-            for (let up_i = 0; up_i < gridSizeRef.current.cols * UPSCALE; up_i++) {
-                for (let up_j = 0; up_j < gridSizeRef.current.rows * UPSCALE; up_j++) {
+            // Parse background color to RGB
+            const bgR = parseInt(backgroundColor.slice(1, 3), 16) || 26;
+            const bgG = parseInt(backgroundColor.slice(3, 5), 16) || 26;
+            const bgB = parseInt(backgroundColor.slice(5, 7), 16) || 26;
+
+            // Fill pixels
+            const upscaleCols = cols * UPSCALE;
+            const upscaleRows = rows * UPSCALE;
+            const drawSize = cellSize / UPSCALE;
+
+            for (let up_i = 0; up_i < upscaleCols; up_i++) {
+                for (let up_j = 0; up_j < upscaleRows; up_j++) {
                     const i = Math.floor(up_i / UPSCALE);
                     const j = Math.floor(up_j / UPSCALE);
 
-                    if (i >= gridSizeRef.current.cols || j >= gridSizeRef.current.rows) continue;
+                    if (i >= cols || j >= rows) continue;
 
                     const cell = board[i][j];
-                    if (cell.isSolid) continue;
+                    let r = bgR, g = bgG, b = bgB;
 
-                    // Determine cell color
-                    const mode = renderModeRef.current;
-                    let color = backgroundColor;
+                    if (!cell.isSolid) {
+                        const cx = (up_i + 0.5) / UPSCALE;
+                        const cy = (up_j + 0.5) / UPSCALE;
 
-                    // Subsample coordinates
-                    const cx = (up_i + 0.5) / UPSCALE;
-                    const cy = (up_j + 0.5) / UPSCALE;
-
-                    if (mode === 'div') {
-                        const absdiv = Math.min(Math.abs(cell.div) * 100, 1);
-                        const r = Math.floor(128 - absdiv * 127);
-                        const b = Math.floor(128 + absdiv * 127);
-                        color = `rgb(${r}, 50, ${b})`;
-                    } else if (mode === 'vel') {
-                        const vx = sampleVX(cx, cy);
-                        const vy = sampleVY(cx, cy);
-                        const speed = Math.sqrt(vx * vx + vy * vy);
-
-                        const val = Math.min(speed * 0.01, 1);
-                        const r = Math.floor(26 + val * 200);
-                        const g = Math.floor(26 + val * 200);
-                        const b = Math.floor(26 + val * 229);
-                        color = `rgb(${r}, ${g}, ${b})`;
-                    } else if (mode === 'smoke') {
-                        const smoke = sampleSmoke(cx, cy);
-                        color = `rgba(${smoke.r}, ${smoke.g}, ${smoke.b}, 1)`;
+                        if (mode === 'div') {
+                            const absdiv = Math.min(Math.abs(cell.div) * 100, 1);
+                            r = Math.floor(128 - absdiv * 127);
+                            g = 50;
+                            b = Math.floor(128 + absdiv * 127);
+                        } else if (mode === 'vel') {
+                            const vx = sampleVX(cx, cy);
+                            const vy = sampleVY(cx, cy);
+                            const speed = Math.sqrt(vx * vx + vy * vy);
+                            const val = Math.min(speed * 0.01, 1);
+                            r = Math.floor(26 + val * 200);
+                            g = Math.floor(26 + val * 200);
+                            b = Math.floor(26 + val * 229);
+                        } else if (mode === 'smoke') {
+                            const smoke = sampleSmoke(cx, cy);
+                            r = Math.floor(smoke.r);
+                            g = Math.floor(smoke.g);
+                            b = Math.floor(smoke.b);
+                        }
                     }
 
-                    ctx.fillStyle = color;
-                    ctx.fillRect(up_i * drawSize, up_j * drawSize, drawSize, drawSize);
+                    // Fill the sub-pixel block
+                    const startPixelX = Math.floor(up_i * drawSize);
+                    const startPixelY = Math.floor(up_j * drawSize);
+                    const endPixelX = Math.floor((up_i + 1) * drawSize);
+                    const endPixelY = Math.floor((up_j + 1) * drawSize);
+
+                    for (let px = startPixelX; px < endPixelX; px++) {
+                        for (let py = startPixelY; py < endPixelY; py++) {
+                            const idx = (py * pixelWidth + px) * 4;
+                            data[idx] = r;
+                            data[idx + 1] = g;
+                            data[idx + 2] = b;
+                            data[idx + 3] = 255;
+                        }
+                    }
                 }
             }
+            ctx.putImageData(imageData, 0, 0);
 
             // Draw Arrows (Normal Grid)
             if (arrowIndicatorRef.current) {
@@ -626,13 +739,13 @@ export const GameGate = ({
                 for (let i = 0; i <= gridSizeRef.current.cols; i++) {
                     ctx.beginPath();
                     ctx.moveTo(i * gridSizeRef.current.cellSize, 0);
-                    ctx.lineTo(i * gridSizeRef.current.cellSize, height);
+                    ctx.lineTo(i * gridSizeRef.current.cellSize, pixelHeight);
                     ctx.stroke();
                 }
                 for (let i = 0; i <= gridSizeRef.current.rows; i++) {
                     ctx.beginPath();
                     ctx.moveTo(0, i * gridSizeRef.current.cellSize);
-                    ctx.lineTo(width, i * gridSizeRef.current.cellSize);
+                    ctx.lineTo(pixelWidth, i * gridSizeRef.current.cellSize);
                     ctx.stroke();
                 }
             }
@@ -670,6 +783,86 @@ export const GameGate = ({
                     isMouseOverRef.current = false;
                 }}
             />
+
+            {!showUI && (
+                <div className="absolute bottom-4 right-4 flex gap-2 z-50">
+                    {/* Custom icon dropdown for brush mode */}
+                    <div className="relative group">
+                        <button
+                            className="w-10 h-10 rounded-lg flex items-center justify-center
+                                       bg-gray-100 dark:bg-gray-800 
+                                       hover:bg-gray-200 dark:hover:bg-gray-700
+                                       transition-all duration-200
+                                       border border-gray-200 dark:border-gray-600"
+                            aria-label="Brush Mode"
+                        >
+                            {brushMode === 'vel' && (
+                                <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                </svg>
+                            )}
+                            {brushMode === 'smoke' && (
+                                <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                                </svg>
+                            )}
+                            {brushMode === 'havoc' && (
+                                <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" />
+                                </svg>
+                            )}
+                        </button>
+                        {/* Dropdown menu - appears on hover */}
+                        <div className="absolute bottom-full right-0 mb-2 hidden group-hover:flex flex-col gap-1
+                                        bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-600 p-1">
+                            <button
+                                onClick={() => { setBrushMode('vel'); brushModeRef.current = 'vel'; }}
+                                className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors
+                                           ${brushMode === 'vel' ? 'bg-blue-100 dark:bg-blue-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                                <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={() => { setBrushMode('smoke'); brushModeRef.current = 'smoke'; }}
+                                className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors
+                                           ${brushMode === 'smoke' ? 'bg-gray-200 dark:bg-gray-600' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                                <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={() => { setBrushMode('havoc'); brushModeRef.current = 'havoc'; }}
+                                className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors
+                                           ${brushMode === 'havoc' ? 'bg-cyan-100 dark:bg-cyan-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                                <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    {onNextImage && (
+                        <button
+                            onClick={onNextImage}
+                            className="w-10 h-10 rounded-lg flex items-center justify-center
+                                       bg-gray-100 dark:bg-gray-800 
+                                       hover:bg-gray-200 dark:hover:bg-gray-700
+                                       transition-all duration-200
+                                       border border-gray-200 dark:border-gray-600"
+                            aria-label="Next Image"
+                        >
+                            {/* Shuffle/refresh icon */}
+                            <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
+            )}
 
             {showUI && <>
                 <button onClick={onWin} style={{ position: 'absolute', top: 24, right: 24, padding: '12px 24px', background: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', zIndex: 100 }}>Skip</button>

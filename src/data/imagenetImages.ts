@@ -1,20 +1,26 @@
 // ImageNet images with captions
-// Format: [path, caption]
-export const imagenetImages: [string, string][] = [
-    ['/images/imagenet/American_lobster.jpeg', 'American Lobster'],
-    ['/images/imagenet/cock.jpeg', 'Rooster'],
-    ['/images/imagenet/drake.jpeg', 'Drake (Duck)'],
-    ['/images/imagenet/laptop.jpeg', 'Laptop'],
-    ['/images/imagenet/mountain_bike.jpeg', 'Mountain Bike'],
-    ['/images/imagenet/mouse.jpeg', 'Computer Mouse'],
-    ['/images/imagenet/notebook.jpeg', 'Notebook'],
-    ['/images/imagenet/pug.jpeg', 'Pug'],
-    ['/images/imagenet/shower_curtain.jpeg', 'Shower Curtain'],
-    ['/images/imagenet/unicycle.jpeg', 'Unicycle'],
+// image?: string (optional image path)
+// caption: string (required - shown as text, or overlaid on image)
+export interface ImagenetItem {
+    image?: string;
+    caption: string;
+}
+
+export const imagenetImages: ImagenetItem[] = [
+    { caption: 'My Favorite ImageNet-1K examples' },  // Text-only (no image)
+    { image: '/images/imagenet/American_lobster.jpeg', caption: 'American Lobster' },
+    { image: '/images/imagenet/cock.jpeg', caption: 'Rooster' },
+    { image: '/images/imagenet/drake.jpeg', caption: 'Drake (Duck)' },
+    { image: '/images/imagenet/laptop.jpeg', caption: 'Laptop' },
+    { image: '/images/imagenet/mountain_bike.jpeg', caption: 'Mountain Bike' },
+    { image: '/images/imagenet/mouse.jpeg', caption: 'Computer Mouse' },
+    { image: '/images/imagenet/notebook.jpeg', caption: 'Notebook' },
+    { image: '/images/imagenet/pug.jpeg', caption: 'Pug' },
+    { image: '/images/imagenet/shower_curtain.jpeg', caption: 'Shower Curtain' },
+    { image: '/images/imagenet/unicycle.jpeg', caption: 'Unicycle' },
 ];
 
-export const getRandomImagenetImage = (): { image: string; caption: string } | undefined => {
+export const getRandomImagenetImage = (): ImagenetItem | undefined => {
     if (imagenetImages.length === 0) return undefined;
-    const item = imagenetImages[Math.floor(Math.random() * imagenetImages.length)];
-    return { image: item[0], caption: item[1] };
+    return imagenetImages[Math.floor(Math.random() * imagenetImages.length)];
 };
