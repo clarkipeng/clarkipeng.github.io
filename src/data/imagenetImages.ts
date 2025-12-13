@@ -9,15 +9,15 @@ export interface ImagenetItem {
 export const imagenetImages: ImagenetItem[] = [
     { caption: 'My Favorite ImageNet-1K examples' },  // Text-only (no image)
     { image: '/images/imagenet/American_lobster.jpeg', caption: 'American Lobster' },
-    { image: '/images/imagenet/cock.jpeg', caption: 'Rooster' },
-    { image: '/images/imagenet/drake.jpeg', caption: 'Drake (Duck)' },
-    { image: '/images/imagenet/laptop.jpeg', caption: 'Laptop' },
+    // { image: '/images/imagenet/cock.jpeg', caption: 'Cock' },
+    { image: '/images/imagenet/drake.jpeg', caption: 'Drake' },
+    // { image: '/images/imagenet/laptop.jpeg', caption: 'Laptop' },
     { image: '/images/imagenet/mountain_bike.jpeg', caption: 'Mountain Bike' },
-    { image: '/images/imagenet/mouse.jpeg', caption: 'Computer Mouse' },
+    // { image: '/images/imagenet/mouse.jpeg', caption: 'Computer Mouse' },
     { image: '/images/imagenet/notebook.jpeg', caption: 'Notebook' },
     { image: '/images/imagenet/pug.jpeg', caption: 'Pug' },
     { image: '/images/imagenet/shower_curtain.jpeg', caption: 'Shower Curtain' },
-    { image: '/images/imagenet/unicycle.jpeg', caption: 'Unicycle' },
+    // { image: '/images/imagenet/unicycle.jpeg', caption: 'Unicycle' },
 ];
 
 export const getRandomImagenetImage = (): ImagenetItem | undefined => {

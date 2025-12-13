@@ -16,6 +16,7 @@ interface GameGateProps {
     showUI?: boolean;
     initialImage?: string;
     initialCaption?: string;
+    defaultBrushMode?: 'vel' | 'smoke' | 'havoc';
     config?: FluidConfig;
 }
 
@@ -30,6 +31,7 @@ export const GameGate = ({
     showUI = true,
     initialImage,
     initialCaption,
+    defaultBrushMode = 'vel',
     config = {}
 }: GameGateProps) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -46,8 +48,8 @@ export const GameGate = ({
         setArrowIndicator(e.target.value);
         arrowIndicatorRef.current = e.target.value == 'on';
     };
-    const [brushMode, setBrushMode] = useState('vel');
-    const brushModeRef = useRef('vel');
+    const [brushMode, setBrushMode] = useState(defaultBrushMode);
+    const brushModeRef = useRef(defaultBrushMode);
     const changeBrushMode = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const val = e.target.value;
         setBrushMode(val);
