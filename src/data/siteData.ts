@@ -84,8 +84,7 @@ export const portfolioProjects = [
         id: 2,
         title: "VideoPhy-2",
         description: "Benchmark for evaluating physical commonsense in AI-generated videos with UCLA NLP and Google Research.",
-        // image: "/images/videophy2_long.png",
-        image: "/images/videophy2_hero.png",
+        image: "/images/videophy2_long.png",
         tags: ["Research", "AI", "Video Gen"],
         year: "2025",
         links: [
