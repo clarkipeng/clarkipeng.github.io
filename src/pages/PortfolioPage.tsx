@@ -1,12 +1,12 @@
 import { Sidebar } from '../components/Sidebar';
 import { portfolioProjects } from '../data/siteData';
 import { getButtonClass, getCardClass } from '../data/theme';
-import { GameGate } from '../components/GameGate';
-import { useTheme } from '../context/ThemeContext';
+// import { GameGate } from '../components/GameGate';
+// import { useTheme } from '../context/ThemeContext';
 
 // Portfolio Page - Projects from Jekyll
 const PortfolioPage = () => {
-    const { isDark } = useTheme();
+    // const { isDark } = useTheme();
 
     return (
         <main className="flex items-start w-full grow min-h-[calc(100vh-80px)] relative">

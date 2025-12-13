@@ -51,7 +51,7 @@ export const GameGate = ({
     const [brushMode, setBrushMode] = useState(defaultBrushMode);
     const brushModeRef = useRef(defaultBrushMode);
     const changeBrushMode = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const val = e.target.value;
+        const val = e.target.value as 'vel' | 'smoke' | 'havoc';
         setBrushMode(val);
         brushModeRef.current = val;
     };
