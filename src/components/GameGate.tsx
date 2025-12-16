@@ -96,7 +96,7 @@ export const GameGate = ({
     const AMBIENT_TEMP = 20;
     const NOISE_STRENGTH = 10;
     const GRAVITY = 1;
-    const BUOYANCY_FACTOR_TEMP = 0.1;
+    const BUOYANCY_FACTOR_TEMP = 0.5;
     const BUOYANCY_FACTOR_SMOKE = 0.0;//0.002;
 
     // Dynamic grid state
