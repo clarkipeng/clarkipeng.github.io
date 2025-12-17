@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GameGate } from '../components/GameGate';
+import { Smoke } from '../components/Smoke';
 import { imagenetImages, getRandomImagenetImage } from '../data/imagenetImages';
 import { useTheme } from '../context/ThemeContext';
 
@@ -10,6 +10,8 @@ const SmokePage = () => {
     const [imageKey, setImageKey] = useState(0);
     // Start with the first item (intro text)
     const [currentItem, setCurrentItem] = useState(() => imagenetImages[0]);
+    // Persist brush mode across image changes
+    const [brushMode, setBrushMode] = useState<'vel' | 'smoke' | 'havoc'>('vel');
 
     // Redirect to home if not in dark mode
     useEffect(() => {
@@ -29,13 +31,15 @@ const SmokePage = () => {
 
     return (
         <div className="flex flex-1 w-full relative">
-            <GameGate
+            <Smoke
                 key={imageKey}
                 showUI={false}
                 initialImage={currentItem?.image}
                 initialCaption={currentItem?.caption}
                 onNextImage={handleNewImage}
                 backgroundColor="transparent"
+                brushMode={brushMode}
+                onBrushModeChange={setBrushMode}
                 config={{
                     smokeDiffusion: 0.00
                 }}

@@ -20,7 +20,30 @@ export const imagenetImages: ImagenetItem[] = [
     // { image: '/images/imagenet/unicycle.jpeg', caption: 'Unicycle' },
 ];
 
+// Get only the actual images (skip the intro text-only item at index 0)
+const imageOnlyItems = imagenetImages.slice(1);
+
+// Shuffle array using Fisher-Yates algorithm
+const shuffleArray = <T>(array: T[]): T[] => {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+};
+
+// Maintain a queue of remaining images to show
+let remainingImages: ImagenetItem[] = [];
+
 export const getRandomImagenetImage = (): ImagenetItem | undefined => {
-    if (imagenetImages.length === 0) return undefined;
-    return imagenetImages[Math.floor(Math.random() * imagenetImages.length)];
+    if (imageOnlyItems.length === 0) return undefined;
+
+    // If we've shown all images, reshuffle
+    if (remainingImages.length === 0) {
+        remainingImages = shuffleArray(imageOnlyItems);
+    }
+
+    // Pop and return the next image
+    return remainingImages.pop();
 };

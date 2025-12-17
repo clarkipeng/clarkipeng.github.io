@@ -5,7 +5,7 @@ interface FluidConfig {
     smokeDiffusion?: number;
 }
 
-interface GameGateProps {
+interface SmokeProps {
     onWin?: () => void;
     onNextImage?: () => void;
     width?: number;
@@ -16,11 +16,12 @@ interface GameGateProps {
     showUI?: boolean;
     initialImage?: string;
     initialCaption?: string;
-    defaultBrushMode?: 'vel' | 'smoke' | 'havoc';
+    brushMode: 'vel' | 'smoke' | 'havoc';
+    onBrushModeChange: (mode: 'vel' | 'smoke' | 'havoc') => void;
     config?: FluidConfig;
 }
 
-export const GameGate = ({
+export const Smoke = ({
     onWin = () => { },
     onNextImage,
     width,
@@ -31,9 +32,10 @@ export const GameGate = ({
     showUI = true,
     initialImage,
     initialCaption,
-    defaultBrushMode = 'vel',
+    brushMode,
+    onBrushModeChange,
     config = {}
-}: GameGateProps) => {
+}: SmokeProps) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     // Interaction state
@@ -48,12 +50,17 @@ export const GameGate = ({
         setArrowIndicator(e.target.value);
         arrowIndicatorRef.current = e.target.value == 'on';
     };
-    const [brushMode, setBrushMode] = useState(defaultBrushMode);
-    const brushModeRef = useRef(defaultBrushMode);
+    // Brush mode is controlled by parent, just keep a ref for physics loop
+    const brushModeRef = useRef(brushMode);
+
+    // Keep ref in sync with prop
+    useEffect(() => {
+        brushModeRef.current = brushMode;
+    }, [brushMode]);
+
     const changeBrushMode = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const val = e.target.value as 'vel' | 'smoke' | 'havoc';
-        setBrushMode(val);
-        brushModeRef.current = val;
+        onBrushModeChange(val);
     };
     const [gridLines, setGridLines] = useState(false);
     const gridLinesRef = useRef(false);
@@ -374,6 +381,67 @@ export const GameGate = ({
     const handleMouseUp = () => {
         isMouseDownRef.current = false;
     };
+
+    // Apply brush effect at a position - can be called from mouse move or physics loop
+    // When dx/dy are provided (mouse moving), it interpolates along the stroke line
+    const applyBrushEffect = (x: number, y: number, lastX?: number, lastY?: number, dx: number = 0, dy: number = 0) => {
+        const radius = 2;
+        const CS = gridSizeRef.current.cellSize;
+
+        // Calculate bounds - when moving, include both current and last positions
+        const minX = lastX !== undefined ? Math.min(x, lastX) : x;
+        const maxX = lastX !== undefined ? Math.max(x, lastX) : x;
+        const minY = lastY !== undefined ? Math.min(y, lastY) : y;
+        const maxY = lastY !== undefined ? Math.max(y, lastY) : y;
+
+        const Xmin = Math.max(1, Math.floor(minX / CS) - radius);
+        const Xmax = Math.min(gridSizeRef.current.cols - 2, Math.floor(maxX / CS) + radius);
+        const Ymin = Math.max(1, Math.floor(minY / CS) - radius);
+        const Ymax = Math.min(gridSizeRef.current.rows - 2, Math.floor(maxY / CS) + radius);
+
+        for (let cx = Xmin; cx <= Xmax; cx++) {
+            for (let cy = Ymin; cy <= Ymax; cy++) {
+                if (!boardRef.current[cx] || boardRef.current[cx][cy]?.isSolid) continue;
+
+                const cellCenterX = (cx + 0.5) * CS;
+                const cellCenterY = (cy + 0.5) * CS;
+
+                let distSq: number;
+
+                // If we have a line segment (mouse is moving), project onto it
+                if (lastX !== undefined && lastY !== undefined && (dx !== 0 || dy !== 0)) {
+                    const lenSq = dx * dx + dy * dy;
+                    const u = Math.max(0, Math.min(1, ((cellCenterX - lastX) * dx + (cellCenterY - lastY) * dy) / lenSq));
+                    const projX = lastX + u * dx;
+                    const projY = lastY + u * dy;
+                    distSq = (cellCenterX - projX) ** 2 + (cellCenterY - projY) ** 2;
+                } else {
+                    // Point brush (stationary or physics loop)
+                    distSq = (cellCenterX - x) ** 2 + (cellCenterY - y) ** 2;
+                }
+
+                if (distSq < (radius * CS) ** 2) {
+                    const falloff = Math.exp(-distSq / ((radius * CS) ** 2));
+                    const force = BRUSH_FORCE * falloff;
+
+                    if (brushModeRef.current === 'vel' && (dx !== 0 || dy !== 0)) {
+                        velocityXRef.current[cx][cy] += dx * force;
+                        velocityYRef.current[cx][cy] += dy * force;
+                    } else if (brushModeRef.current === 'smoke') {
+                        const smoke = boardRef.current[cx][cy].smoke;
+                        smoke.r = 255;
+                        smoke.g = 255;
+                        smoke.b = 255;
+                        smoke.t = SMOKE_TEMP;
+                    } else if (brushModeRef.current === 'havoc') {
+                        velocityXRef.current[cx][cy] += (Math.random() * 2 - 1) * NOISE_STRENGTH * force * 100;
+                        velocityYRef.current[cx][cy] += (Math.random() * 2 - 1) * NOISE_STRENGTH * force * 100;
+                    }
+                }
+            }
+        }
+    };
+
     const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (!canvasRef.current) return;
 
@@ -400,42 +468,8 @@ export const GameGate = ({
         // Update last position
         lastMousePosRef.current = { x, y };
 
-        // Inject velocity
-        const radius = 2;
-        const Xmin = Math.max(0, Math.floor(Math.min(x, lastX) / gridSizeRef.current.cellSize) - radius);
-        const Xmax = Math.min(gridSizeRef.current.cols - 2, Math.floor(Math.max(x, lastX) / gridSizeRef.current.cellSize + radius));
-        const Ymin = Math.max(0, Math.floor(Math.min(y, lastY) / gridSizeRef.current.cellSize) - radius);
-        const Ymax = Math.min(gridSizeRef.current.rows - 2, Math.floor(Math.max(y, lastY) / gridSizeRef.current.cellSize + radius));
-
-        for (let cx = Xmin; cx <= Xmax; cx++) {
-            for (let cy = Ymin; cy <= Ymax; cy++) {
-
-                if (boardRef.current[cx][cy].isSolid) continue;
-
-                const CS = gridSizeRef.current.cellSize;
-                const lenSq = dx * dx + dy * dy;
-                const u = lenSq === 0 ? 0 : Math.max(0, Math.min(1, (((cx + 0.5) * CS - lastX) * dx + ((cy + 0.5) * CS - lastY) * dy) / lenSq));
-                const destX = lastX + u * dx;
-                const destY = lastY + u * dy;
-                const distSq = ((cx + 0.5) * CS - destX) ** 2 + ((cy + 0.5) * CS - destY) ** 2;
-
-                if (distSq < (radius * CS) ** 2) {
-                    const falloff = Math.exp(-distSq / ((radius * CS) ** 2));
-                    const force = BRUSH_FORCE * falloff;
-
-                    if (brushModeRef.current === 'vel') {
-                        velocityXRef.current[cx][cy] += dx * force;
-                        velocityYRef.current[cx][cy] += dy * force;
-                    } else if (brushModeRef.current === 'smoke') {
-                        const smoke = boardRef.current[cx][cy].smoke;
-                        smoke.r = 255;
-                        smoke.g = 255;
-                        smoke.b = 255;
-                        smoke.t = SMOKE_TEMP;
-                    }
-                }
-            }
-        }
+        // Apply brush effect with movement delta and line interpolation
+        applyBrushEffect(x, y, lastX, lastY, dx, dy);
     };
 
     // Physics Loop
@@ -467,6 +501,12 @@ export const GameGate = ({
             if (dt <= 0) {
                 requestAnimationFrame(physics);
                 return;
+            }
+
+            // Apply continuous brush effect when mouse is held down (for smoke/havoc modes)
+            if (isMouseDownRef.current && isMouseOverRef.current &&
+                (brushModeRef.current === 'smoke' || brushModeRef.current === 'havoc')) {
+                applyBrushEffect(hoverPosRef.current.x, hoverPosRef.current.y);
             }
 
             const newVelocityX = tempVelocityXRef.current;
@@ -818,7 +858,7 @@ export const GameGate = ({
                         <div className="absolute bottom-full right-0 mb-2 hidden group-hover:flex flex-col gap-1
                                         bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-600 p-1">
                             <button
-                                onClick={() => { setBrushMode('vel'); brushModeRef.current = 'vel'; }}
+                                onClick={() => onBrushModeChange('vel')}
                                 className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors
                                            ${brushMode === 'vel' ? 'bg-blue-100 dark:bg-blue-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             >
@@ -827,7 +867,7 @@ export const GameGate = ({
                                 </svg>
                             </button>
                             <button
-                                onClick={() => { setBrushMode('smoke'); brushModeRef.current = 'smoke'; }}
+                                onClick={() => onBrushModeChange('smoke')}
                                 className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors
                                            ${brushMode === 'smoke' ? 'bg-gray-200 dark:bg-gray-600' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             >
@@ -836,7 +876,7 @@ export const GameGate = ({
                                 </svg>
                             </button>
                             <button
-                                onClick={() => { setBrushMode('havoc'); brushModeRef.current = 'havoc'; }}
+                                onClick={() => onBrushModeChange('havoc')}
                                 className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors
                                            ${brushMode === 'havoc' ? 'bg-cyan-100 dark:bg-cyan-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             >
