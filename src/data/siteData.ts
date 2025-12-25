@@ -6,7 +6,7 @@
 // === PERSONAL INFO ===
 export const siteConfig = {
     name: "Clark Peng",
-    title: "CS @ UCLA | AI Engineer @ camfer (YC S24) | ML Researcher",
+    title: "CS @ UCLA | Intern @ camfer (YC S24) | ML Researcher",
     bio: "CS @ UCLA",
     location: "San Jose, CA",
     email: "cipeng@ucla.edu",
@@ -68,11 +68,22 @@ On campus, I lead the competitive ML team as an ACM AI Projects Officer, where w
 // === PORTFOLIO PROJECTS ===
 export const portfolioProjects = [
     {
-        id: 1,
+        title: "3D Slime Simulation",
+        description: "1 Week projects playing around with compute shaders on Unity",
+        image: "/images/Slime3D_Shot.png",
+        tags: ["Simulation", "GPU", "Unity"],
+        year: "2025",
+        links: [
+            { label: "Repository", href: "https://github.com/clarkipeng/SlimeSim3D/" },
+            { label: "Video", href: "https://youtu.be/nurGFZYDcag" },
+        ],
+        videoEmbed: "https://www.youtube.com/embed/5Bj0ZGDzans",
+    },
+    {
         title: "4D Fruit Merging Game",
         description: "Interactive 4D fruit merging game with custom graphics engine built from scratch using OpenGL and C++.",
         image: "/images/gameImage.png",
-        tags: ["OpenGL", "C++", "Game Dev"],
+        tags: ["OpenGL", "C++", "Simulation"],
         year: "2025",
         links: [
             { label: "Repository", href: "https://github.com/clarkipeng/4dsuika" },
@@ -81,7 +92,6 @@ export const portfolioProjects = [
         videoEmbed: "https://www.youtube.com/embed/5Bj0ZGDzans",
     },
     {
-        id: 2,
         title: "VideoPhy-2",
         description: "Benchmark for evaluating physical commonsense in AI-generated videos with UCLA NLP and Google Research.",
         // image: "/images/videophy2_long.png",
@@ -90,12 +100,11 @@ export const portfolioProjects = [
         year: "2025",
         links: [
             { label: "Repository", href: "https://github.com/Hritikbansal/videophy" },
-            { label: "Paper", href: "https://arxiv.org/abs/2503.07248" },
+            { label: "Paper", href: "https://arxiv.org/abs/2503.06800" },
             { label: "Project Website", href: "https://videophy2.github.io/" },
         ],
     },
     {
-        id: 3,
         title: "Arm Agent RL Project",
         description: "Robotic hand trained with PPO reinforcement learning to grasp objects. Built with Unity MLAgents and Blender.",
         image: "/images/RLHandTarget.png",
@@ -107,7 +116,6 @@ export const portfolioProjects = [
         videoEmbed: "https://www.youtube.com/embed/_yNpbxOqKTU?list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk",
     },
     {
-        id: 4,
         title: "Event Detection via PDF Regression",
         description: "Novel regression approach for time series event detection using probability density functions.",
         image: "/images/PDFR.gif",
@@ -115,11 +123,10 @@ export const portfolioProjects = [
         year: "2024",
         links: [
             { label: "Repository", href: "https://github.com/clarkipeng/EventDetectionPDF" },
-            { label: "Paper", href: "/files/EDPDFR.pdf" },
+            { label: "Paper", href: "https://arxiv.org/abs/2408.12792" },
         ],
     },
     {
-        id: 5,
         title: "Optimized Raytracer from Scratch",
         description: "Optimized raytracing renderer with reflections, refractions, and global illumination. Built in C++.",
         image: "/images/raytracer.jpeg",
