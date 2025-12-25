@@ -6,7 +6,7 @@
 // === PERSONAL INFO ===
 export const siteConfig = {
     name: "Clark Peng",
-    title: "CS @ UCLA | Intern @ camfer (YC S24) | ML Researcher",
+    title: "CS @ UCLA | Prev Intern @ camfer (YC S24) | ML Researcher",
     bio: "CS @ UCLA",
     location: "San Jose, CA",
     email: "cipeng@ucla.edu",
@@ -68,6 +68,7 @@ On campus, I lead the competitive ML team as an ACM AI Projects Officer, where w
 // === PORTFOLIO PROJECTS ===
 export const portfolioProjects = [
     {
+        id: 1,
         title: "3D Slime Simulation",
         description: "1 Week projects playing around with compute shaders on Unity",
         image: "/images/Slime3D_Shot.png",
@@ -80,6 +81,7 @@ export const portfolioProjects = [
         videoEmbed: "https://www.youtube.com/embed/5Bj0ZGDzans",
     },
     {
+        id: 2,
         title: "4D Fruit Merging Game",
         description: "Interactive 4D fruit merging game with custom graphics engine built from scratch using OpenGL and C++.",
         image: "/images/gameImage.png",
@@ -92,6 +94,7 @@ export const portfolioProjects = [
         videoEmbed: "https://www.youtube.com/embed/5Bj0ZGDzans",
     },
     {
+        id: 3,
         title: "VideoPhy-2",
         description: "Benchmark for evaluating physical commonsense in AI-generated videos with UCLA NLP and Google Research.",
         // image: "/images/videophy2_long.png",
@@ -105,6 +108,7 @@ export const portfolioProjects = [
         ],
     },
     {
+        id: 4,
         title: "Arm Agent RL Project",
         description: "Robotic hand trained with PPO reinforcement learning to grasp objects. Built with Unity MLAgents and Blender.",
         image: "/images/RLHandTarget.png",
@@ -116,6 +120,7 @@ export const portfolioProjects = [
         videoEmbed: "https://www.youtube.com/embed/_yNpbxOqKTU?list=PLvzAuMPAVywO6-RWFGfXoudk62ZEKDIuk",
     },
     {
+        id: 5,
         title: "Event Detection via PDF Regression",
         description: "Novel regression approach for time series event detection using probability density functions.",
         image: "/images/PDFR.gif",
@@ -127,6 +132,7 @@ export const portfolioProjects = [
         ],
     },
     {
+        id: 6,
         title: "Optimized Raytracer from Scratch",
         description: "Optimized raytracing renderer with reflections, refractions, and global illumination. Built in C++.",
         image: "/images/raytracer.jpeg",
@@ -166,11 +172,11 @@ export const publications = [
 export const experience = [
     {
         id: 1,
-        role: "AI Engineer Intern",
+        role: "Intern",
         company: "Camfer",
         companyUrl: "https://camfer.dev",
         location: "Remote",
-        period: "2024 - Present",
+        period: "Aug - Dec 2025",
         description: "Helping build the world's first text-to-CAD foundation model. Work spans product engineering to model training and evaluation.",
         tags: ["AI", "CAD", "Full Stack"],
     },
@@ -180,7 +186,7 @@ export const experience = [
         company: "UCLA NLP Group",
         companyUrl: "https://web.cs.ucla.edu/~kwchang/members/",
         location: "Los Angeles, CA",
-        period: "2024 - 2025",
+        period: "Nov 2024 - May 2025",
         description: "Benchmarked physical commonsense in video generation, collaborating with Google Research.",
         tags: ["NLP", "Video Generation", "Research"],
     },
@@ -190,7 +196,7 @@ export const experience = [
         company: "HMC Music Retrieval Lab",
         companyUrl: "https://sites.google.com/g.hmc.edu/hmc-mir",
         location: "Claremont, CA",
-        period: "2024",
+        period: "June - Aug 2025",
         description: "Explored steering music models using techniques like DPO and self-distillation.",
         tags: ["Music AI", "DPO", "LLMs"],
     },
@@ -199,9 +205,9 @@ export const experience = [
 export const education = [
     {
         id: 1,
-        school: "University of California, Los Angeles (UCLA)",
+        school: "University of California, Los Angeles",
         degree: "B.S. Computer Science",
-        period: "2024 - 2028 (Expected)",
+        period: "2024 - 2028",
         description: "ACM AI Projects Officer - Leading competitive ML team for Kaggle competitions.",
     },
 ];
