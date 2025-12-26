@@ -1,8 +1,7 @@
 import { Sidebar } from '../components/Sidebar';
 import { portfolioProjects } from '../data/siteData';
 import { getButtonClass, getCardClass } from '../data/theme';
-// import { GameGate } from '../components/GameGate';
-// import { useTheme } from '../context/ThemeContext';
+import { Carousel } from "../components/Carousel";
 
 // Portfolio Page - Projects from Jekyll
 const PortfolioPage = () => {
@@ -10,22 +9,6 @@ const PortfolioPage = () => {
 
     return (
         <main className="flex items-start w-full grow min-h-[calc(100vh-80px)] relative">
-            {/* Smoke background - only in dark mode
-            {isDark && (
-                <div className="fixed inset-0 z-0 pointer-events-none opacity-30">
-                    <GameGate
-                        showUI={false}
-                        backgroundColor="transparent"
-                        defaultBrushMode="havoc"
-                        config={{
-                            velocityDecay: 0.95,
-                            smokeDiffusion: 0.01
-                        }}
-                        style={{ width: '100%', height: '100%' }}
-                    />
-                </div>
-            )} */}
-
             <Sidebar />
 
             {/* Main content with padding around the edges */}
@@ -50,24 +33,10 @@ const PortfolioPage = () => {
                             className={getCardClass('row')}
                         >
                             {/* Project Image */}
-                            {project.image ? (
-                                <div className="w-full lg:w-64 h-48 lg:h-40 flex-shrink-0 
-                              bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
-                                    <img
-                                        src={project.image}
-                                        alt={project.title}
-                                        className="w-full h-full object-cover"
-                                        onError={(e) => {
-                                            (e.target as HTMLImageElement).style.display = 'none';
-                                        }}
-                                    />
-                                </div>
-                            ) : (
-                                <div className="w-full lg:w-64 h-48 lg:h-40 flex-shrink-0 
-                              bg-gray-200 dark:bg-gray-800 rounded flex items-center justify-center">
-                                    <span className="text-gray-400 text-4xl font-bold">{project.id}</span>
-                                </div>
-                            )}
+                            <div className="w-full lg:w-64 h-48 lg:h-40 flex-shrink-0 
+                                bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+                                <Carousel images={project.images ?? []} />
+                            </div>
 
                             {/* Project Info */}
                             <div className="flex flex-col gap-3 flex-1">

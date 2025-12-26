@@ -71,7 +71,8 @@ export const portfolioProjects = [
         id: 1,
         title: "3D Slime Simulation",
         description: "1 Week projects playing around with compute shaders on Unity",
-        image: "/images/Slime3D_Shot.png",
+        // images: ["/images/Slime3D_Shot.png","/images/Slime3D_Shot1.png","/images/Slime3D_Shot2.png"],
+        images: ["/images/BWDensity_Video_0.mp4", "/images/BWDensity_Video_1.mp4", "/images/BWDensity_Video_2.mp4",],
         tags: ["Simulation", "GPU", "Unity"],
         year: "2025",
         links: [
@@ -84,7 +85,7 @@ export const portfolioProjects = [
         id: 2,
         title: "4D Fruit Merging Game",
         description: "Interactive 4D fruit merging game with custom graphics engine built from scratch using OpenGL and C++.",
-        image: "/images/gameImage.png",
+        images: ["/images/gameImage.png"],
         tags: ["OpenGL", "C++", "Simulation"],
         year: "2025",
         links: [
@@ -98,7 +99,7 @@ export const portfolioProjects = [
         title: "VideoPhy-2",
         description: "Benchmark for evaluating physical commonsense in AI-generated videos with UCLA NLP and Google Research.",
         // image: "/images/videophy2_long.png",
-        image: "/images/videophy2_hero.png",
+        images: ["/images/videophy2_hero.png"],
         tags: ["Research", "AI", "Video Gen"],
         year: "2025",
         links: [
@@ -111,7 +112,7 @@ export const portfolioProjects = [
         id: 4,
         title: "Arm Agent RL Project",
         description: "Robotic hand trained with PPO reinforcement learning to grasp objects. Built with Unity MLAgents and Blender.",
-        image: "/images/RLHandTarget.png",
+        images: ["/images/RLHandTarget.png"],
         tags: ["RL", "Unity", "MLAgents"],
         year: "2024",
         links: [
@@ -123,7 +124,7 @@ export const portfolioProjects = [
         id: 5,
         title: "Event Detection via PDF Regression",
         description: "Novel regression approach for time series event detection using probability density functions.",
-        image: "/images/PDFR.gif",
+        images: ["/images/PDFR.gif"],
         tags: ["Research", "ML", "Time Series"],
         year: "2024",
         links: [
@@ -135,7 +136,7 @@ export const portfolioProjects = [
         id: 6,
         title: "Optimized Raytracer from Scratch",
         description: "Optimized raytracing renderer with reflections, refractions, and global illumination. Built in C++.",
-        image: "/images/raytracer.jpeg",
+        images: ["/images/raytracer.jpeg"],
         tags: ["C++", "Graphics", "Raytracing"],
         year: "2022",
         links: [

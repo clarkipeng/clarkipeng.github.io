@@ -117,6 +117,24 @@ body {
   font-style: normal;
 }
 
+
+/* Custom CSS for Carousel */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.snap-x {
+  scroll-snap-type: x mandatory;
+}
+.snap-center {
+  scroll-snap-align: center;
+}
+/* Optional: Add a glass effect to arrows */
+.carousel-arrow {
+  /* backdrop-filter: blur(4px);
+  background-color: rgba(0, 0, 0, 0.3); */
+  /* border: 1px solid rgba(255, 255, 255, 0.1); */
+}
+
 /* Animation keyframes */
 .animate-fade-in {
   animation: fade-in 1s ease forwards;
