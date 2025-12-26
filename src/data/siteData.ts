@@ -57,7 +57,7 @@ export const navigation = [
 ];
 
 // === ABOUT / BIO TEXT ===
-export const aboutText = `Hello! I'm Clark, a Computer Science student at UCLA. I am passionate about AI, specifically about creating novel architectures and algos.
+export const aboutText = `Hello! I'm Clark, a Computer Science student at UCLA. I am passionate about AI, specifically about creating novel architectures and algorithms.
 
 Currently, I'm an intern at Camfer, where I am helping build the world's first text-to-CAD foundation model. As a generalist on a small team, my work spans the entire stack—from product engineering to the core challenges of model training and evaluation.
 
@@ -70,7 +70,7 @@ export const portfolioProjects = [
     {
         id: 1,
         title: "3D Slime Simulation",
-        description: "1 Week projects playing around with compute shaders on Unity",
+        description: "A week-long project I did playing around with compute shaders in Unity",
         // images: ["/images/Slime3D_Shot.png","/images/Slime3D_Shot1.png","/images/Slime3D_Shot2.png"],
         images: ["/images/BWDensity_Video_0.mp4", "/images/BWDensity_Video_1.mp4", "/images/BWDensity_Video_2.mp4",],
         tags: ["Simulation", "GPU", "Unity"],
@@ -178,7 +178,7 @@ export const experience = [
         companyUrl: "https://camfer.dev",
         location: "Remote",
         period: "Aug - Dec 2025",
-        description: "Helping build the world's first text-to-CAD foundation model. Work spans product engineering to model training and evaluation.",
+        description: "Assisting in building the world's first text-to-CAD foundation model. Work spans product engineering to model training and evaluation.",
         tags: ["AI", "CAD", "Full Stack"],
     },
     {
@@ -188,7 +188,7 @@ export const experience = [
         companyUrl: "https://web.cs.ucla.edu/~kwchang/members/",
         location: "Los Angeles, CA",
         period: "Nov 2024 - May 2025",
-        description: "Benchmarked physical commonsense in video generation, collaborating with Google Research.",
+        description: "Benchmarking physical commonsense in video generation, collaborating with Google Research.",
         tags: ["NLP", "Video Generation", "Research"],
     },
     {
@@ -198,7 +198,7 @@ export const experience = [
         companyUrl: "https://sites.google.com/g.hmc.edu/hmc-mir",
         location: "Claremont, CA",
         period: "June - Aug 2025",
-        description: "Explored steering music models using techniques like DPO and self-distillation.",
+        description: "Exploring steering music models using techniques like DPO and self-distillation.",
         tags: ["Music AI", "DPO", "LLMs"],
     },
 ];
