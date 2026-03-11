@@ -59,11 +59,15 @@ export const navigation = [
 // === ABOUT / BIO TEXT ===
 export const aboutText = `Hello! I'm Clark, a Computer Science student at UCLA. I am passionate about AI, specifically about creating novel architectures and algorithms.
 
-Currently, I'm an intern at Camfer, where I am helping build the world's first text-to-CAD foundation model. As a generalist on a small team, my work spans the entire stack—from product engineering to the core challenges of model training and evaluation.
+Previously, I was an intern at Camfer, where I was helping build the world's first text-to-CAD foundation model. 
 
-This role builds on my background in research, where I focused on controlling and understanding generative models. At the UCLA NLP Group, I benchmarked physical commonsense in video generation, and at the HMC Music Retrieval Lab, I explored steering music models using techniques like DPO and self-distillation.
+I focus on controlling and understanding generative models. At the UCLA NLP Group, I benchmarked physical commonsense in video generation, and at the HMC Music Retrieval Lab, I explored steering music models using techniques like DPO and self-distillation.
 
-On campus, I lead the competitive ML team as an ACM AI Projects Officer, where we tackle Kaggle competitions and build projects together. Outside of AI, I also enjoy creating games!`;
+On campus, I am currently the president of ACM AI, the biggest AI club on campus. 
+
+I previously led the competitive ML team as an ACM AI Projects Officer, we tackled Kaggle competitions and build projects together. 
+
+Outside of AI, I also enjoy competitive programming, creating games, and sports!`;
 
 // === PORTFOLIO PROJECTS ===
 export const portfolioProjects = [
@@ -110,8 +114,8 @@ export const portfolioProjects = [
     },
     {
         id: 4,
-        title: "Arm Agent RL Project",
-        description: "Robotic hand trained with PPO reinforcement learning to grasp objects. Built with Unity MLAgents and Blender.",
+        title: "Simple RL Project",
+        description: "Robotic hand trained with to grasp and throw objects. Built with Unity, MLAgents, and Blender.",
         images: ["/images/RLHandTarget.png"],
         tags: ["RL", "Unity", "MLAgents"],
         year: "2024",
@@ -135,7 +139,7 @@ export const portfolioProjects = [
     {
         id: 6,
         title: "Optimized Raytracer from Scratch",
-        description: "Optimized raytracing renderer with reflections, refractions, and global illumination. Built in C++.",
+        description: "CPU renderer with reflections, refractions, and illumination. Built in C++.",
         images: ["/images/raytracer.jpeg"],
         tags: ["C++", "Graphics", "Raytracing"],
         year: "2022",
@@ -151,7 +155,7 @@ export const publications = [
         id: 1,
         title: "VideoPhy-2: A Challenging Action-Centric Physical Commonsense Evaluation in Video Generation",
         authors: "Hritik Bansal, Clark Peng, Yonatan Bitton, et al.",
-        venue: "Preprint",
+        venue: "ICML",
         date: "2025-03-11",
         category: "preprints",
         paperUrl: "https://arxiv.org/abs/2503.06800",
@@ -176,9 +180,9 @@ export const experience = [
         role: "Intern",
         company: "Camfer",
         companyUrl: "https://camfer.dev",
-        location: "Remote",
+        location: "San Francisco",
         period: "Aug - Dec 2025",
-        description: "Assisting in building the world's first text-to-CAD foundation model. Work spans product engineering to model training and evaluation.",
+        description: "Assisted in building the world's first text-to-CAD foundation model. Work spaned product engineering to model training and evaluation.",
         tags: ["AI", "CAD", "Full Stack"],
     },
     {
@@ -188,7 +192,7 @@ export const experience = [
         companyUrl: "https://web.cs.ucla.edu/~kwchang/members/",
         location: "Los Angeles, CA",
         period: "Nov 2024 - May 2025",
-        description: "Benchmarking physical commonsense in video generation, collaborating with Google Research.",
+        description: "Benchmarked physical commonsense in video generation, collaborated with Google Research.",
         tags: ["NLP", "Video Generation", "Research"],
     },
     {
@@ -198,7 +202,7 @@ export const experience = [
         companyUrl: "https://sites.google.com/g.hmc.edu/hmc-mir",
         location: "Claremont, CA",
         period: "June - Aug 2025",
-        description: "Exploring steering music models using techniques like DPO and self-distillation.",
+        description: "Explored steering music models using techniques like DPO and self-distillation.",
         tags: ["Music AI", "DPO", "LLMs"],
     },
 ];

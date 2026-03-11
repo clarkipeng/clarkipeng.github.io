@@ -1,5 +1,6 @@
 import { GithubIcon, GoogleScholarIcon, ItchIcon, KaggleIcon, HeadShot, LinkedInIcon } from './Icons';
 import { siteConfig, socialLinks as socialLinksData } from '../data/siteData';
+import { pageBackground } from '../data/theme';
 
 // Map icon types to components
 const iconMap: Record<string, React.FC<{ className?: string }>> = {
@@ -16,8 +17,7 @@ interface SidebarProps {
 
 // Sidebar Component - reusable across pages
 export const Sidebar = ({ showName = true }: SidebarProps) => (
-    <aside className="inline-flex flex-col items-center gap-2.5 p-2.5 
-                    bg-white dark:bg-[#0f0f0f] min-w-[250px] transition-colors duration-300">
+    <aside className={`inline-flex flex-col items-center gap-2.5 p-2.5 min-w-[250px] ${pageBackground}`}>
         <HeadShot className="w-32 h-32" src={siteConfig.avatarUrl} />
 
         {showName && (

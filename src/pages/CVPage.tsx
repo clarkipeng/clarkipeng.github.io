@@ -1,6 +1,6 @@
 import { Sidebar } from '../components/Sidebar';
 import { experience, education, skills } from '../data/siteData';
-import { getCardClass } from '../data/theme';
+import { getCardClass, pageBackground } from '../data/theme';
 
 // CV Page
 const CVPage = () => (
@@ -8,8 +8,7 @@ const CVPage = () => (
         <Sidebar />
 
         {/* Main content with padding around the edges */}
-        <div className="flex flex-col items-start gap-12 p-8 lg:p-12 flex-1 grow 
-                    bg-white dark:bg-[#0f0f0f] transition-colors duration-300 overflow-auto">
+        <div className={`flex flex-col items-start gap-12 p-8 lg:p-12 flex-1 grow overflow-auto ${pageBackground}`}>
 
             {/* Header */}
             <div className="inline-flex flex-col items-start gap-2">

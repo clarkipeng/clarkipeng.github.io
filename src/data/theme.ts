@@ -116,6 +116,17 @@ export const buttonStyles = {
 // 5px padding for sections
 export const sectionPadding = 'p-[5px]';
 
+// === TRANSITIONS ===
+export const transitions = {
+  theme: 'transition-colors duration-300',
+  interactive: 'transition-all duration-200',
+  card: 'transition-all duration-300',
+};
+
+// === PAGE BACKGROUND ===
+// Standard page/section background with theme transition
+export const pageBackground = `bg-white dark:bg-[#0f0f0f] ${transitions.theme}`;
+
 // === CARD STYLES ===
 export const cardStyles = {
   base: `

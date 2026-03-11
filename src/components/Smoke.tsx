@@ -475,6 +475,7 @@ export const Smoke = ({
     // Physics Loop
     useEffect(() => {
         let lastTime = performance.now();
+        let animationId: number;
 
         const physics = () => {
             const cols = gridSizeRef.current.cols;
@@ -658,9 +659,11 @@ export const Smoke = ({
                     }
                 }
             }
-            requestAnimationFrame(physics);
+            animationId = requestAnimationFrame(physics);
         };
-        physics();
+        animationId = requestAnimationFrame(physics);
+
+        return () => cancelAnimationFrame(animationId);
     }, []);
 
     // Render Loop
