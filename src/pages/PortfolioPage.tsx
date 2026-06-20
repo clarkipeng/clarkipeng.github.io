@@ -1,93 +1,63 @@
-import { Sidebar } from '../components/Sidebar';
+import { ArrowUpRight } from 'lucide-react';
+import { Carousel } from '../components/Carousel';
 import { portfolioProjects } from '../data/siteData';
-import { getButtonClass, getCardClass } from '../data/theme';
-import { Carousel } from "../components/Carousel";
+import { getButtonClass, getRuleClass, getTagClass, pageBackground, wideMeasure } from '../data/theme';
 
-// Portfolio Page - Projects from Jekyll
-const PortfolioPage = () => {
-    // const { isDark } = useTheme();
+const PortfolioPage = () => (
+  <main className={`w-full grow ${pageBackground}`}>
+    <section className={`${wideMeasure} py-12 sm:py-16`}>
+      <div className="max-w-3xl">
+        <h1 className="font-sans text-4xl font-medium text-[#202020] dark:text-[#f5f5f2]">Gadgets</h1>
+        <p className="mt-4 text-xl leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">
+          Research artifacts, games, simulations, and small systems that made a problem feel more physical.
+        </p>
+      </div>
 
-    return (
-        <main className="flex items-start w-full grow min-h-[calc(100vh-80px)] relative">
-            <Sidebar />
-
-            {/* Main content with padding around the edges */}
-            <div className="flex flex-col items-start gap-12 p-8 lg:p-12 flex-1 grow 
-                        bg-white/80 dark:bg-[#0f0f0f]/80 backdrop-blur-sm transition-colors duration-300 overflow-auto relative z-10">
-
-                {/* Header section */}
-                <div className="inline-flex flex-col items-start gap-2">
-                    <h1 className="font-h1 text-black dark:text-white text-[36px]">
-                        Portfolio
-                    </h1>
-                    <p className="font-h2 text-gray-500 dark:text-gray-400 text-[24px]">
-                        A collection of projects I've done
-                    </p>
-                </div>
-
-                {/* Projects list */}
-                <div className="flex flex-col gap-8 w-full">
-                    {portfolioProjects.map((project) => (
-                        <article
-                            key={project.id}
-                            className={getCardClass('row')}
-                        >
-                            {/* Project Image */}
-                            <div className="w-full lg:w-64 h-48 lg:h-40 flex-shrink-0 
-                                bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
-                                <Carousel images={project.images ?? []} />
-                            </div>
-
-                            {/* Project Info */}
-                            <div className="flex flex-col gap-3 flex-1">
-                                <div className="flex items-center gap-3 flex-wrap">
-                                    <h3 className="font-h2 text-black dark:text-white text-[24px]">
-                                        {project.title}
-                                    </h3>
-                                    <span className="text-gray-400 dark:text-gray-500 text-sm">{project.year}</span>
-                                </div>
-
-                                {/* Tags */}
-                                <div className="flex gap-2 flex-wrap">
-                                    {project.tags.map((tag) => (
-                                        <span
-                                            key={tag}
-                                            className="px-2.5 py-1 text-xs font-medium 
-                               bg-gray-100 dark:bg-gray-800 
-                               text-gray-600 dark:text-gray-300 rounded-md"
-                                        >
-                                            {tag}
-                                        </span>
-                                    ))}
-                                </div>
-
-                                <p className="font-h4 text-gray-600 dark:text-gray-300 text-[16px] leading-relaxed">
-                                    {project.description}
-                                </p>
-
-                                {/* Links - Using theme button styles with bigger padding */}
-                                {project.links && project.links.length > 0 && (
-                                    <div className="flex gap-3 flex-wrap mt-2">
-                                        {project.links.map((link) => (
-                                            <a
-                                                key={link.label}
-                                                href={link.href}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className={getButtonClass('primary')}
-                                            >
-                                                {link.label}
-                                            </a>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </article>
-                    ))}
-                </div>
+      <div className="mt-10">
+        {portfolioProjects.map((project) => (
+          <article key={project.id} className={`${getRuleClass()} grid gap-5 py-8 md:grid-cols-[15rem_1fr]`}>
+            <div className="aspect-[4/3] overflow-hidden rounded-md bg-black/5 dark:bg-white/10">
+              <Carousel images={project.images} label={project.title} />
             </div>
-        </main>
-    );
-};
+
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="font-sans text-2xl font-medium text-[#202020] dark:text-white">{project.title}</h2>
+                <span className="font-sans text-sm text-[#8a8a82] dark:text-[#9f9f96]">{project.year}</span>
+              </div>
+
+              <p className="mt-3 max-w-2xl text-[18px] leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">
+                {project.description}
+              </p>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {project.tags.map((tag) => (
+                  <span key={tag} className={getTagClass()}>{tag}</span>
+                ))}
+              </div>
+
+              {project.links.length > 0 && (
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {project.links.map((link, index) => (
+                    <a
+                      key={link.href}
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={getButtonClass(index === 0 ? 'secondary' : 'ghost')}
+                    >
+                      {link.label}
+                      <ArrowUpRight className="ml-1 h-4 w-4" aria-hidden="true" />
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  </main>
+);
 
 export default PortfolioPage;

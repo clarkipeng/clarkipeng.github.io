@@ -12,7 +12,7 @@ function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <div className={`flex flex-col min-h-screen items-start gap-2.5 p-2.5 ${pageBackground}`}>
+        <div className={`flex min-h-screen flex-col ${pageBackground}`}>
           <Header />
           <Routes>
             <Route path="/" element={<HomePage />} />
@@ -20,6 +20,7 @@ function App() {
             <Route path="/cv" element={<CVPage />} />
             <Route path="/publications" element={<PublicationsPage />} />
             <Route path="/smoke" element={<SmokePage />} />
+            <Route path="*" element={<HomePage />} />
           </Routes>
         </div>
       </BrowserRouter>

@@ -1,28 +1,77 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
-export const Carousel = ({ images }: { images: string[] }) => {
-  const [c, setC] = useState(0), [p, setP] = useState(0);
-  const move = (d: number) => { setP(c); setC((c + d + images.length) % images.length); };
-  const isV = (s: string) => s?.toLowerCase().endsWith('.mp4');
-  const Media = ({ s, cl, lp = false }: any) => isV(s) ?
-    <video src={s} className={cl} autoPlay muted playsInline loop={lp} /> :
-    <img src={s} className={cl} alt="" draggable={false} />;
+type CarouselProps = {
+  images?: string[];
+  label?: string;
+};
 
-  if (!images?.length) return null;
+type MediaProps = {
+  src: string;
+  className: string;
+  label: string;
+};
+
+const isVideo = (src: string) => src.toLowerCase().endsWith('.mp4');
+
+const Media = ({ src, className, label }: MediaProps) => (
+  isVideo(src)
+    ? <video src={src} className={className} autoPlay muted playsInline loop preload="metadata" />
+    : <img src={src} className={className} alt={label} draggable={false} loading="lazy" />
+);
+
+export const Carousel = ({ images = [], label = '' }: CarouselProps) => {
+  const [current, setCurrent] = useState(0);
+
+  if (images.length === 0) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-black/[0.04] font-sans text-sm text-[#676760] dark:bg-white/[0.06] dark:text-[#b9b9b0]">
+        {label}
+      </div>
+    );
+  }
+
+  const move = (delta: number) => {
+    setCurrent((value) => (value + delta + images.length) % images.length);
+  };
 
   return (
-    <div className="relative group w-full h-full overflow-hidden rounded bg-black">
-      <Media s={images[p]} cl="absolute inset-0 w-full h-full object-cover" />
-      {images.map((src, i) => (
-        <div key={i} className={`absolute inset-0 transition-opacity duration-500 ${i === c ? 'z-10 opacity-100' : 'z-0 opacity-0'}`}>
-          <Media s={src} cl="w-full h-full object-cover pointer-events-none" />
+    <div className="group relative h-full w-full overflow-hidden bg-black">
+      {images.map((src, index) => (
+        <div
+          key={src}
+          className={`absolute inset-0 transition-opacity duration-500 ${
+            index === current ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <Media src={src} className="h-full w-full object-cover" label={label} />
         </div>
       ))}
+
       {images.length > 1 && (
-        <div className="absolute inset-0 z-20 flex text-white">
-          <button onClick={(e) => { e.stopPropagation(); move(-1); }} className="flex-1 flex items-center justify-start pl-4 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gradient-to-r from-black/20"><ChevronLeft size={16} strokeWidth={1.5} /></button>
-          <button onClick={(e) => { e.stopPropagation(); move(1); }} className="flex-1 flex items-center justify-end pr-4 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gradient-to-l from-black/20"><ChevronRight size={16} strokeWidth={1.5} /></button>
+        <div className="absolute inset-0 flex text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              move(-1);
+            }}
+            className="flex flex-1 items-center justify-start bg-gradient-to-r from-black/20 pl-3"
+            aria-label="Previous image"
+            type="button"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              move(1);
+            }}
+            className="flex flex-1 items-center justify-end bg-gradient-to-l from-black/20 pr-3"
+            aria-label="Next image"
+            type="button"
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       )}
     </div>

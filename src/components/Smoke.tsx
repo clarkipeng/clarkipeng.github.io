@@ -21,6 +21,14 @@ interface SmokeProps {
     config?: FluidConfig;
 }
 
+type SmokeColor = { r: number; g: number; b: number; t: number };
+type SmokeCell = {
+    color: string;
+    smoke: SmokeColor;
+    div: number;
+    isSolid: boolean;
+};
+
 export const Smoke = ({
     onWin = () => { },
     onNextImage,
@@ -111,19 +119,20 @@ export const Smoke = ({
     const targetHeight = height || window.innerHeight;
     const calcCellSize = Math.floor(Math.min(targetWidth, targetHeight) / MINRES);
 
-    const gridSizeRef = useRef({
+    const initialGridDimensions = {
         cols: Math.ceil(targetWidth / calcCellSize),
         rows: Math.ceil(targetHeight / calcCellSize),
         cellSize: calcCellSize,
-    });
-    const [gridDimensions, setGridDimensions] = useState(gridSizeRef.current);
+    };
+    const gridSizeRef = useRef(initialGridDimensions);
+    const [gridDimensions, setGridDimensions] = useState(initialGridDimensions);
 
-    const boardRef = useRef<any[][]>([]);
+    const boardRef = useRef<SmokeCell[][]>([]);
     const velocityXRef = useRef<number[][]>([]);
     const velocityYRef = useRef<number[][]>([]);
     const tempVelocityXRef = useRef<number[][]>([]);
     const tempVelocityYRef = useRef<number[][]>([]);
-    const tempSmokeRef = useRef<any[][]>([]);
+    const tempSmokeRef = useRef<SmokeColor[][]>([]);
 
     const initGrid = (cols: number, rows: number) => {
         gridSizeRef.current.cols = cols;
@@ -587,7 +596,7 @@ export const Smoke = ({
                     if (prevSolid) continue;
 
                     //diffuse smoke from neighbors 
-                    let laplacian = { r: 0, g: 0, b: 0, t: 0 }
+                    const laplacian = { r: 0, g: 0, b: 0, t: 0 }
                     let tot = 0
                     if (!board[i - 1][j].isSolid) {
                         laplacian.r += newSmoke[i - 1][j].r;
