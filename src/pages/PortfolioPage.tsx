@@ -9,14 +9,14 @@ const PortfolioPage = () => (
       <div className="max-w-3xl">
         <h1 className="font-sans text-4xl font-medium text-[#202020] dark:text-[#f5f5f2]">Gadgets</h1>
         <p className="mt-4 text-xl leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">
-          Research artifacts, games, simulations, and small systems that made a problem feel more physical.
+          Games, simulations, renderers, and small experiments.
         </p>
       </div>
 
       <div className="mt-10">
         {portfolioProjects.map((project) => (
           <article key={project.id} className={`${getRuleClass()} grid gap-5 py-8 md:grid-cols-[15rem_1fr]`}>
-            <div className="aspect-[4/3] overflow-hidden rounded-md bg-black/5 dark:bg-white/10">
+            <div className="aspect-[4/3] overflow-hidden rounded-sm bg-black/5 dark:bg-white/10">
               <Carousel images={project.images} label={project.title} />
             </div>
 
@@ -30,14 +30,14 @@ const PortfolioPage = () => (
                 {project.description}
               </p>
 
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-x-3 gap-y-1">
                 {project.tags.map((tag) => (
                   <span key={tag} className={getTagClass()}>{tag}</span>
                 ))}
               </div>
 
               {project.links.length > 0 && (
-                <div className="mt-5 flex flex-wrap gap-2">
+                <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2">
                   {project.links.map((link, index) => (
                     <a
                       key={link.href}

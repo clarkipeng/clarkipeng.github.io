@@ -12,7 +12,7 @@ function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <div className={`flex min-h-screen flex-col ${pageBackground}`}>
+        <div className={`relative z-10 flex min-h-screen flex-col ${pageBackground}`}>
           <Header />
           <Routes>
             <Route path="/" element={<HomePage />} />

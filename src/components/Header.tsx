@@ -8,11 +8,11 @@ export const Header = () => {
   const { isDark } = useTheme();
 
   return (
-    <header className={`sticky top-0 z-40 w-full border-b border-black/10 bg-[#fbfbfa]/90 backdrop-blur dark:border-white/15 dark:bg-[#050505]/90 ${pageBackground}`}>
-      <div className="mx-auto flex min-h-16 w-full max-w-6xl items-center justify-between gap-5 px-5 sm:px-8">
+    <header className={`w-full ${pageBackground}`}>
+      <div className="mx-auto flex min-h-14 w-full max-w-[980px] items-center justify-between gap-5 px-5 sm:px-8">
         <Link
           to="/"
-          className="shrink-0 font-sans text-sm font-medium uppercase text-[#202020] no-underline hover:opacity-70 dark:text-[#f5f5f2]"
+          className="shrink-0 font-sans text-sm font-medium uppercase text-[#202020] no-underline hover:text-[#676760] dark:text-[#f5f5f2] dark:hover:text-[#b9b9b0]"
         >
           {siteConfig.wordmark}
         </Link>
@@ -23,10 +23,10 @@ export const Header = () => {
               key={item.href}
               to={item.href}
               className={({ isActive }) =>
-                `${item.href === '/' ? 'hidden sm:inline-flex' : 'inline-flex'} rounded-full px-2.5 py-2 font-sans text-sm no-underline transition duration-200 hover:bg-black/5 sm:px-3 dark:hover:bg-white/10 ${
+                `${item.href === '/' ? 'hidden sm:inline-flex' : 'inline-flex'} border-b py-1 font-sans text-sm no-underline transition duration-200 ${
                   isActive
-                    ? 'text-[#202020] dark:text-white'
-                    : 'text-[#6c6c64] dark:text-[#b9b9b0]'
+                    ? 'border-[#202020] text-[#202020] dark:border-white dark:text-white'
+                    : 'border-transparent text-[#6c6c64] hover:border-black/20 hover:text-[#202020] dark:text-[#b9b9b0] dark:hover:border-white/25 dark:hover:text-white'
                 }`
               }
             >
@@ -34,20 +34,24 @@ export const Header = () => {
             </NavLink>
           ))}
 
-          {isDark && (
-            <NavLink
-              to="/smoke"
-              className={({ isActive }) =>
-                `hidden rounded-full px-3 py-2 font-sans text-sm no-underline transition duration-200 hover:bg-white/10 sm:inline-flex ${
-                  isActive ? 'text-white' : 'text-[#b9b9b0]'
-                }`
-              }
-            >
-              Smoke
-            </NavLink>
-          )}
-
           <ThemeToggle />
+
+          <NavLink
+            to="/smoke"
+            aria-hidden={!isDark}
+            tabIndex={isDark ? undefined : -1}
+            className={({ isActive }) =>
+              `hidden min-w-11 border-b py-1 text-center font-sans text-sm no-underline transition duration-200 sm:inline-flex ${
+                isDark
+                  ? isActive
+                    ? 'border-white text-white'
+                    : 'border-transparent text-[#b9b9b0] hover:border-white/25 hover:text-white'
+                  : 'invisible pointer-events-none border-transparent'
+              }`
+            }
+          >
+            Smoke
+          </NavLink>
         </nav>
       </div>
     </header>

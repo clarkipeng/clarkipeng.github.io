@@ -7,7 +7,7 @@ const PublicationsPage = () => (
     <section className={`${contentMeasure} py-12 sm:py-16`}>
       <h1 className="font-sans text-4xl font-medium text-[#202020] dark:text-[#f5f5f2]">Papers</h1>
       <p className="mt-4 text-xl leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">
-        Work on evaluating, controlling, and reframing model behavior.
+        Papers on how models see, generate, and reason.
       </p>
 
       <div className="mt-10">
@@ -23,7 +23,7 @@ const PublicationsPage = () => (
             <p className="mt-1 font-sans text-sm text-[#202020] dark:text-[#ededeb]">{pub.venue}</p>
             <p className="mt-4 text-[18px] leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">{pub.abstract}</p>
 
-            <div className="mt-5 flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2">
               {pub.links.map((link, index) => (
                 <a
                   key={link.href}
