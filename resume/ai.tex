@@ -78,16 +78,16 @@
 % - Compared against old public 2025 resume PDF and Resume_Work_AI (7-10): retained strongest older signals (Camfer scale, CAD translation/replay, Scale AI coding harnesses, Kaggle, ICPC, graphics) while removing phone number, HMC/MIT Beaverworks, broad research-only framing, and weaker/older project details from the visible version.
 % - Keep visible resume one page. Add role-specific variants as comments first, then promote only the strongest role-relevant bullets.
 % - Formatting rule: experience can use bullets, but the bottom achievements section should stay compact and table-like rather than repeating one bullet under every heading.
-% - Current lead story: CTO at Origami (YC S26), building tools for AI researchers at https://origamiresearch.co.
-% - Origami product context: cloud GPU orchestration for training jobs, experiment tracking, run management, logs, metrics, artifacts, AWS ECS-backed backend/image loading, and GPU launch support across Lambda Cloud, AWS EC2, CoreWeave, and Azure.
+% - Current lead story: CTO at Catapult Games (YC S26), building the product and systems behind https://playcatapult.io.
+% - Catapult Games context: do not frame the company as AI researcher tooling unless the user explicitly changes that positioning.
 % - For Citadel / quant / systems roles: emphasize C++, Python, algorithms, ICPC, Kaggle, GPU programming, distributed systems, reliability, and hard performance/data-scale numbers.
-% - For AI infrastructure roles: emphasize Origami, Camfer multimodal training throughput, synthetic data pipelines, distributed rollouts, and cloud lifecycle handling.
+% - For AI infrastructure roles: emphasize Catapult Games systems/product engineering, Camfer multimodal training throughput, synthetic data pipelines, distributed rollouts, and cloud lifecycle handling.
 % - For research roles: emphasize UCLA NLP, VideoPhy-2 (ICLR 2026), DialectGen, Event Detection via PDF Regression, and HMC music model steering.
-% - Clark was about to join Modular before Origami and learned Mojo/CUDA; keep this as a skills/performance signal unless the user confirms an actual Modular role.
+% - Clark was about to join Modular before Catapult Games and learned Mojo/CUDA; keep this as a skills/performance signal unless the user confirms an actual Modular role.
 % - Phone number was removed by preference; ask before re-adding it to the header or website.
 %
 % OPTIONAL BACKGROUND BANK FOR FUTURE TAILORING:
-% - Origami details: startup in YC Summer 2026 batch; tools for AI researchers; cloud GPU orchestration for training, experiment tracking, run management, logs, metrics, artifacts, AWS ECS-backed backend/image loading, and GPU launch support across Lambda Cloud, AWS EC2, CoreWeave, and Azure.
+% - Catapult Games details: startup in YC Summer 2026 batch; build visible resume bullets around product, systems, games, deployment, and iteration. Avoid unsupported claims about AI research tooling.
 % - If applying to SWE / quant dev: lead with systems credibility, C++ problem solving, ICPC, Kaggle, Dockerized execution, cloud reliability, CUDA/Mojo, and low-level graphics/GPU projects.
 % - Additional defensible systems skills: C++17/20 STL, C++ concurrency/multithreading, Linux, gdb, CMake, CUDA programming model, GPU kernels, PostgreSQL, NumPy, pandas, SciPy.
 % - Kernel-writing context: wrote practice convolution, attention, and other GPU kernels in Mojo; visible resume can use CUDA/Mojo GPU kernels for familiarity, but avoid claiming production handwritten CUDA kernel work unless added later.
@@ -96,7 +96,7 @@
 % - UCLA NLP: VideoPhy-2 is ICLR 2026 and won Best Paper at the ICML 2025 WorldModel Workshop; also contributed to DialectGen on dialect robustness in multimodal generation.
 % - UCLA NLP current MoE project: optimized 30B MoE (3B active) routing-alignment training with teacher/student passes; changed large padded batches into a single packed batch using FlashAttention sequence-length packing, reducing padding/model passes for a 2x speedup.
 % - HMC Music Retrieval Lab: researched MusicGen steering with prompt distillation, DPO, self-distillation, A/B testing, and activation analysis across 1M+ audio datapoints.
-% - Camfer: worked in a 50k+ line codebase; trained on 8 H100s; improved model training throughput 10x; accelerated preprocessing/tokenization 100x from hours to minutes; processed 800k CAD parts; built distributed EC2 rollouts and a replay layer that caught dozens of integration-test misses.
+% - Camfer: worked in a 50k+ line codebase; worked on LLM post-training and mid-training; improved model training throughput 10x; accelerated preprocessing/tokenization 100x from hours to minutes; processed 800k CAD parts; built distributed EC2 rollouts and a replay layer that caught dozens of integration-test misses.
 % - Camfer optional details: 10,000+ line CAD data translation/replay layer; SolidWorks and Onshape APIs; deterministic trace replay; async rollouts ran on 8 EC2 instances and supported 100; doubled active/addressable user base if the metric is appropriate for the target role.
 % - Competitive programming: Codeforces handle werus23, Expert with 1720 max rating and 469 solved problems as of June 2026; user also reports USACO Platinum.
 % - Graphics projects: 4D C++/OpenGL fruit-merging game engine, CPU/audio raytracer, GPU-accelerated Unity slime simulation with 1M agents at 120 FPS, BVHs, custom 4D shader, Verlet sphere physics, RL arm trained to grasp objects and throw them at targets, emergent simulation interests. Keep the visible version focused on graphics/performance; omit the RL arm unless tailoring to robotics or Unity roles.
@@ -116,8 +116,8 @@
 \section{Education}
   \resumeSubHeadingListStart
     \resumeSubheading
-      {University of California, Los Angeles}{2024 -- Present}
-      {B.S. in Computer Science (GPA: 4.0)}{Los Angeles, CA}
+      {University of California, Los Angeles}{Los Angeles, CA}
+      {B.S. in Computer Science (GPA: 4.0)}{Expected June 2028}
   \resumeSubHeadingListEnd
 
 \section{Technical Skills}
@@ -132,18 +132,18 @@
 \section{Experience}
   \resumeSubHeadingListStart
     \resumeSubheading
-      {\href{https://origamiresearch.co}{Origami (YC S26)}}{San Francisco, CA}
+      {\href{https://playcatapult.io}{Catapult Games (YC S26)}}{San Francisco, CA}
       {CTO}{2026 -- Present}
       \resumeItemListStart
-        \resumeItem{Lead architecture and development of AI research infrastructure for cloud GPU training, experiment tracking, observability, artifact storage, and run lifecycle management.}
-        \resumeItem{Built AWS ECS-backed services to launch and manage GPU runs across Lambda Cloud, AWS EC2, CoreWeave, and Azure, including inspection, cancellation, cleanup, and debugging workflows.}
+        \resumeItem{Lead engineering for Catapult Games, building the core product, game systems, and web experience.}
+        \resumeItem{Own product architecture across frontend, backend, deployment, analytics, and internal tooling.}
       \resumeItemListEnd
 
     \resumeSubheading
       {\href{https://camfer.dev}{Camfer (YC S24)}}{San Francisco, CA}
       {Software Engineering Intern}{Aug 2025 -- Dec 2025}
       \resumeItemListStart
-        \resumeItem{Scaled multimodal training for Qwen2.5-VL and Qwen3-VL (8B/30B) on 8 H100 GPUs using FSDP and multimodal sequence packing, increasing throughput 10x.}
+        \resumeItem{Scaled LLM post-training and mid-training for Qwen2.5-VL and Qwen3-VL using FSDP and multimodal sequence packing, increasing throughput 10x.}
         \resumeItem{Built a sharded synthetic-data pipeline that generated 600M+ tokens from 800K CAD parts and reduced preprocessing and tokenization from hours to minutes.}
         \resumeItem{Built asynchronous EC2 rollout system for model error correction and a 10,000+ line SolidWorks/Onshape replay layer that caught dozens of errors missed by integration tests.}
       \resumeItemListEnd

@@ -239,7 +239,7 @@ export const education = [
     id: 1,
     school: 'University of California, Los Angeles',
     degree: 'B.S. Computer Science',
-    period: '2024 - 2027',
+    period: '2024 - 2028',
     description: 'CS at UCLA. I lead ACM AI and spend a lot of time around research and technical projects.',
   },
 ];
