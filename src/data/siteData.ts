@@ -52,7 +52,7 @@ export const navigation = [
   { label: 'Home', href: '/' },
   { label: 'Gadgets', href: '/portfolio' },
   { label: 'Papers', href: '/publications' },
-  { label: 'CV', href: '/cv' },
+  { label: 'Resume', href: '/resume' },
 ];
 
 export const aboutParagraphs = [

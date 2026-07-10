@@ -1,20 +1,22 @@
-import { ArrowUpRight, Gamepad2, Github, GraduationCap, Linkedin, Trophy, X as XIcon } from 'lucide-react';
+import { ArrowUpRight, X as XIcon } from 'lucide-react';
+import type { ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Carousel } from '../components/Carousel';
+import { GithubIcon, GoogleScholarIcon, ItchIcon, KaggleIcon, LinkedInIcon } from '../components/Icons';
 import { aboutParagraphs, experience, portfolioProjects, publications, siteConfig, socialLinks } from '../data/siteData';
 import { contentMeasure, getButtonClass, getRuleClass, getTagClass, pageBackground } from '../data/theme';
 
 const featuredProjects = portfolioProjects.filter((project) => project.featured).slice(0, 4);
 const currentWork = experience[0];
 const currentWorkLabel = currentWork?.company.replace(/\s+\(.+\)$/, '');
-const socialIcons: Record<string, LucideIcon> = {
+const socialIcons: Record<string, LucideIcon | ComponentType<{ className?: string }>> = {
   x: XIcon,
-  linkedin: Linkedin,
-  scholar: GraduationCap,
-  github: Github,
-  kaggle: Trophy,
-  itch: Gamepad2,
+  linkedin: LinkedInIcon,
+  scholar: GoogleScholarIcon,
+  github: GithubIcon,
+  kaggle: KaggleIcon,
+  itch: ItchIcon,
 };
 
 const HomePage = () => (
@@ -110,14 +112,21 @@ const HomePage = () => (
         </div>
       </section>
 
-      <footer className={`${getRuleClass()} mt-16 flex flex-wrap gap-x-4 gap-y-2 pt-5 font-sans text-sm text-[#676760] dark:text-[#b9b9b0]`}>
+      <footer className={`${getRuleClass()} mt-16 flex flex-wrap gap-3 pt-5 text-[#676760] dark:text-[#b9b9b0]`}>
         {socialLinks.map((link) => {
           const Icon = socialIcons[link.type] ?? ArrowUpRight;
 
           return (
-            <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 underline decoration-black/20 underline-offset-4 hover:text-[#202020] dark:decoration-white/25 dark:hover:text-white">
-              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-              {link.label}
+            <a
+              key={link.href}
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={link.label}
+              title={link.label}
+              className="inline-flex h-7 w-7 items-center justify-center hover:text-[#202020] dark:hover:text-white"
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
             </a>
           );
         })}
