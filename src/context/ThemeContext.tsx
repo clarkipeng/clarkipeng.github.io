@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { ThemeShaderCanvas } from '../components/ThemeShaderCanvas';
 import type { ThemeShaderTransition } from '../components/ThemeShaderCanvas';
@@ -13,20 +13,12 @@ interface ThemeContextType {
     theme: Theme;
     toggleTheme: (origin?: ThemeOrigin) => void;
     isDark: boolean;
+    showSmoke: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const getTransitionRadius = (origin: ThemeOrigin) => Math.ceil(Math.max(
-    Math.hypot(origin.x, origin.y),
-    Math.hypot(window.innerWidth - origin.x, origin.y),
-    Math.hypot(origin.x, window.innerHeight - origin.y),
-    Math.hypot(window.innerWidth - origin.x, window.innerHeight - origin.y),
-));
-
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-    const [shaderTransition, setShaderTransition] = useState<ThemeShaderTransition | null>(null);
-
     // Check localStorage and system preference on mount
     const [theme, setTheme] = useState<Theme>(() => {
         if (typeof window !== 'undefined') {
@@ -40,6 +32,9 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
         return 'light';
     });
+    const [shaderTransition, setShaderTransition] = useState<ThemeShaderTransition | null>(null);
+    const [showSmoke, setShowSmoke] = useState(theme === 'dark');
+    const transitionTimeoutRef = useRef<number | null>(null);
 
     useEffect(() => {
         // Update document class and localStorage
@@ -55,10 +50,27 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     }, [theme]);
 
     useEffect(() => {
-        if (!shaderTransition) return;
+        const root = document.documentElement;
+        if (transitionTimeoutRef.current) window.clearTimeout(transitionTimeoutRef.current);
 
-        const timeout = window.setTimeout(() => setShaderTransition(null), shaderTransition.duration + 180);
-        return () => window.clearTimeout(timeout);
+        if (!shaderTransition) {
+            root.classList.remove('theme-text-adaptive');
+            root.style.removeProperty('--adaptive-text-color');
+            return;
+        }
+
+        root.classList.add('theme-text-adaptive');
+        root.style.setProperty('--adaptive-text-color', shaderTransition.to === 'dark' ? '#fafaf7' : '#dbdbda');
+        transitionTimeoutRef.current = window.setTimeout(() => {
+            setShaderTransition(null);
+            setShowSmoke(shaderTransition.to === 'dark');
+            root.classList.remove('theme-text-adaptive');
+            root.style.removeProperty('--adaptive-text-color');
+        }, shaderTransition.duration + 120);
+
+        return () => {
+            if (transitionTimeoutRef.current) window.clearTimeout(transitionTimeoutRef.current);
+        };
     }, [shaderTransition]);
 
     const toggleTheme = (origin?: ThemeOrigin) => {
@@ -70,31 +82,34 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
 
         const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const root = document.documentElement;
         const transitionOrigin = origin ?? {
-            x: window.innerWidth / 2,
-            y: window.innerHeight / 2,
+            x: window.scrollX + window.innerWidth / 2,
+            y: window.scrollY + window.innerHeight / 2,
         };
 
         if (!prefersReducedMotion) {
+            root.classList.add('theme-text-adaptive');
+            root.style.setProperty('--adaptive-text-color', nextTheme === 'dark' ? '#fafaf7' : '#dbdbda');
+            if (nextTheme === 'dark') setShowSmoke(false);
             setShaderTransition({
                 id: Date.now(),
                 from: theme,
                 to: nextTheme,
                 origin: transitionOrigin,
-                radius: getTransitionRadius(transitionOrigin),
-                feather: window.innerWidth < 640 ? 80 : 120,
-                duration: 700,
+                duration: 1800,
             });
         } else {
             setShaderTransition(null);
+            setShowSmoke(nextTheme === 'dark');
         }
 
         setTheme(nextTheme);
     };
 
     return (
-        <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === 'dark' }}>
-            <ThemeShaderCanvas transition={shaderTransition} />
+        <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === 'dark', showSmoke }}>
+            <ThemeShaderCanvas transition={shaderTransition} onSmokeReach={(reachedTheme) => setShowSmoke(reachedTheme === 'dark')} />
             {children}
         </ThemeContext.Provider>
     );

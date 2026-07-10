@@ -1,11 +1,10 @@
 import { Link, NavLink } from 'react-router-dom';
 import { navigation, siteConfig } from '../data/siteData';
 import { pageBackground } from '../data/theme';
-import { ThemeToggle } from './ThemeToggle';
 import { useTheme } from '../context/ThemeContext';
 
 export const Header = () => {
-  const { isDark } = useTheme();
+  const { isDark, showSmoke } = useTheme();
 
   return (
     <header className={`w-full ${pageBackground}`}>
@@ -34,18 +33,19 @@ export const Header = () => {
             </NavLink>
           ))}
 
-          <ThemeToggle />
-
           <NavLink
             to="/smoke"
-            aria-hidden={!isDark}
-            tabIndex={isDark ? undefined : -1}
+            data-smoke-link
+            aria-hidden={!showSmoke}
+            tabIndex={showSmoke ? undefined : -1}
             className={({ isActive }) =>
               `hidden min-w-11 border-b py-1 text-center font-sans text-sm no-underline transition duration-200 sm:inline-flex ${
-                isDark
+                showSmoke
                   ? isActive
-                    ? 'border-white text-white'
-                    : 'border-transparent text-[#b9b9b0] hover:border-white/25 hover:text-white'
+                    ? isDark
+                      ? 'border-white text-white'
+                      : 'border-[#202020] text-[#202020]'
+                    : 'border-transparent text-[#6c6c64] hover:border-black/20 hover:text-[#202020] dark:text-[#b9b9b0] dark:hover:border-white/25 dark:hover:text-white'
                   : 'invisible pointer-events-none border-transparent'
               }`
             }
