@@ -263,10 +263,10 @@ const writeParticles = (particles: Particle[], elapsed: number, values: Float32A
 
 export const ThemeShaderCanvas = ({
   transition,
-  onSmokeReach,
+  onSmokeVisibilityChange,
 }: {
   transition: ThemeShaderTransition | null;
-  onSmokeReach: (theme: ShaderTheme) => void;
+  onSmokeVisibilityChange: (visible: boolean) => void;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<WebGL2RenderingContext | null>(null);
@@ -278,9 +278,9 @@ export const ThemeShaderCanvas = ({
   const vaoRef = useRef<WebGLVertexArrayObject | null>(null);
   const surfaceRef = useRef<Surface | null>(null);
   const metaRef = useRef<TransitionMeta | null>(null);
-  const onSmokeReachRef = useRef(onSmokeReach);
+  const onSmokeVisibilityChangeRef = useRef(onSmokeVisibilityChange);
   const [active, setActive] = useState(false);
-  onSmokeReachRef.current = onSmokeReach;
+  onSmokeVisibilityChangeRef.current = onSmokeVisibilityChange;
 
   useLayoutEffect(() => {
     if (!transition) {
@@ -332,13 +332,13 @@ export const ThemeShaderCanvas = ({
     let last = performance.now();
     const started = last;
     const particleValues = new Float32Array(PARTICLES * 4);
-    const sample = new Uint8Array(1);
+    const sample = new Uint8Array(9);
     const doc = pageSize();
     const from = colors[transition.from];
     const to = colors[transition.to];
     const previous = metaRef.current;
     let prepared = false;
-    let smokeReached = transition.to !== 'dark';
+    let lastSmokeVisible: boolean | null = null;
 
     const ensureSurface = () => {
       const viewportW = window.innerWidth;
@@ -400,18 +400,32 @@ export const ThemeShaderCanvas = ({
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       current.read = write as 0 | 1;
 
-      if (!smokeReached) {
-        const smoke = document.querySelector<HTMLElement>('[data-smoke-link]');
-        const rect = smoke?.getBoundingClientRect();
-        if (rect && rect.width > 0 && rect.height > 0) {
-          const x = Math.floor(((window.scrollX + rect.left + rect.width / 2) / doc.w) * current.w);
-          const y = Math.floor(((doc.h - (window.scrollY + rect.top + rect.height / 2)) / doc.h) * current.h);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, current.fb[current.read]);
-          gl.readPixels(Math.min(current.w - 1, Math.max(0, x)), Math.min(current.h - 1, Math.max(0, y)), 1, 1, gl.RED, gl.UNSIGNED_BYTE, sample);
-          if (sample[0] > 142) {
-            smokeReached = true;
-            onSmokeReachRef.current(transition.to);
-          }
+      const smoke = document.querySelector<HTMLElement>('[data-smoke-link]');
+      const rect = smoke?.getBoundingClientRect();
+      if (rect && rect.width > 0 && rect.height > 0) {
+        const x = Math.floor(((window.scrollX + rect.left + rect.width / 2) / doc.w) * current.w);
+        const y = Math.floor(((doc.h - (window.scrollY + rect.top + rect.height / 2)) / doc.h) * current.h);
+        const sampleW = Math.min(3, current.w);
+        const sampleH = Math.min(3, current.h);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, current.fb[current.read]);
+        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+        gl.readPixels(
+          Math.min(current.w - sampleW, Math.max(0, x - 1)),
+          Math.min(current.h - sampleH, Math.max(0, y - 1)),
+          sampleW,
+          sampleH,
+          gl.RED,
+          gl.UNSIGNED_BYTE,
+          sample,
+        );
+        let total = 0;
+        for (let i = 0; i < sampleW * sampleH; i += 1) total += sample[i];
+        const state = total / (sampleW * sampleH);
+        const blackness = transition.to === 'dark' ? state : 255 - state;
+        const smokeVisible = blackness > 138;
+        if (smokeVisible !== lastSmokeVisible) {
+          lastSmokeVisible = smokeVisible;
+          onSmokeVisibilityChangeRef.current(smokeVisible);
         }
       }
 

@@ -109,7 +109,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 
     return (
         <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === 'dark', showSmoke }}>
-            <ThemeShaderCanvas transition={shaderTransition} onSmokeReach={(reachedTheme) => setShowSmoke(reachedTheme === 'dark')} />
+            <ThemeShaderCanvas transition={shaderTransition} onSmokeVisibilityChange={setShowSmoke} />
             {children}
         </ThemeContext.Provider>
     );
