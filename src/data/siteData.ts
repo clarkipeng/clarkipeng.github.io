@@ -1,7 +1,7 @@
 export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
-  title: 'CTO at Catapult Games, CS at UCLA.',
+  title: 'CTO at Catapult, CS at UCLA.',
   bio: 'I like building systems, games, and model-evaluation projects.',
   location: 'Los Angeles, CA / San Jose, CA',
   email: 'cipeng@ucla.edu',
@@ -56,16 +56,16 @@ export const navigation = [
 ];
 
 export const aboutParagraphs = [
-  'I am the CTO of Catapult Games and study CS at UCLA.',
-  'Before Catapult Games, I worked at Camfer on text-to-CAD models, LLM post-training and mid-training, and CAD tools.',
+  'I am the CTO of Catapult and study CS at UCLA.',
+  'Before Catapult, I worked at Camfer on text-to-CAD models, LLM post-training and mid-training, and CAD tools.',
   'My research is about understanding generative models. I have worked on VideoPhy-2 for video generation evaluation and DialectGen for dialect robustness.',
   'Outside of that, I lead ACM AI at UCLA, compete on Kaggle, and build graphics and simulation projects.',
 ];
 
 export const highlights = [
   {
-    label: 'Catapult Games',
-    text: 'Building the product and systems behind Catapult Games.',
+    label: 'Catapult',
+    text: 'Building the product and systems behind Catapult.',
   },
   {
     label: 'Research',
@@ -186,11 +186,11 @@ export const experience = [
   {
     id: 1,
     role: 'CTO',
-    company: 'Catapult Games (YC S26)',
+    company: 'Catapult (YC S26)',
     companyUrl: 'https://playcatapult.io/',
     location: 'San Francisco, CA',
     period: '2026 - Present',
-    description: 'Building the product and systems behind Catapult Games.',
+    description: 'Building the product and systems behind Catapult.',
     tags: ['Product Engineering', 'Games', 'Systems'],
   },
   {

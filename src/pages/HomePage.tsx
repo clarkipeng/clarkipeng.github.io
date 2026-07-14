@@ -4,12 +4,10 @@ import type { LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Carousel } from '../components/Carousel';
 import { GithubIcon, GoogleScholarIcon, ItchIcon, KaggleIcon, LinkedInIcon } from '../components/Icons';
-import { aboutParagraphs, experience, portfolioProjects, publications, siteConfig, socialLinks } from '../data/siteData';
-import { contentMeasure, getButtonClass, getRuleClass, getTagClass, pageBackground } from '../data/theme';
+import { aboutParagraphs, portfolioProjects, publications, siteConfig, socialLinks } from '../data/siteData';
+import { contentMeasure, getRuleClass, getTagClass, pageBackground } from '../data/theme';
 
 const featuredProjects = portfolioProjects.filter((project) => project.featured).slice(0, 4);
-const currentWork = experience[0];
-const currentWorkLabel = currentWork?.company.replace(/\s+\(.+\)$/, '');
 const socialIcons: Record<string, LucideIcon | ComponentType<{ className?: string }>> = {
   x: XIcon,
   linkedin: LinkedInIcon,
@@ -31,14 +29,6 @@ const HomePage = () => (
             {siteConfig.title}
           </p>
 
-          <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2">
-            {currentWork?.companyUrl && (
-              <a href={currentWork.companyUrl} className={getButtonClass('primary')} target="_blank" rel="noopener noreferrer">
-                {currentWorkLabel}
-                <ArrowUpRight className="ml-1 h-4 w-4" aria-hidden="true" />
-              </a>
-            )}
-          </div>
         </div>
 
         <img
@@ -49,7 +39,14 @@ const HomePage = () => (
       </div>
 
       <article className="space-y-5 text-[18px] leading-8 text-[#2d2d29] dark:text-[#ededeb]">
-        {aboutParagraphs.map((paragraph) => (
+        <p>
+          I am the CTO of{' '}
+          <a href="https://playcatapult.io/" target="_blank" rel="noopener noreferrer" className="underline decoration-black/20 underline-offset-4 hover:text-[#202020] dark:decoration-white/25 dark:hover:text-white">
+            Catapult
+          </a>{' '}
+          and study CS at UCLA.
+        </p>
+        {aboutParagraphs.slice(1).map((paragraph) => (
           <p key={paragraph}>{paragraph}</p>
         ))}
       </article>
