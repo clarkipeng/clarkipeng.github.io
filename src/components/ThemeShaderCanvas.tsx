@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
+import { ThemeShaderCanvasWebGPU } from './ThemeShaderCanvasWebGPU';
 
 type ShaderTheme = 'light' | 'dark';
 
@@ -261,7 +262,7 @@ const writeParticles = (particles: Particle[], elapsed: number, values: Float32A
   return count;
 };
 
-export const ThemeShaderCanvas = ({
+const ThemeShaderCanvasWebGL = ({
   transition,
   onSmokeVisibilityChange,
 }: {
@@ -280,7 +281,10 @@ export const ThemeShaderCanvas = ({
   const metaRef = useRef<TransitionMeta | null>(null);
   const onSmokeVisibilityChangeRef = useRef(onSmokeVisibilityChange);
   const [active, setActive] = useState(false);
-  onSmokeVisibilityChangeRef.current = onSmokeVisibilityChange;
+
+  useLayoutEffect(() => {
+    onSmokeVisibilityChangeRef.current = onSmokeVisibilityChange;
+  }, [onSmokeVisibilityChange]);
 
   useLayoutEffect(() => {
     if (!transition) {
@@ -339,6 +343,7 @@ export const ThemeShaderCanvas = ({
     const previous = metaRef.current;
     let prepared = false;
     let lastSmokeVisible: boolean | null = null;
+    let nextSmokeSample = 0;
 
     const ensureSurface = () => {
       const viewportW = window.innerWidth;
@@ -400,9 +405,10 @@ export const ThemeShaderCanvas = ({
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       current.read = write as 0 | 1;
 
-      const smoke = document.querySelector<HTMLElement>('[data-smoke-link]');
+      const smoke = now >= nextSmokeSample ? document.querySelector<HTMLElement>('[data-smoke-link]') : null;
       const rect = smoke?.getBoundingClientRect();
       if (rect && rect.width > 0 && rect.height > 0) {
+        nextSmokeSample = now + 140;
         const x = Math.floor(((window.scrollX + rect.left + rect.width / 2) / doc.w) * current.w);
         const y = Math.floor(((doc.h - (window.scrollY + rect.top + rect.height / 2)) / doc.h) * current.h);
         const sampleW = Math.min(3, current.w);
@@ -453,4 +459,20 @@ export const ThemeShaderCanvas = ({
   }, [transition]);
 
   return <canvas ref={canvasRef} aria-hidden="true" className={`theme-shader-canvas ${active ? 'is-active' : ''}`} />;
+};
+
+export const ThemeShaderCanvas = (props: {
+  transition: ThemeShaderTransition | null;
+  onSmokeVisibilityChange: (visible: boolean) => void;
+}) => {
+  const [backend, setBackend] = useState<'webgpu' | 'webgl'>(() => {
+    if (typeof navigator === 'undefined') return 'webgl';
+    return 'gpu' in navigator ? 'webgpu' : 'webgl';
+  });
+
+  if (backend === 'webgpu') {
+    return <ThemeShaderCanvasWebGPU {...props} onUnavailable={() => setBackend('webgl')} />;
+  }
+
+  return <ThemeShaderCanvasWebGL {...props} />;
 };
