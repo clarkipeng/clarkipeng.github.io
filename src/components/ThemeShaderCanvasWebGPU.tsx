@@ -61,7 +61,6 @@ type WebGpuRuntime = {
   renderParams: unknown;
   particleSeedBuffer: unknown;
   particleBuffer: unknown;
-  particleBindGroup: unknown;
   smokeReadbacks: ReadbackSlot[];
 };
 
@@ -77,6 +76,7 @@ type WebGpuSurface = {
   simBindGroups: [unknown, unknown];
   renderBindGroups: [unknown, unknown];
   transformBindGroups: [unknown, unknown];
+  particleBindGroups: [unknown, unknown];
   read: 0 | 1;
 };
 
@@ -95,8 +95,9 @@ const PARTICLES = 96;
 const CELL_SIZE = 14;
 const PARTICLE_TRAIL_SECONDS = 0.18;
 const PARTICLE_INTENSITY = 0.1;
+const PARTICLE_STEER_STRENGTH = 0.18;
 const SETTLE_MS = 600;
-const MAX_PARTICLE_BYTES = PARTICLES * 32;
+const MAX_PARTICLE_BYTES = PARTICLES * 48;
 const PARTICLE_SEED_STRIDE_BYTES = PARTICLES * 16;
 const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 2;
 const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
@@ -160,6 +161,7 @@ const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
 
 const shader = `const PARTICLES = ${PARTICLES}u;
 const PARTICLE_INTENSITY = ${PARTICLE_INTENSITY};
+const PARTICLE_STEER_STRENGTH = ${PARTICLE_STEER_STRENGTH};
 
 struct SimParams {
   size: vec2<f32>,
@@ -172,6 +174,9 @@ struct ParticleParams {
   elapsed: f32,
   particle_count: f32,
   trail_seconds: f32,
+  target_value: f32,
+  delta_seconds: f32,
+  reset: f32,
 };
 
 struct RenderParams {
@@ -191,8 +196,15 @@ fn reflect_coord(value: f32, max_value: f32) -> f32 {
 
 @group(3) @binding(0) var<storage, read> particle_seed_a: array<vec4<f32>>;
 @group(3) @binding(1) var<storage, read> particle_seed_b: array<vec4<f32>>;
+@group(3) @binding(2) var steer_state: texture_2d<f32>;
 @group(3) @binding(3) var<storage, read_write> live_particles: array<vec4<f32>>;
 @group(3) @binding(4) var<uniform> particle_params: ParticleParams;
+
+fn steer_score(pos: vec2<i32>) -> f32 {
+  let limit = vec2<i32>(particle_params.size) - vec2<i32>(1);
+  let value = textureLoad(steer_state, clamp(pos, vec2<i32>(0), limit), 0).r;
+  return select(1.0 - value, value, particle_params.target_value > 0.5);
+}
 
 @compute @workgroup_size(64)
 fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -204,24 +216,45 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // let delay = seed_b.x;
   // let life = seed_b.y;
-  let age = particle_params.elapsed;
-  // if (age < 0.0 || age > life) {
-  //   live_particles[gid.x] = vec4<f32>(0.0);
-  //   return;
-  // }
+  let reset = particle_params.reset > 0.5;
+  let previous = live_particles[gid.x];
+  let history = live_particles[PARTICLES + gid.x];
+  let position = select(previous.xy, vec2<f32>(seed_a.x, seed_a.y), reset);
+  let previous_velocity = select(history.zw, seed_a.zw, reset);
+  let speed = max(length(seed_a.zw), 0.001);
+  let offsets = array<vec2<i32>, 8>(
+    vec2<i32>(-1, -1), vec2<i32>(0, -1), vec2<i32>(1, -1), vec2<i32>(-1, 0),
+    vec2<i32>(1, 0), vec2<i32>(-1, 1), vec2<i32>(0, 1), vec2<i32>(1, 1)
+  );
+  var best_position = vec2<i32>(position);
+  var best_score = steer_score(best_position);
+  for (var j = 0u; j < 8u; j = j + 1u) {
+    let candidate = vec2<i32>(position) + offsets[j];
+    let score = steer_score(candidate);
+    if (score > best_score) {
+      best_score = score;
+      best_position = candidate;
+    }
+  }
 
-  let seconds = age / 1000.0;
-  // let progress = age / life;
-  // let fade = select((1.0 - progress) / 0.14, 1.0, progress < 0.86);
-
+  let desired = vec2<f32>(best_position) + vec2<f32>(0.5) - position;
+  let current_direction = normalize(previous_velocity);
+  let desired_direction = select(current_direction, normalize(desired), length(desired) > 0.001);
+  let direction = normalize(mix(current_direction, desired_direction, PARTICLE_STEER_STRENGTH));
+  let velocity = direction * speed;
+  let next_position = vec2<f32>(
+    reflect_coord(position.x + velocity.x * particle_params.delta_seconds, particle_params.size.x - 1.0),
+    reflect_coord(position.y + velocity.y * particle_params.delta_seconds, particle_params.size.y - 1.0)
+  );
+  let trail_seconds = max(0.0, particle_params.trail_seconds);
+  let trail_position = vec2<f32>(
+    reflect_coord(next_position.x - velocity.x * trail_seconds, particle_params.size.x - 1.0),
+    reflect_coord(next_position.y - velocity.y * trail_seconds, particle_params.size.y - 1.0)
+  );
   let fade = 1.0;
-  let x = reflect_coord(seed_a.x + seed_a.z * seconds, particle_params.size.x - 1.0);
-  let y = reflect_coord(seed_a.y + seed_a.w * seconds, particle_params.size.y - 1.0);
-  let trail_seconds = max(0.0, seconds - particle_params.trail_seconds);
-  let trail_x = reflect_coord(seed_a.x + seed_a.z * trail_seconds, particle_params.size.x - 1.0);
-  let trail_y = reflect_coord(seed_a.y + seed_a.w * trail_seconds, particle_params.size.y - 1.0);
-  live_particles[gid.x] = vec4<f32>(x, y, radius, max(0.0, fade));
-  live_particles[PARTICLES + gid.x] = vec4<f32>(trail_x, trail_y, 0.0, 0.0);
+  live_particles[gid.x] = vec4<f32>(next_position, radius, max(0.0, fade));
+  live_particles[PARTICLES + gid.x] = vec4<f32>(position, velocity);
+  live_particles[2u * PARTICLES + gid.x] = vec4<f32>(trail_position, 0.0, 0.0);
 }
 
 @group(0) @binding(0) var sim_src: texture_2d<f32>;
@@ -246,7 +279,7 @@ fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var i = 0u; i < PARTICLES; i = i + 1u) {
     if (f32(i) >= sim_params.particle_count) { break; }
     let particle = particles[i];
-    let trail = particles[PARTICLES + i];
+    let trail = particles[2u * PARTICLES + i];
     let direction = particle.xy - trail.xy;
     let length_squared = max(dot(direction, direction), 0.0001);
     let along = clamp(dot(vec2<f32>(p) + vec2<f32>(0.5) - trail.xy, direction) / length_squared, 0.0, 1.0);
@@ -328,15 +361,6 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
     const particleSeedBuffer = device.createBuffer({ size: PARTICLE_SEED_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
     const particleBuffer = device.createBuffer({ size: MAX_PARTICLE_BYTES, usage: BUFFER.STORAGE });
     const particleParams = device.createBuffer({ size: 32, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
-    const particleBindGroup = device.createBindGroup({
-      layout: particlePipeline.getBindGroupLayout(3),
-      entries: [
-        { binding: 0, resource: { buffer: particleSeedBuffer, offset: 0, size: PARTICLE_SEED_STRIDE_BYTES } },
-        { binding: 1, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: PARTICLE_SEED_STRIDE_BYTES } },
-        { binding: 3, resource: { buffer: particleBuffer } },
-        { binding: 4, resource: { buffer: particleParams } },
-      ],
-    });
 
     return {
       device,
@@ -352,7 +376,6 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
       renderParams: device.createBuffer({ size: 80, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
       particleSeedBuffer,
       particleBuffer,
-      particleBindGroup,
       smokeReadbacks: Array.from({ length: 3 }, () => ({
         buffer: device.createBuffer({ size: 256 * 3, usage: BUFFER.COPY_DST | BUFFER.MAP_READ }) as MappableBuffer,
         busy: false,
@@ -452,6 +475,28 @@ const createSurface = (
         ],
       }),
     ],
+    particleBindGroups: [
+      runtime.device.createBindGroup({
+        layout: runtime.particlePipeline.getBindGroupLayout(3),
+        entries: [
+          { binding: 0, resource: { buffer: runtime.particleSeedBuffer, offset: 0, size: PARTICLE_SEED_STRIDE_BYTES } },
+          { binding: 1, resource: { buffer: runtime.particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: PARTICLE_SEED_STRIDE_BYTES } },
+          { binding: 2, resource: views[0] },
+          { binding: 3, resource: { buffer: runtime.particleBuffer } },
+          { binding: 4, resource: { buffer: runtime.particleParams } },
+        ],
+      }),
+      runtime.device.createBindGroup({
+        layout: runtime.particlePipeline.getBindGroupLayout(3),
+        entries: [
+          { binding: 0, resource: { buffer: runtime.particleSeedBuffer, offset: 0, size: PARTICLE_SEED_STRIDE_BYTES } },
+          { binding: 1, resource: { buffer: runtime.particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: PARTICLE_SEED_STRIDE_BYTES } },
+          { binding: 2, resource: views[1] },
+          { binding: 3, resource: { buffer: runtime.particleBuffer } },
+          { binding: 4, resource: { buffer: runtime.particleParams } },
+        ],
+      }),
+    ],
     read: 0,
   };
 };
@@ -511,6 +556,7 @@ export const ThemeShaderCanvasWebGPU = ({
       const renderValues = new Float32Array(20);
       const simValues = new Float32Array(8);
       let prepared = false;
+      let resetParticles = true;
       let last = performance.now();
       const started = last;
       let nextSmokeSample = 0;
@@ -567,6 +613,7 @@ export const ThemeShaderCanvasWebGPU = ({
           writeParticleSeeds(makeParticles(transition, doc.w, doc.h, activeSurface, Math.max(window.innerWidth, window.innerHeight) / cell), particleSeedValues);
           runtime.device.queue.writeBuffer(runtime.particleSeedBuffer, 0, particleSeedValues);
           metaRef.current = { from: transition.from, to: transition.to };
+          resetParticles = true;
           prepared = true;
         }
 
@@ -634,13 +681,23 @@ export const ThemeShaderCanvasWebGPU = ({
         if (!surface) return;
 
         const dt = Math.min(2.2, Math.max(0.2, (now - last) / 16.67));
+        const deltaSeconds = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
         const elapsed = now - started;
         const progress = Math.min(1, elapsed / transition.duration);
         const diffusion = progress < 1 ? getDiffusionRate(progress, dt) : 1;
         const write = surface.read === 0 ? 1 : 0;
         last = now;
 
-        particleParamValues.set([surface.w, surface.h, elapsed, PARTICLES, PARTICLE_TRAIL_SECONDS, 0, 0, 0]);
+        particleParamValues.set([
+          surface.w,
+          surface.h,
+          elapsed,
+          PARTICLES,
+          PARTICLE_TRAIL_SECONDS,
+          transition.to === 'dark' ? 1 : 0,
+          deltaSeconds,
+          resetParticles ? 1 : 0,
+        ]);
         simValues.set([surface.w, surface.h, diffusion, PARTICLES, 0, 0, 0, 0]);
         runtime.device.queue.writeBuffer(runtime.particleParams, 0, particleParamValues);
         runtime.device.queue.writeBuffer(runtime.simParams, 0, simValues);
@@ -672,7 +729,7 @@ export const ThemeShaderCanvasWebGPU = ({
         const encoder = runtime.device.createCommandEncoder();
         const particlePass = encoder.beginComputePass();
         particlePass.setPipeline(runtime.particlePipeline);
-        particlePass.setBindGroup(3, runtime.particleBindGroup);
+        particlePass.setBindGroup(3, surface.particleBindGroups[surface.read]);
         particlePass.dispatchWorkgroups(Math.ceil(PARTICLES / 64), 1);
         particlePass.end();
         const simPass = encoder.beginComputePass();
@@ -695,6 +752,7 @@ export const ThemeShaderCanvasWebGPU = ({
         renderPass.draw(3);
         renderPass.end();
         runtime.device.queue.submit([encoder.finish()]);
+        resetParticles = false;
 
         sampleSmoke(surface, now);
         if (elapsed < transition.duration + SETTLE_MS) frame = requestAnimationFrame(render);
