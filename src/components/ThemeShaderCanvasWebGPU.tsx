@@ -157,14 +157,14 @@ const writeParticles = (particles: Particle[], elapsed: number, values: Float32A
 
     const seconds = age / 1000;
     const progress = age / p.life;
-    const fade = progress < 0.86 ? 1 : (1 - progress) / 0.14;
+    const radiusScale = progress < 0.86 ? 1 : Math.max(0, (1 - progress) / 0.14);
     const wobble = Math.sin(seconds * 12 + p.phase) * p.wobble * (1 - progress);
     const offset = count * 4;
 
     values[offset] = reflect(p.x + p.vx * seconds + wobble, w - 1);
     values[offset + 1] = reflect(p.y + p.vy * seconds + Math.cos(seconds * 8 + p.phase) * p.wobble * (1 - progress), h - 1);
-    values[offset + 2] = p.radius;
-    values[offset + 3] = Math.max(0, fade);
+    values[offset + 2] = p.radius * radiusScale;
+    values[offset + 3] = radiusScale > 0 ? 1 : 0;
     count += 1;
   });
 
