@@ -36,15 +36,15 @@ export const Header = () => {
           <NavLink
             to="/smoke"
             data-smoke-link
-            aria-hidden={!showSmoke}
-            tabIndex={showSmoke ? undefined : -1}
+            aria-hidden={!isDark || !showSmoke}
+            tabIndex={isDark && showSmoke ? undefined : -1}
             className={({ isActive }) =>
               `hidden min-w-11 border-b py-1 text-center font-sans text-sm no-underline transition duration-200 sm:inline-flex ${
-                showSmoke
+                !isDark
+                  ? 'border-transparent text-white pointer-events-none'
+                  : showSmoke
                   ? isActive
-                    ? isDark
-                      ? 'border-white text-white'
-                      : 'border-[#202020] text-[#202020]'
+                    ? 'border-white text-white'
                     : 'border-transparent text-[#6c6c64] hover:border-black/20 hover:text-[#202020] dark:text-[#b9b9b0] dark:hover:border-white/25 dark:hover:text-white'
                   : 'invisible pointer-events-none border-transparent'
               }`
