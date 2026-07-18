@@ -101,6 +101,12 @@ const PARTICLE_CONFIG = {
   intensity: 0.1,
   steerStrength: 0.18,
 } as const;
+const DIFFUSION_CONFIG = {
+  startRate: 0.08,
+  endRate: 1.35,
+  exponent: 3,
+  settleRate: 1,
+} as const;
 const PARTICLES = PARTICLE_CONFIG.count;
 const CELL_SIZE = PARTICLE_CONFIG.cellSize;
 const SETTLE_MS = 600;
@@ -129,7 +135,8 @@ const pageSize = () => {
 };
 
 const getDiffusionRate = (progress: number, dt: number) => {
-  const ramp = 0.08 + 1.35 * progress * progress * progress;
+  const ramp = DIFFUSION_CONFIG.startRate
+    + (DIFFUSION_CONFIG.endRate - DIFFUSION_CONFIG.startRate) * progress ** DIFFUSION_CONFIG.exponent;
   return 1 - Math.exp(-dt * ramp);
 };
 
@@ -691,7 +698,7 @@ export const ThemeShaderCanvasWebGPU = ({
         const deltaSeconds = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
         const elapsed = now - started;
         const progress = Math.min(1, elapsed / transition.duration);
-        const diffusion = progress < 1 ? getDiffusionRate(progress, dt) : 1;
+        const diffusion = progress < 1 ? getDiffusionRate(progress, dt) : DIFFUSION_CONFIG.settleRate;
         const write = surface.read === 0 ? 1 : 0;
         last = now;
 
