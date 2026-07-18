@@ -125,7 +125,7 @@ const getDiffusionRate = (progress: number, dt: number) => {
 
 const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: number, surface: WebGpuSurface, speedCells: number) => {
   const x = (transition.origin.x / docW) * surface.w;
-  const y = ((docH - transition.origin.y) / docH) * surface.h;
+  const y = (transition.origin.y / docH) * surface.h;
 
   return Array.from({ length: PARTICLES }, (_, i): Particle => {
     const angle = (i / PARTICLES) * Math.PI * 2 + (Math.random() - 0.5) * 0.85;
@@ -270,7 +270,7 @@ fn state_at(uv: vec2<f32>) -> f32 {
 
 @fragment
 fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
-  let page_xy = vec2<f32>(render_params.page.x + frag.x, render_params.page.w - (render_params.page.y + render_params.resolution.y - frag.y));
+  let page_xy = vec2<f32>(render_params.page.x + frag.x, render_params.page.y + render_params.resolution.y - frag.y);
   let global_cell = page_xy / render_params.page.zw * render_params.surface.zw;
   let uv = (global_cell - render_params.surface.xy) / render_params.state_size;
   let px = 1.0 / render_params.state_size;
@@ -577,7 +577,7 @@ export const ThemeShaderCanvasWebGPU = ({
         const sampleW = Math.min(3, surface.w);
         const sampleH = Math.min(3, surface.h);
         const x = Math.floor(((window.scrollX + rect.left + rect.width / 2) / doc.w) * surface.fullW - surface.ox) - 1;
-        const y = Math.floor(((doc.h - (window.scrollY + rect.top + rect.height / 2)) / doc.h) * surface.fullH - surface.oy) - 1;
+        const y = Math.floor(((window.scrollY + rect.top + rect.height / 2) / doc.h) * surface.fullH - surface.oy) - 1;
         if (x < -sampleW || y < -sampleH || x >= surface.w || y >= surface.h) {
           if (lastSmokeVisible !== false) {
             lastSmokeVisible = false;
