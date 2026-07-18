@@ -98,7 +98,7 @@ type ReadbackSlot = {
 };
 
 const PARTICLES = 18;
-const CELL_SIZE = 14;
+const CELL_SIZE = 13;
 const TILE_SIZE = 96;
 const MAX_TILES = 256;
 const MAX_PARTICLE_BYTES = PARTICLES * 16;
