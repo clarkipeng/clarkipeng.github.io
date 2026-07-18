@@ -16,9 +16,11 @@ type Particle = {
   y: number;
   vx: number;
   vy: number;
+  wobble: number;
   delay: number;
   life: number;
   radius: number;
+  phase: number;
 };
 
 type Surface = {
@@ -227,9 +229,11 @@ const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: nu
       y,
       vx: Math.cos(angle) * v,
       vy: Math.sin(angle) * v,
+      wobble: 1.2 + Math.random() * 3.8,
       delay: Math.random() * 240,
       life: 760 + Math.random() * 520,
       radius: 0.65 + Math.random() * 1.1,
+      phase: Math.random() * Math.PI * 2,
     };
   });
 };
@@ -245,10 +249,11 @@ const writeParticles = (particles: Particle[], elapsed: number, values: Float32A
     const seconds = age / 1000;
     const progress = age / p.life;
     const fade = progress < 0.86 ? 1 : (1 - progress) / 0.14;
+    const wobble = Math.sin(seconds * 12 + p.phase) * p.wobble * (1 - progress);
     const offset = count * 4;
 
-    values[offset] = reflect(p.x + p.vx * seconds, w - 1);
-    values[offset + 1] = reflect(p.y + p.vy * seconds, h - 1);
+    values[offset] = reflect(p.x + p.vx * seconds + wobble, w - 1);
+    values[offset + 1] = reflect(p.y + p.vy * seconds + Math.cos(seconds * 8 + p.phase) * p.wobble * (1 - progress), h - 1);
     values[offset + 2] = p.radius;
     values[offset + 3] = Math.max(0, fade);
     count += 1;

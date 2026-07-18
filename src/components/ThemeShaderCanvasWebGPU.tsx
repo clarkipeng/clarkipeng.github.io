@@ -8,9 +8,11 @@ type Particle = {
   y: number;
   vx: number;
   vy: number;
+  wobble: number;
   delay: number;
   life: number;
   radius: number;
+  phase: number;
 };
 
 type GpuDevice = {
@@ -97,7 +99,7 @@ const PARTICLES = 18;
 const CELL_SIZE = 14;
 const MAX_PARTICLE_BYTES = PARTICLES * 16;
 const PARTICLE_SEED_STRIDE_BYTES = 512;
-const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 2;
+const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 3;
 const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
 const TEXTURE = (globalThis as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
 const MAP_MODE = (globalThis as { GPUMapMode?: Record<string, number> }).GPUMapMode;
@@ -136,9 +138,11 @@ const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: nu
       y,
       vx: Math.cos(angle) * v,
       vy: Math.sin(angle) * v,
+      wobble: 1.2 + Math.random() * 3.8,
       delay: Math.random() * 240,
       life: 760 + Math.random() * 520,
       radius: 0.65 + Math.random() * 1.1,
+      phase: Math.random() * Math.PI * 2,
     };
   });
 };
@@ -150,14 +154,17 @@ const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
   particles.forEach((p, index) => {
     const a = index * 4;
     const b = stride + a;
+    const c = stride * 2 + a;
 
     values[a] = p.x;
     values[a + 1] = p.y;
     values[a + 2] = p.vx;
     values[a + 3] = p.vy;
-    values[b] = p.delay;
-    values[b + 1] = p.life;
-    values[b + 2] = p.radius;
+    values[b] = p.wobble;
+    values[b + 1] = p.delay;
+    values[b + 2] = p.life;
+    values[b + 3] = p.radius;
+    values[c] = p.phase;
   });
 };
 
@@ -192,6 +199,7 @@ fn reflect_coord(value: f32, max_value: f32) -> f32 {
 
 @group(3) @binding(0) var<storage, read> particle_seed_a: array<vec4<f32>>;
 @group(3) @binding(1) var<storage, read> particle_seed_b: array<vec4<f32>>;
+@group(3) @binding(2) var<storage, read> particle_seed_c: array<vec4<f32>>;
 @group(3) @binding(3) var<storage, read_write> live_particles: array<vec4<f32>>;
 @group(3) @binding(4) var<uniform> particle_params: ParticleParams;
 
@@ -201,6 +209,7 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   let seed_a = particle_seed_a[gid.x];
   let seed_b = particle_seed_b[gid.x];
+  let seed_c = particle_seed_c[gid.x];
   let age = particle_params.elapsed - seed_b.y;
   if (age < 0.0 || age > seed_b.z) {
     live_particles[gid.x] = vec4<f32>(0.0);
@@ -210,8 +219,9 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let seconds = age / 1000.0;
   let progress = age / seed_b.z;
   let fade = select((1.0 - progress) / 0.14, 1.0, progress < 0.86);
-  let x = reflect_coord(seed_a.x + seed_a.z * seconds, particle_params.size.x - 1.0);
-  let y = reflect_coord(seed_a.y + seed_a.w * seconds, particle_params.size.y - 1.0);
+  let wobble = sin(seconds * 12.0 + seed_c.x) * seed_b.x * (1.0 - progress);
+  let x = reflect_coord(seed_a.x + seed_a.z * seconds + wobble, particle_params.size.x - 1.0);
+  let y = reflect_coord(seed_a.y + seed_a.w * seconds + cos(seconds * 8.0 + seed_c.x) * seed_b.x * (1.0 - progress), particle_params.size.y - 1.0);
   live_particles[gid.x] = vec4<f32>(x, y, seed_b.w, max(0.0, fade));
 }
 
@@ -322,6 +332,7 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
       entries: [
         { binding: 0, resource: { buffer: particleSeedBuffer, offset: 0, size: MAX_PARTICLE_BYTES } },
         { binding: 1, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: MAX_PARTICLE_BYTES } },
+        { binding: 2, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES * 2, size: MAX_PARTICLE_BYTES } },
         { binding: 3, resource: { buffer: particleBuffer } },
         { binding: 4, resource: { buffer: particleParams } },
       ],
