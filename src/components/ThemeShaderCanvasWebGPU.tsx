@@ -91,11 +91,18 @@ type ReadbackSlot = {
   busy: boolean;
 };
 
-const PARTICLES = 96;
-const CELL_SIZE = 14;
-const PARTICLE_TRAIL_SECONDS = 0.18;
-const PARTICLE_INTENSITY = 0.1;
-const PARTICLE_STEER_STRENGTH = 0.18;
+const PARTICLE_CONFIG = {
+  count: 96,
+  cellSize: 14,
+  speedScale: 1,
+  radiusMin: 0.65,
+  radiusMax: 1.75,
+  trailSeconds: 0.18,
+  intensity: 0.1,
+  steerStrength: 0.18,
+} as const;
+const PARTICLES = PARTICLE_CONFIG.count;
+const CELL_SIZE = PARTICLE_CONFIG.cellSize;
 const SETTLE_MS = 600;
 const MAX_PARTICLE_BYTES = PARTICLES * 48;
 const PARTICLE_SEED_STRIDE_BYTES = PARTICLES * 16;
@@ -132,13 +139,13 @@ const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: nu
 
   return Array.from({ length: PARTICLES }, (_, i): Particle => {
     const angle = (i / PARTICLES) * Math.PI * 2 + (Math.random() - 0.5) * 0.85;
-    const v = speedCells * (0.95 + Math.random() * 0.5);
+    const v = speedCells * PARTICLE_CONFIG.speedScale * (0.95 + Math.random() * 0.5);
     return {
       x,
       y,
       vx: Math.cos(angle) * v,
       vy: Math.sin(angle) * v,
-      radius: 0.65 + Math.random() * 1.1,
+      radius: PARTICLE_CONFIG.radiusMin + Math.random() * (PARTICLE_CONFIG.radiusMax - PARTICLE_CONFIG.radiusMin),
     };
   });
 };
@@ -160,8 +167,8 @@ const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
 };
 
 const shader = `const PARTICLES = ${PARTICLES}u;
-const PARTICLE_INTENSITY = ${PARTICLE_INTENSITY};
-const PARTICLE_STEER_STRENGTH = ${PARTICLE_STEER_STRENGTH};
+const PARTICLE_INTENSITY = ${PARTICLE_CONFIG.intensity};
+const PARTICLE_STEER_STRENGTH = ${PARTICLE_CONFIG.steerStrength};
 
 struct SimParams {
   size: vec2<f32>,
@@ -693,7 +700,7 @@ export const ThemeShaderCanvasWebGPU = ({
           surface.h,
           elapsed,
           PARTICLES,
-          PARTICLE_TRAIL_SECONDS,
+          PARTICLE_CONFIG.trailSeconds,
           transition.to === 'dark' ? 1 : 0,
           deltaSeconds,
           resetParticles ? 1 : 0,
