@@ -54,19 +54,17 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         if (transitionTimeoutRef.current) window.clearTimeout(transitionTimeoutRef.current);
 
         if (!shaderTransition) {
-            root.classList.remove('theme-text-adaptive');
-            root.style.removeProperty('--adaptive-text-color');
             return;
         }
 
         root.classList.add('theme-text-adaptive');
-        root.style.setProperty('--adaptive-text-color', shaderTransition.to === 'dark' ? '#fafaf7' : '#dbdbda');
+        root.style.setProperty('--adaptive-text-color', '#6b6b66');
         transitionTimeoutRef.current = window.setTimeout(() => {
             setShaderTransition(null);
             setShowSmoke(shaderTransition.to === 'dark');
             root.classList.remove('theme-text-adaptive');
             root.style.removeProperty('--adaptive-text-color');
-        }, shaderTransition.duration + 120);
+        }, shaderTransition.duration + 720);
 
         return () => {
             if (transitionTimeoutRef.current) window.clearTimeout(transitionTimeoutRef.current);
@@ -82,15 +80,12 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
 
         const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        const root = document.documentElement;
         const transitionOrigin = origin ?? {
             x: window.scrollX + window.innerWidth / 2,
             y: window.scrollY + window.innerHeight / 2,
         };
 
         if (!prefersReducedMotion) {
-            root.classList.add('theme-text-adaptive');
-            root.style.setProperty('--adaptive-text-color', nextTheme === 'dark' ? '#fafaf7' : '#dbdbda');
             if (nextTheme === 'dark') setShowSmoke(false);
             setShaderTransition({
                 id: Date.now(),

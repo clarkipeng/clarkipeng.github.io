@@ -93,6 +93,7 @@ type ReadbackSlot = {
 
 const PARTICLES = 18;
 const CELL_SIZE = 14;
+const SETTLE_MS = 600;
 const MAX_PARTICLE_BYTES = PARTICLES * 16;
 const PARTICLE_SEED_STRIDE_BYTES = 512;
 const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 2;
@@ -625,7 +626,7 @@ export const ThemeShaderCanvasWebGPU = ({
         const dt = Math.min(2.2, Math.max(0.2, (now - last) / 16.67));
         const elapsed = now - started;
         const progress = Math.min(1, elapsed / transition.duration);
-        const diffusion = getDiffusionRate(progress, dt);
+        const diffusion = progress < 1 ? getDiffusionRate(progress, dt) : 1;
         const write = surface.read === 0 ? 1 : 0;
         last = now;
 
@@ -686,7 +687,7 @@ export const ThemeShaderCanvasWebGPU = ({
         runtime.device.queue.submit([encoder.finish()]);
 
         sampleSmoke(surface, now);
-        if (progress < 1) frame = requestAnimationFrame(render);
+        if (elapsed < transition.duration + SETTLE_MS) frame = requestAnimationFrame(render);
       };
 
       render(started);
