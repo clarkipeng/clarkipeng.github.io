@@ -91,11 +91,13 @@ type ReadbackSlot = {
   busy: boolean;
 };
 
-const PARTICLES = 18;
+const PARTICLES = 96;
 const CELL_SIZE = 14;
+const PARTICLE_TRAIL_SECONDS = 0.18;
+const PARTICLE_INTENSITY = 0.1;
 const SETTLE_MS = 600;
-const MAX_PARTICLE_BYTES = PARTICLES * 16;
-const PARTICLE_SEED_STRIDE_BYTES = 512;
+const MAX_PARTICLE_BYTES = PARTICLES * 32;
+const PARTICLE_SEED_STRIDE_BYTES = PARTICLES * 16;
 const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 2;
 const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
 const TEXTURE = (globalThis as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
@@ -157,6 +159,7 @@ const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
 };
 
 const shader = `const PARTICLES = ${PARTICLES}u;
+const PARTICLE_INTENSITY = ${PARTICLE_INTENSITY};
 
 struct SimParams {
   size: vec2<f32>,
@@ -168,6 +171,7 @@ struct ParticleParams {
   size: vec2<f32>,
   elapsed: f32,
   particle_count: f32,
+  trail_seconds: f32,
 };
 
 struct RenderParams {
@@ -213,7 +217,11 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let fade = 1.0;
   let x = reflect_coord(seed_a.x + seed_a.z * seconds, particle_params.size.x - 1.0);
   let y = reflect_coord(seed_a.y + seed_a.w * seconds, particle_params.size.y - 1.0);
+  let trail_seconds = max(0.0, seconds - particle_params.trail_seconds);
+  let trail_x = reflect_coord(seed_a.x + seed_a.z * trail_seconds, particle_params.size.x - 1.0);
+  let trail_y = reflect_coord(seed_a.y + seed_a.w * trail_seconds, particle_params.size.y - 1.0);
   live_particles[gid.x] = vec4<f32>(x, y, radius, max(0.0, fade));
+  live_particles[PARTICLES + gid.x] = vec4<f32>(trail_x, trail_y, 0.0, 0.0);
 }
 
 @group(0) @binding(0) var sim_src: texture_2d<f32>;
@@ -238,8 +246,13 @@ fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var i = 0u; i < PARTICLES; i = i + 1u) {
     if (f32(i) >= sim_params.particle_count) { break; }
     let particle = particles[i];
-    let d = distance(vec2<f32>(p) + vec2<f32>(0.5), particle.xy);
-    v = max(v, (1.0 - smoothstep(particle.z * 0.35, particle.z, d)) * particle.w);
+    let trail = particles[PARTICLES + i];
+    let direction = particle.xy - trail.xy;
+    let length_squared = max(dot(direction, direction), 0.0001);
+    let along = clamp(dot(vec2<f32>(p) + vec2<f32>(0.5) - trail.xy, direction) / length_squared, 0.0, 1.0);
+    let nearest = trail.xy + direction * along;
+    let d = distance(vec2<f32>(p) + vec2<f32>(0.5), nearest);
+    v = min(1.0, v + (1.0 - smoothstep(particle.z * 0.35, particle.z, d)) * particle.w * PARTICLE_INTENSITY);
   }
 
   textureStore(sim_dst, p, vec4<f32>(clamp(v, 0.0, 1.0), 0.0, 0.0, 1.0));
@@ -262,10 +275,7 @@ fn vertex_main(@builtin(vertex_index) index: u32) -> VertexOut {
 }
 
 fn state_at(uv: vec2<f32>) -> f32 {
-  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
-    return 0.0;
-  }
-  return textureSampleLevel(render_tex, render_sampler, uv, 0.0).r;
+  return textureSampleLevel(render_tex, render_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).r;
 }
 
 @fragment
@@ -277,7 +287,7 @@ fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
   var state = state_at(uv) * 4.0;
   state += (state_at(uv + vec2<f32>(px.x, 0.0)) + state_at(uv - vec2<f32>(px.x, 0.0)) + state_at(uv + vec2<f32>(0.0, px.y)) + state_at(uv - vec2<f32>(0.0, px.y))) * 2.0;
   state += state_at(uv + px) + state_at(uv - px) + state_at(uv + vec2<f32>(px.x, -px.y)) + state_at(uv + vec2<f32>(-px.x, px.y));
-  state = smoothstep(0.01, 0.99, state / 16.0);
+  state = clamp(state / 16.0, 0.0, 1.0);
   return vec4<f32>(mix(render_params.from_color.rgb, render_params.to_color.rgb, state), 1.0);
 }
 
@@ -321,8 +331,8 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
     const particleBindGroup = device.createBindGroup({
       layout: particlePipeline.getBindGroupLayout(3),
       entries: [
-        { binding: 0, resource: { buffer: particleSeedBuffer, offset: 0, size: MAX_PARTICLE_BYTES } },
-        { binding: 1, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: MAX_PARTICLE_BYTES } },
+        { binding: 0, resource: { buffer: particleSeedBuffer, offset: 0, size: PARTICLE_SEED_STRIDE_BYTES } },
+        { binding: 1, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: PARTICLE_SEED_STRIDE_BYTES } },
         { binding: 3, resource: { buffer: particleBuffer } },
         { binding: 4, resource: { buffer: particleParams } },
       ],
@@ -630,7 +640,7 @@ export const ThemeShaderCanvasWebGPU = ({
         const write = surface.read === 0 ? 1 : 0;
         last = now;
 
-        particleParamValues.set([surface.w, surface.h, elapsed, PARTICLES, 0, 0, 0, 0]);
+        particleParamValues.set([surface.w, surface.h, elapsed, PARTICLES, PARTICLE_TRAIL_SECONDS, 0, 0, 0]);
         simValues.set([surface.w, surface.h, diffusion, PARTICLES, 0, 0, 0, 0]);
         runtime.device.queue.writeBuffer(runtime.particleParams, 0, particleParamValues);
         runtime.device.queue.writeBuffer(runtime.simParams, 0, simValues);
