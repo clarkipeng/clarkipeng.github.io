@@ -58,7 +58,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
 
         root.classList.add('theme-text-adaptive');
-        root.style.setProperty('--adaptive-text-color', '#6b6b66');
+        root.style.setProperty('--adaptive-text-color', '#fff');
         transitionTimeoutRef.current = window.setTimeout(() => {
             setShaderTransition(null);
             setShowSmoke(shaderTransition.to === 'dark');

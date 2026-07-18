@@ -38,13 +38,14 @@ body {
 
 #root {
   min-height: 100vh;
-  isolation: isolate;
 }
 
 .theme-shader-canvas {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
+  width: 100vw;
+  height: 100vh;
   pointer-events: none;
   opacity: 0;
 }
@@ -54,11 +55,12 @@ body {
 }
 
 .theme-text-adaptive :where(a, button, h1, h2, h3, h4, h5, h6, p, li, small, span, strong, em) {
-  color: var(--adaptive-text-color, #6b6b66) !important;
+  color: #fff !important;
+  mix-blend-mode: difference;
 }
 
 .theme-text-adaptive :where(a, button) {
-  border-color: var(--adaptive-text-color, #6b6b66) !important;
+  border-color: currentColor !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
