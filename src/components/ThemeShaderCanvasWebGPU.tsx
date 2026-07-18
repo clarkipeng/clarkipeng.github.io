@@ -37,7 +37,6 @@ type GpuDevice = {
       end: () => void;
     };
     copyTextureToBuffer: (src: unknown, dst: unknown, size: unknown) => void;
-    copyBufferToBuffer: (src: unknown, srcOffset: number, dst: unknown, dstOffset: number, size: number) => void;
     finish: () => unknown;
   };
   createRenderPipeline: (descriptor: unknown) => { getBindGroupLayout: (index: number) => unknown };
@@ -59,14 +58,10 @@ type WebGpuRuntime = {
   simPipeline: { getBindGroupLayout: (index: number) => unknown };
   renderPipeline: { getBindGroupLayout: (index: number) => unknown };
   transformPipeline: { getBindGroupLayout: (index: number) => unknown };
-  classifyPipeline: { getBindGroupLayout: (index: number) => unknown };
   sampler: unknown;
   simParams: unknown;
   renderParams: unknown;
   particleBuffer: unknown;
-  tileBuffer: unknown;
-  tileStatusBuffer: unknown;
-  tileStatusReadback: MappableBuffer;
   smokeReadbacks: ReadbackSlot[];
 };
 
@@ -82,7 +77,6 @@ type WebGpuSurface = {
   simBindGroups: [unknown, unknown];
   renderBindGroups: [unknown, unknown];
   transformBindGroups: [unknown, unknown];
-  classifyBindGroups: [unknown, unknown];
   read: 0 | 1;
 };
 
@@ -98,12 +92,8 @@ type ReadbackSlot = {
 };
 
 const PARTICLES = 18;
-const CELL_SIZE = 13;
-const TILE_SIZE = 96;
-const MAX_TILES = 256;
+const CELL_SIZE = 14;
 const MAX_PARTICLE_BYTES = PARTICLES * 16;
-const MAX_TILE_BYTES = MAX_TILES * 16;
-const MAX_TILE_STATUS_BYTES = MAX_TILES * 16;
 const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
 const TEXTURE = (globalThis as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
 const MAP_MODE = (globalThis as { GPUMapMode?: Record<string, number> }).GPUMapMode;
@@ -137,8 +127,8 @@ const reflect = (value: number, max: number) => {
 };
 
 const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: number, surface: WebGpuSurface, speedCells: number) => {
-  const x = (transition.origin.x / docW) * surface.fullW - surface.ox;
-  const y = ((docH - transition.origin.y) / docH) * surface.fullH - surface.oy;
+  const x = (transition.origin.x / docW) * surface.w;
+  const y = ((docH - transition.origin.y) / docH) * surface.h;
 
   return Array.from({ length: PARTICLES }, (_, i): Particle => {
     const angle = (i / PARTICLES) * Math.PI * 2 + (Math.random() - 0.5) * 0.85;
@@ -181,70 +171,12 @@ const writeParticles = (particles: Particle[], elapsed: number, values: Float32A
   return count;
 };
 
-const addTile = (tiles: Map<string, [number, number]>, fullTiles: Set<string>, tx: number, ty: number, maxX: number, maxY: number) => {
-  const key = `${tx}:${ty}`;
-  if (tx < 0 || ty < 0 || tx > maxX || ty > maxY || fullTiles.has(key) || tiles.size >= MAX_TILES) return;
-  tiles.set(key, [tx, ty]);
-};
-
-const writeActiveTiles = (
-  surface: WebGpuSurface,
-  doc: { w: number; h: number },
-  particles: Float32Array,
-  particleCount: number,
-  values: Float32Array,
-  fullTiles: Set<string>,
-  keys: string[],
-) => {
-  const tiles = new Map<string, [number, number]>();
-  const maxX = Math.ceil(surface.w / TILE_SIZE) - 1;
-  const maxY = Math.ceil(surface.h / TILE_SIZE) - 1;
-  const viewX0 = Math.floor((((window.scrollX / doc.w) * surface.fullW - surface.ox) / TILE_SIZE)) - 1;
-  const viewX1 = Math.ceil(((((window.scrollX + window.innerWidth) / doc.w) * surface.fullW - surface.ox) / TILE_SIZE)) + 1;
-  const viewY0 = Math.floor(((((doc.h - (window.scrollY + window.innerHeight)) / doc.h) * surface.fullH - surface.oy) / TILE_SIZE)) - 1;
-  const viewY1 = Math.ceil(((((doc.h - window.scrollY) / doc.h) * surface.fullH - surface.oy) / TILE_SIZE)) + 1;
-
-  for (let y = viewY0; y <= viewY1; y += 1) {
-    for (let x = viewX0; x <= viewX1; x += 1) addTile(tiles, fullTiles, x, y, maxX, maxY);
-  }
-
-  for (let i = 0; i < particleCount; i += 1) {
-    const offset = i * 4;
-    const radius = particles[offset + 2] + 8;
-    const x0 = Math.floor((particles[offset] - radius) / TILE_SIZE) - 1;
-    const x1 = Math.ceil((particles[offset] + radius) / TILE_SIZE) + 1;
-    const y0 = Math.floor((particles[offset + 1] - radius) / TILE_SIZE) - 1;
-    const y1 = Math.ceil((particles[offset + 1] + radius) / TILE_SIZE) + 1;
-    for (let y = y0; y <= y1; y += 1) {
-      for (let x = x0; x <= x1; x += 1) addTile(tiles, fullTiles, x, y, maxX, maxY);
-    }
-  }
-
-  values.fill(0);
-  keys.length = 0;
-  let index = 0;
-  tiles.forEach(([tx, ty], key) => {
-    const x = tx * TILE_SIZE;
-    const y = ty * TILE_SIZE;
-    const offset = index * 4;
-    keys.push(key);
-    values[offset] = x;
-    values[offset + 1] = y;
-    values[offset + 2] = Math.min(TILE_SIZE, surface.w - x);
-    values[offset + 3] = Math.min(TILE_SIZE, surface.h - y);
-    index += 1;
-  });
-
-  return index;
-};
-
 const shader = `const PARTICLES = ${PARTICLES}u;
 
 struct SimParams {
   size: vec2<f32>,
   diffuse: f32,
   particle_count: f32,
-  tile_count: f32,
 };
 
 struct RenderParams {
@@ -260,7 +192,6 @@ struct RenderParams {
 @group(0) @binding(1) var sim_dst: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(2) var<uniform> sim_params: SimParams;
 @group(0) @binding(3) var<storage, read> particles: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read> tiles: array<vec4<f32>>;
 
 fn sample_state(pos: vec2<i32>) -> f32 {
   let limit = vec2<i32>(sim_params.size) - vec2<i32>(1);
@@ -269,9 +200,7 @@ fn sample_state(pos: vec2<i32>) -> f32 {
 
 @compute @workgroup_size(8, 8)
 fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let tile = tiles[gid.z];
-  if (gid.x >= u32(tile.z) || gid.y >= u32(tile.w)) { return; }
-  let p = vec2<i32>(vec2<f32>(gid.xy) + tile.xy);
+  let p = vec2<i32>(gid.xy);
   if (p.x >= i32(sim_params.size.x) || p.y >= i32(sim_params.size.y)) { return; }
   let c = sample_state(p);
   var m = max(max(sample_state(p + vec2<i32>(-1, 0)), sample_state(p + vec2<i32>(1, 0))), max(sample_state(p + vec2<i32>(0, -1)), sample_state(p + vec2<i32>(0, 1))));
@@ -333,26 +262,6 @@ fn transform_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(transform_params.size.x) || gid.y >= u32(transform_params.size.y)) { return; }
   let value = textureLoad(transform_src, vec2<i32>(gid.xy), 0).r;
   textureStore(transform_dst, vec2<i32>(gid.xy), vec4<f32>(1.0 - value, 0.0, 0.0, 1.0));
-}
-
-@group(3) @binding(0) var classify_src: texture_2d<f32>;
-@group(3) @binding(1) var<storage, read> classify_tiles: array<vec4<f32>>;
-@group(3) @binding(2) var<storage, read_write> tile_status: array<vec4<f32>>;
-@group(3) @binding(3) var<uniform> classify_params: SimParams;
-
-@compute @workgroup_size(64)
-fn classify_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= u32(classify_params.tile_count)) { return; }
-  let tile = classify_tiles[gid.x];
-  var min_value = 1.0;
-  for (var y = 0u; y < 4u; y = y + 1u) {
-    for (var x = 0u; x < 4u; x = x + 1u) {
-      let uv = (vec2<f32>(f32(x) + 0.5, f32(y) + 0.5) / vec2<f32>(4.0, 4.0)) * tile.zw;
-      let p = vec2<i32>(tile.xy + uv);
-      min_value = min(min_value, textureLoad(classify_src, p, 0).r);
-    }
-  }
-  tile_status[gid.x] = vec4<f32>(select(0.0, 1.0, min_value > 0.985), min_value, 0.0, 0.0);
 }`;
 
 const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime | null> => {
@@ -371,7 +280,6 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
     const module = device.createShaderModule({ code: shader });
     const simPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'sim_main' } });
     const transformPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'transform_main' } });
-    const classifyPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'classify_main' } });
     const renderPipeline = device.createRenderPipeline({
       layout: 'auto',
       vertex: { module, entryPoint: 'vertex_main' },
@@ -386,14 +294,10 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
       simPipeline,
       renderPipeline,
       transformPipeline,
-      classifyPipeline,
       sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' }),
       simParams: device.createBuffer({ size: 32, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
       renderParams: device.createBuffer({ size: 80, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
       particleBuffer: device.createBuffer({ size: MAX_PARTICLE_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_DST }),
-      tileBuffer: device.createBuffer({ size: MAX_TILE_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_DST }),
-      tileStatusBuffer: device.createBuffer({ size: MAX_TILE_STATUS_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_SRC | BUFFER.COPY_DST }),
-      tileStatusReadback: device.createBuffer({ size: MAX_TILE_STATUS_BYTES, usage: BUFFER.COPY_DST | BUFFER.MAP_READ }) as MappableBuffer,
       smokeReadbacks: Array.from({ length: 3 }, () => ({
         buffer: device.createBuffer({ size: 256 * 3, usage: BUFFER.COPY_DST | BUFFER.MAP_READ }) as MappableBuffer,
         busy: false,
@@ -405,22 +309,10 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
   }
 };
 
-const activeRegion = (transition: ThemeShaderTransition, doc: { w: number; h: number }, cell: number) => {
+const activeRegion = (doc: { w: number; h: number }, cell: number) => {
   const fullW = Math.max(2, Math.ceil(doc.w / cell));
   const fullH = Math.max(2, Math.ceil(doc.h / cell));
-  const originX = (transition.origin.x / doc.w) * fullW;
-  const originY = ((doc.h - transition.origin.y) / doc.h) * fullH;
-  const viewX0 = (window.scrollX / doc.w) * fullW;
-  const viewX1 = ((window.scrollX + window.innerWidth) / doc.w) * fullW;
-  const viewY0 = ((doc.h - (window.scrollY + window.innerHeight)) / doc.h) * fullH;
-  const viewY1 = ((doc.h - window.scrollY) / doc.h) * fullH;
-  const margin = Math.ceil(Math.max(window.innerWidth, window.innerHeight) / cell * 1.2) + 48;
-  const ox = Math.max(0, Math.floor(Math.min(originX, viewX0) - margin));
-  const oy = Math.max(0, Math.floor(Math.min(originY, viewY0) - margin));
-  const x1 = Math.min(fullW, Math.ceil(Math.max(originX, viewX1) + margin));
-  const y1 = Math.min(fullH, Math.ceil(Math.max(originY, viewY1) + margin));
-
-  return { ox, oy, fullW, fullH, w: Math.max(2, x1 - ox), h: Math.max(2, y1 - oy) };
+  return { ox: 0, oy: 0, fullW, fullH, w: fullW, h: fullH };
 };
 
 const createSurface = (
@@ -457,7 +349,6 @@ const createSurface = (
           { binding: 1, resource: views[1] },
           { binding: 2, resource: { buffer: runtime.simParams } },
           { binding: 3, resource: { buffer: runtime.particleBuffer } },
-          { binding: 4, resource: { buffer: runtime.tileBuffer } },
         ],
       }),
       runtime.device.createBindGroup({
@@ -467,7 +358,6 @@ const createSurface = (
           { binding: 1, resource: views[0] },
           { binding: 2, resource: { buffer: runtime.simParams } },
           { binding: 3, resource: { buffer: runtime.particleBuffer } },
-          { binding: 4, resource: { buffer: runtime.tileBuffer } },
         ],
       }),
     ],
@@ -504,26 +394,6 @@ const createSurface = (
           { binding: 0, resource: views[1] },
           { binding: 1, resource: views[0] },
           { binding: 2, resource: { buffer: runtime.simParams } },
-        ],
-      }),
-    ],
-    classifyBindGroups: [
-      runtime.device.createBindGroup({
-        layout: runtime.classifyPipeline.getBindGroupLayout(3),
-        entries: [
-          { binding: 0, resource: views[0] },
-          { binding: 1, resource: { buffer: runtime.tileBuffer } },
-          { binding: 2, resource: { buffer: runtime.tileStatusBuffer } },
-          { binding: 3, resource: { buffer: runtime.simParams } },
-        ],
-      }),
-      runtime.device.createBindGroup({
-        layout: runtime.classifyPipeline.getBindGroupLayout(3),
-        entries: [
-          { binding: 0, resource: views[1] },
-          { binding: 1, resource: { buffer: runtime.tileBuffer } },
-          { binding: 2, resource: { buffer: runtime.tileStatusBuffer } },
-          { binding: 3, resource: { buffer: runtime.simParams } },
         ],
       }),
     ],
@@ -582,25 +452,20 @@ export const ThemeShaderCanvasWebGPU = ({
       const to = colors[transition.to];
       const previous = metaRef.current;
       const particleValues = new Float32Array(PARTICLES * 4);
-      const tileValues = new Float32Array(MAX_TILES * 4);
       const renderValues = new Float32Array(20);
       const simValues = new Float32Array(8);
-      const fullTiles = new Set<string>();
-      const activeTileKeys: string[] = [];
       let particles: Particle[] = [];
       let prepared = false;
       let last = performance.now();
       const started = last;
       let nextSmokeSample = 0;
-      let nextTileClassify = 0;
-      let classifyPending = false;
       let lastSmokeVisible: boolean | null = null;
 
       const ensureSurface = () => {
         const viewportW = window.innerWidth;
         const viewportH = window.innerHeight;
         const cell = viewportW < 640 ? 12 : CELL_SIZE;
-        const region = activeRegion(transition, doc, cell);
+        const region = activeRegion(doc, cell);
 
         if (canvas.width !== viewportW || canvas.height !== viewportH) {
           canvas.width = viewportW;
@@ -619,7 +484,6 @@ export const ThemeShaderCanvasWebGPU = ({
         ) {
           destroySurface(surfaceRef.current);
           surfaceRef.current = createSurface(runtime, region);
-          fullTiles.clear();
           prepared = false;
         }
 
@@ -642,7 +506,6 @@ export const ThemeShaderCanvasWebGPU = ({
           } else if (previous && (previous.from !== transition.from || previous.to !== transition.to)) {
             destroySurface(surface);
             surfaceRef.current = createSurface(runtime, region);
-            fullTiles.clear();
           }
 
           particles = makeParticles(transition, doc.w, doc.h, surface, Math.max(window.innerWidth, window.innerHeight) / cell);
@@ -708,34 +571,6 @@ export const ThemeShaderCanvasWebGPU = ({
         });
       };
 
-      const classifyTiles = (surface: WebGpuSurface, tileCount: number, now: number) => {
-        if (classifyPending || tileCount === 0 || now < nextTileClassify || !BUFFER || !MAP_MODE) return;
-
-        nextTileClassify = now + 260;
-        classifyPending = true;
-        const classifiedKeys = activeTileKeys.slice(0, tileCount);
-        const encoder = runtime.device.createCommandEncoder();
-        const pass = encoder.beginComputePass();
-        pass.setPipeline(runtime.classifyPipeline);
-        pass.setBindGroup(3, surface.classifyBindGroups[surface.read]);
-        pass.dispatchWorkgroups(Math.ceil(tileCount / 64), 1);
-        pass.end();
-        encoder.copyBufferToBuffer(runtime.tileStatusBuffer, 0, runtime.tileStatusReadback, 0, MAX_TILE_STATUS_BYTES);
-        runtime.device.queue.submit([encoder.finish()]);
-
-        runtime.tileStatusReadback.mapAsync(MAP_MODE.READ).then(() => {
-          const result = new Float32Array(runtime.tileStatusReadback.getMappedRange());
-          for (let i = 0; i < tileCount; i += 1) {
-            if (result[i * 4] > 0.5 && classifiedKeys[i]) fullTiles.add(classifiedKeys[i]);
-          }
-          runtime.tileStatusReadback.unmap();
-        }).catch(() => {
-          // Ignore pending classification failures during teardown/device loss.
-        }).finally(() => {
-          classifyPending = false;
-        });
-      };
-
       const render = (now: number) => {
         if (cancelled) return;
         const surface = ensureSurface();
@@ -746,14 +581,12 @@ export const ThemeShaderCanvasWebGPU = ({
         const progress = Math.min(1, elapsed / transition.duration);
         const diffusion = getDiffusionRate(progress, dt);
         const count = writeParticles(particles, elapsed, particleValues, surface.w, surface.h);
-        const tileCount = writeActiveTiles(surface, doc, particleValues, count, tileValues, fullTiles, activeTileKeys);
         const write = surface.read === 0 ? 1 : 0;
         last = now;
 
-        simValues.set([surface.w, surface.h, diffusion, count, tileCount, 0, 0, 0]);
+        simValues.set([surface.w, surface.h, diffusion, count, 0, 0, 0, 0]);
         runtime.device.queue.writeBuffer(runtime.simParams, 0, simValues);
         runtime.device.queue.writeBuffer(runtime.particleBuffer, 0, particleValues);
-        if (tileCount > 0) runtime.device.queue.writeBuffer(runtime.tileBuffer, 0, tileValues);
 
         renderValues.set([
           canvas.width,
@@ -780,14 +613,12 @@ export const ThemeShaderCanvasWebGPU = ({
         runtime.device.queue.writeBuffer(runtime.renderParams, 0, renderValues);
 
         const encoder = runtime.device.createCommandEncoder();
-        if (tileCount > 0) {
-          const simPass = encoder.beginComputePass();
-          simPass.setPipeline(runtime.simPipeline);
-          simPass.setBindGroup(0, surface.simBindGroups[surface.read]);
-          simPass.dispatchWorkgroups(Math.ceil(TILE_SIZE / 8), Math.ceil(TILE_SIZE / 8), tileCount);
-          simPass.end();
-          surface.read = write as 0 | 1;
-        }
+        const simPass = encoder.beginComputePass();
+        simPass.setPipeline(runtime.simPipeline);
+        simPass.setBindGroup(0, surface.simBindGroups[surface.read]);
+        simPass.dispatchWorkgroups(Math.ceil(surface.w / 8), Math.ceil(surface.h / 8));
+        simPass.end();
+        surface.read = write as 0 | 1;
 
         const renderPass = encoder.beginRenderPass({
           colorAttachments: [{
@@ -804,7 +635,6 @@ export const ThemeShaderCanvasWebGPU = ({
         runtime.device.queue.submit([encoder.finish()]);
 
         sampleSmoke(surface, now);
-        classifyTiles(surface, tileCount, now);
         if (progress < 1) frame = requestAnimationFrame(render);
       };
 
