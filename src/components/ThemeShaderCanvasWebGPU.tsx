@@ -97,13 +97,13 @@ const PARTICLE_CONFIG = {
   speedScale: 1,
   radiusMin: 0.65,
   radiusMax: 1.75,
-  trailSeconds: 0.18,
+  trailSeconds: 0.05,
   intensity: 0.1,
-  steerStrength: 0.18,
+  steerStrength: 0.06,
 } as const;
 const DIFFUSION_CONFIG = {
   startRate: 0.08,
-  endRate: 1.35,
+  endRate: 1,
   exponent: 3,
   settleRate: 1,
 } as const;
@@ -202,10 +202,20 @@ struct RenderParams {
   to_color: vec4<f32>,
 };
 
-fn reflect_coord(value: f32, max_value: f32) -> f32 {
-  let period = max_value * 2.0;
-  let wrapped = value - floor(value / period) * period;
-  return select(wrapped, period - wrapped, wrapped > max_value);
+fn wrap_coord(value: f32, size: f32) -> f32 {
+  return value - floor(value / size) * size;
+}
+
+fn wrap_index(value: i32, size: i32) -> i32 {
+  let wrapped = value % size;
+  return select(wrapped, wrapped + size, wrapped < 0);
+}
+
+fn torus_delta(a: f32, b: f32, size: f32) -> f32 {
+  var delta = a - b;
+  if (delta > size * 0.5) { delta -= size; }
+  if (delta < -size * 0.5) { delta += size; }
+  return delta;
 }
 
 @group(3) @binding(0) var<storage, read> particle_seed_a: array<vec4<f32>>;
@@ -215,8 +225,9 @@ fn reflect_coord(value: f32, max_value: f32) -> f32 {
 @group(3) @binding(4) var<uniform> particle_params: ParticleParams;
 
 fn steer_score(pos: vec2<i32>) -> f32 {
-  let limit = vec2<i32>(particle_params.size) - vec2<i32>(1);
-  let value = textureLoad(steer_state, clamp(pos, vec2<i32>(0), limit), 0).r;
+  let size = vec2<i32>(particle_params.size);
+  let wrapped = vec2<i32>(wrap_index(pos.x, size.x), wrap_index(pos.y, size.y));
+  let value = textureLoad(steer_state, wrapped, 0).r;
   return select(1.0 - value, value, particle_params.target_value > 0.5);
 }
 
@@ -251,19 +262,22 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
 
-  let desired = vec2<f32>(best_position) + vec2<f32>(0.5) - position;
+  let desired = vec2<f32>(
+    torus_delta(f32(best_position.x) + 0.5, position.x, particle_params.size.x),
+    torus_delta(f32(best_position.y) + 0.5, position.y, particle_params.size.y)
+  );
   let current_direction = normalize(previous_velocity);
   let desired_direction = select(current_direction, normalize(desired), length(desired) > 0.001);
   let direction = normalize(mix(current_direction, desired_direction, PARTICLE_STEER_STRENGTH));
   let velocity = direction * speed;
   let next_position = vec2<f32>(
-    reflect_coord(position.x + velocity.x * particle_params.delta_seconds, particle_params.size.x - 1.0),
-    reflect_coord(position.y + velocity.y * particle_params.delta_seconds, particle_params.size.y - 1.0)
+    wrap_coord(position.x + velocity.x * particle_params.delta_seconds, particle_params.size.x),
+    wrap_coord(position.y + velocity.y * particle_params.delta_seconds, particle_params.size.y)
   );
   let trail_seconds = max(0.0, particle_params.trail_seconds);
   let trail_position = vec2<f32>(
-    reflect_coord(next_position.x - velocity.x * trail_seconds, particle_params.size.x - 1.0),
-    reflect_coord(next_position.y - velocity.y * trail_seconds, particle_params.size.y - 1.0)
+    wrap_coord(next_position.x - velocity.x * trail_seconds, particle_params.size.x),
+    wrap_coord(next_position.y - velocity.y * trail_seconds, particle_params.size.y)
   );
   let fade = 1.0;
   live_particles[gid.x] = vec4<f32>(next_position, radius, max(0.0, fade));
@@ -294,11 +308,17 @@ fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (f32(i) >= sim_params.particle_count) { break; }
     let particle = particles[i];
     let trail = particles[2u * PARTICLES + i];
-    let direction = particle.xy - trail.xy;
+    let direction = vec2<f32>(
+      torus_delta(particle.x, trail.x, sim_params.size.x),
+      torus_delta(particle.y, trail.y, sim_params.size.y)
+    );
     let length_squared = max(dot(direction, direction), 0.0001);
-    let along = clamp(dot(vec2<f32>(p) + vec2<f32>(0.5) - trail.xy, direction) / length_squared, 0.0, 1.0);
-    let nearest = trail.xy + direction * along;
-    let d = distance(vec2<f32>(p) + vec2<f32>(0.5), nearest);
+    let relative = vec2<f32>(
+      torus_delta(f32(p.x) + 0.5, trail.x, sim_params.size.x),
+      torus_delta(f32(p.y) + 0.5, trail.y, sim_params.size.y)
+    );
+    let along = clamp(dot(relative, direction) / length_squared, 0.0, 1.0);
+    let d = distance(relative, direction * along);
     v = min(1.0, v + (1.0 - smoothstep(particle.z * 0.35, particle.z, d)) * particle.w * PARTICLE_INTENSITY);
   }
 
