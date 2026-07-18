@@ -8,8 +8,6 @@ type Particle = {
   y: number;
   vx: number;
   vy: number;
-  delay: number;
-  life: number;
   radius: number;
 };
 
@@ -136,8 +134,6 @@ const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: nu
       y,
       vx: Math.cos(angle) * v,
       vy: Math.sin(angle) * v,
-      delay: Math.random() * 240,
-      life: 760 + Math.random() * 520,
       radius: 0.65 + Math.random() * 1.1,
     };
   });
@@ -155,9 +151,7 @@ const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
     values[a + 1] = p.y;
     values[a + 2] = p.vx;
     values[a + 3] = p.vy;
-    values[b] = p.delay;
-    values[b + 1] = p.life;
-    values[b + 2] = p.radius;
+    values[b] = p.radius;
   });
 };
 
@@ -201,18 +195,24 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   let seed_a = particle_seed_a[gid.x];
   let seed_b = particle_seed_b[gid.x];
-  let age = particle_params.elapsed - seed_b.y;
-  if (age < 0.0 || age > seed_b.z) {
-    live_particles[gid.x] = vec4<f32>(0.0);
-    return;
-  }
+  let radius = seed_b.x;
+
+  // let delay = seed_b.x;
+  // let life = seed_b.y;
+  let age = particle_params.elapsed;
+  // if (age < 0.0 || age > life) {
+  //   live_particles[gid.x] = vec4<f32>(0.0);
+  //   return;
+  // }
 
   let seconds = age / 1000.0;
-  let progress = age / seed_b.z;
-  let fade = select((1.0 - progress) / 0.14, 1.0, progress < 0.86);
+  // let progress = age / life;
+  // let fade = select((1.0 - progress) / 0.14, 1.0, progress < 0.86);
+
+  let fade = 1.0;
   let x = reflect_coord(seed_a.x + seed_a.z * seconds, particle_params.size.x - 1.0);
   let y = reflect_coord(seed_a.y + seed_a.w * seconds, particle_params.size.y - 1.0);
-  live_particles[gid.x] = vec4<f32>(x, y, seed_b.w, max(0.0, fade));
+  live_particles[gid.x] = vec4<f32>(x, y, radius, max(0.0, fade));
 }
 
 @group(0) @binding(0) var sim_src: texture_2d<f32>;

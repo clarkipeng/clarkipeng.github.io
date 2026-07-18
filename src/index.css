@@ -36,12 +36,15 @@ body {
   transition: color 0.3s ease;
 }
 
+#root {
+  min-height: 100vh;
+  isolation: isolate;
+}
+
 .theme-shader-canvas {
   position: fixed;
   inset: 0;
-  z-index: -1;
-  width: 100vw;
-  height: 100vh;
+  z-index: 0;
   pointer-events: none;
   opacity: 0;
 }
