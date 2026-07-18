@@ -39,14 +39,7 @@ const HomePage = () => (
       </div>
 
       <article className="space-y-5 text-[18px] leading-8 text-[#2d2d29] dark:text-[#ededeb]">
-        <p>
-          I am the CTO of{' '}
-          <a href="https://playcatapult.io/" target="_blank" rel="noopener noreferrer" className="underline decoration-black/20 underline-offset-4 hover:text-[#202020] dark:decoration-white/25 dark:hover:text-white">
-            Catapult
-          </a>{' '}
-          and study CS at UCLA.
-        </p>
-        {aboutParagraphs.slice(1).map((paragraph) => (
+        {aboutParagraphs.map((paragraph) => (
           <p key={paragraph}>{paragraph}</p>
         ))}
       </article>

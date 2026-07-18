@@ -56,7 +56,6 @@ export const navigation = [
 ];
 
 export const aboutParagraphs = [
-  'I am the CTO of Catapult and study CS at UCLA.',
   'Before Catapult, I worked at Camfer on text-to-CAD models, LLM post-training and mid-training, and CAD tools.',
   'My research is about understanding generative models. I have worked on VideoPhy-2 for video generation evaluation and DialectGen for dialect robustness.',
   'Outside of that, I lead ACM AI at UCLA, compete on Kaggle, and build graphics and simulation projects.',
