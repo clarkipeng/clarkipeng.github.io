@@ -41,7 +41,7 @@ export const Header = () => {
             className={({ isActive }) =>
               `hidden min-w-11 border-b py-1 text-center font-sans text-sm no-underline transition duration-200 sm:inline-flex ${
                 !isDark
-                  ? 'border-transparent text-white pointer-events-none'
+                  ? 'border-transparent text-white opacity-0 pointer-events-none'
                   : showSmoke
                   ? isActive
                     ? 'border-white text-white'
