@@ -270,7 +270,7 @@ fn state_at(uv: vec2<f32>) -> f32 {
 
 @fragment
 fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
-  let page_xy = vec2<f32>(render_params.page.x + frag.x, render_params.page.y + render_params.resolution.y - frag.y);
+  let page_xy = vec2<f32>(render_params.page.x + frag.x, render_params.page.y + frag.y);
   let global_cell = page_xy / render_params.page.zw * render_params.surface.zw;
   let uv = (global_cell - render_params.surface.xy) / render_params.state_size;
   let px = 1.0 / render_params.state_size;
