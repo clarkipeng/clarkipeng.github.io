@@ -255,7 +255,7 @@ const writeParticles = (particles: Particle[], elapsed: number, values: Float32A
     values[offset] = reflect(p.x + p.vx * seconds + wobble, w - 1);
     values[offset + 1] = reflect(p.y + p.vy * seconds + Math.cos(seconds * 8 + p.phase) * p.wobble * (1 - progress), h - 1);
     values[offset + 2] = p.radius * radiusScale;
-    values[offset + 3] = radiusScale > 0 ? 1 : 0;
+    values[offset + 3] = radiusScale;
     count += 1;
   });
 
