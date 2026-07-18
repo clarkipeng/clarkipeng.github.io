@@ -58,10 +58,14 @@ type WebGpuRuntime = {
   simPipeline: { getBindGroupLayout: (index: number) => unknown };
   renderPipeline: { getBindGroupLayout: (index: number) => unknown };
   transformPipeline: { getBindGroupLayout: (index: number) => unknown };
+  particlePipeline: { getBindGroupLayout: (index: number) => unknown };
   sampler: unknown;
   simParams: unknown;
+  particleParams: unknown;
   renderParams: unknown;
+  particleSeedBuffer: unknown;
   particleBuffer: unknown;
+  particleBindGroup: unknown;
   smokeReadbacks: ReadbackSlot[];
 };
 
@@ -94,6 +98,8 @@ type ReadbackSlot = {
 const PARTICLES = 18;
 const CELL_SIZE = 14;
 const MAX_PARTICLE_BYTES = PARTICLES * 16;
+const PARTICLE_SEED_STRIDE_BYTES = 512;
+const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 3;
 const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
 const TEXTURE = (globalThis as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
 const MAP_MODE = (globalThis as { GPUMapMode?: Record<string, number> }).GPUMapMode;
@@ -120,12 +126,6 @@ const getDiffusionRate = (progress: number, dt: number) => {
   return 1 - Math.exp(-dt * ramp);
 };
 
-const reflect = (value: number, max: number) => {
-  const period = max * 2;
-  const wrapped = ((value % period) + period) % period;
-  return wrapped > max ? period - wrapped : wrapped;
-};
-
 const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: number, surface: WebGpuSurface, speedCells: number) => {
   const x = (transition.origin.x / docW) * surface.w;
   const y = ((docH - transition.origin.y) / docH) * surface.h;
@@ -147,28 +147,25 @@ const makeParticles = (transition: ThemeShaderTransition, docW: number, docH: nu
   });
 };
 
-const writeParticles = (particles: Particle[], elapsed: number, values: Float32Array, w: number, h: number) => {
+const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
   values.fill(0);
-  let count = 0;
+  const stride = PARTICLE_SEED_STRIDE_BYTES / 4;
 
-  particles.forEach((p) => {
-    const age = elapsed - p.delay;
-    if (age < 0 || age > p.life || count >= PARTICLES) return;
+  particles.forEach((p, index) => {
+    const a = index * 4;
+    const b = stride + a;
+    const c = stride * 2 + a;
 
-    const seconds = age / 1000;
-    const progress = age / p.life;
-    const fade = progress < 0.86 ? 1 : (1 - progress) / 0.14;
-    const wobble = Math.sin(seconds * 12 + p.phase) * p.wobble * (1 - progress);
-    const offset = count * 4;
-
-    values[offset] = reflect(p.x + p.vx * seconds + wobble, w - 1);
-    values[offset + 1] = reflect(p.y + p.vy * seconds + Math.cos(seconds * 8 + p.phase) * p.wobble * (1 - progress), h - 1);
-    values[offset + 2] = p.radius;
-    values[offset + 3] = Math.max(0, fade);
-    count += 1;
+    values[a] = p.x;
+    values[a + 1] = p.y;
+    values[a + 2] = p.vx;
+    values[a + 3] = p.vy;
+    values[b] = p.wobble;
+    values[b + 1] = p.delay;
+    values[b + 2] = p.life;
+    values[b + 3] = p.radius;
+    values[c] = p.phase;
   });
-
-  return count;
 };
 
 const shader = `const PARTICLES = ${PARTICLES}u;
@@ -176,6 +173,12 @@ const shader = `const PARTICLES = ${PARTICLES}u;
 struct SimParams {
   size: vec2<f32>,
   diffuse: f32,
+  particle_count: f32,
+};
+
+struct ParticleParams {
+  size: vec2<f32>,
+  elapsed: f32,
   particle_count: f32,
 };
 
@@ -187,6 +190,40 @@ struct RenderParams {
   from_color: vec4<f32>,
   to_color: vec4<f32>,
 };
+
+fn reflect_coord(value: f32, max_value: f32) -> f32 {
+  let period = max_value * 2.0;
+  let wrapped = value - floor(value / period) * period;
+  return select(wrapped, period - wrapped, wrapped > max_value);
+}
+
+@group(3) @binding(0) var<storage, read> particle_seed_a: array<vec4<f32>>;
+@group(3) @binding(1) var<storage, read> particle_seed_b: array<vec4<f32>>;
+@group(3) @binding(2) var<storage, read> particle_seed_c: array<vec4<f32>>;
+@group(3) @binding(3) var<storage, read_write> live_particles: array<vec4<f32>>;
+@group(3) @binding(4) var<uniform> particle_params: ParticleParams;
+
+@compute @workgroup_size(64)
+fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= PARTICLES || f32(gid.x) >= particle_params.particle_count) { return; }
+
+  let seed_a = particle_seed_a[gid.x];
+  let seed_b = particle_seed_b[gid.x];
+  let seed_c = particle_seed_c[gid.x];
+  let age = particle_params.elapsed - seed_b.y;
+  if (age < 0.0 || age > seed_b.z) {
+    live_particles[gid.x] = vec4<f32>(0.0);
+    return;
+  }
+
+  let seconds = age / 1000.0;
+  let progress = age / seed_b.z;
+  let fade = select((1.0 - progress) / 0.14, 1.0, progress < 0.86);
+  let wobble = sin(seconds * 12.0 + seed_c.x) * seed_b.x * (1.0 - progress);
+  let x = reflect_coord(seed_a.x + seed_a.z * seconds + wobble, particle_params.size.x - 1.0);
+  let y = reflect_coord(seed_a.y + seed_a.w * seconds + cos(seconds * 8.0 + seed_c.x) * seed_b.x * (1.0 - progress), particle_params.size.y - 1.0);
+  live_particles[gid.x] = vec4<f32>(x, y, seed_b.w, max(0.0, fade));
+}
 
 @group(0) @binding(0) var sim_src: texture_2d<f32>;
 @group(0) @binding(1) var sim_dst: texture_storage_2d<rgba8unorm, write>;
@@ -279,12 +316,26 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
 
     const module = device.createShaderModule({ code: shader });
     const simPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'sim_main' } });
+    const particlePipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'particle_main' } });
     const transformPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'transform_main' } });
     const renderPipeline = device.createRenderPipeline({
       layout: 'auto',
       vertex: { module, entryPoint: 'vertex_main' },
       fragment: { module, entryPoint: 'fragment_main', targets: [{ format }] },
       primitive: { topology: 'triangle-list' },
+    });
+    const particleSeedBuffer = device.createBuffer({ size: PARTICLE_SEED_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
+    const particleBuffer = device.createBuffer({ size: MAX_PARTICLE_BYTES, usage: BUFFER.STORAGE });
+    const particleParams = device.createBuffer({ size: 32, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
+    const particleBindGroup = device.createBindGroup({
+      layout: particlePipeline.getBindGroupLayout(3),
+      entries: [
+        { binding: 0, resource: { buffer: particleSeedBuffer, offset: 0, size: MAX_PARTICLE_BYTES } },
+        { binding: 1, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES, size: MAX_PARTICLE_BYTES } },
+        { binding: 2, resource: { buffer: particleSeedBuffer, offset: PARTICLE_SEED_STRIDE_BYTES * 2, size: MAX_PARTICLE_BYTES } },
+        { binding: 3, resource: { buffer: particleBuffer } },
+        { binding: 4, resource: { buffer: particleParams } },
+      ],
     });
 
     return {
@@ -294,10 +345,14 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
       simPipeline,
       renderPipeline,
       transformPipeline,
+      particlePipeline,
       sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' }),
       simParams: device.createBuffer({ size: 32, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
+      particleParams,
       renderParams: device.createBuffer({ size: 80, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
-      particleBuffer: device.createBuffer({ size: MAX_PARTICLE_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_DST }),
+      particleSeedBuffer,
+      particleBuffer,
+      particleBindGroup,
       smokeReadbacks: Array.from({ length: 3 }, () => ({
         buffer: device.createBuffer({ size: 256 * 3, usage: BUFFER.COPY_DST | BUFFER.MAP_READ }) as MappableBuffer,
         busy: false,
@@ -451,10 +506,10 @@ export const ThemeShaderCanvasWebGPU = ({
       const from = colors[transition.from];
       const to = colors[transition.to];
       const previous = metaRef.current;
-      const particleValues = new Float32Array(PARTICLES * 4);
+      const particleSeedValues = new Float32Array(PARTICLE_SEED_BYTES / 4);
+      const particleParamValues = new Float32Array(8);
       const renderValues = new Float32Array(20);
       const simValues = new Float32Array(8);
-      let particles: Particle[] = [];
       let prepared = false;
       let last = performance.now();
       const started = last;
@@ -508,7 +563,9 @@ export const ThemeShaderCanvasWebGPU = ({
             surfaceRef.current = createSurface(runtime, region);
           }
 
-          particles = makeParticles(transition, doc.w, doc.h, surface, Math.max(window.innerWidth, window.innerHeight) / cell);
+          const activeSurface = surfaceRef.current ?? surface;
+          writeParticleSeeds(makeParticles(transition, doc.w, doc.h, activeSurface, Math.max(window.innerWidth, window.innerHeight) / cell), particleSeedValues);
+          runtime.device.queue.writeBuffer(runtime.particleSeedBuffer, 0, particleSeedValues);
           metaRef.current = { from: transition.from, to: transition.to };
           prepared = true;
         }
@@ -580,13 +637,13 @@ export const ThemeShaderCanvasWebGPU = ({
         const elapsed = now - started;
         const progress = Math.min(1, elapsed / transition.duration);
         const diffusion = getDiffusionRate(progress, dt);
-        const count = writeParticles(particles, elapsed, particleValues, surface.w, surface.h);
         const write = surface.read === 0 ? 1 : 0;
         last = now;
 
-        simValues.set([surface.w, surface.h, diffusion, count, 0, 0, 0, 0]);
+        particleParamValues.set([surface.w, surface.h, elapsed, PARTICLES, 0, 0, 0, 0]);
+        simValues.set([surface.w, surface.h, diffusion, PARTICLES, 0, 0, 0, 0]);
+        runtime.device.queue.writeBuffer(runtime.particleParams, 0, particleParamValues);
         runtime.device.queue.writeBuffer(runtime.simParams, 0, simValues);
-        runtime.device.queue.writeBuffer(runtime.particleBuffer, 0, particleValues);
 
         renderValues.set([
           canvas.width,
@@ -613,6 +670,11 @@ export const ThemeShaderCanvasWebGPU = ({
         runtime.device.queue.writeBuffer(runtime.renderParams, 0, renderValues);
 
         const encoder = runtime.device.createCommandEncoder();
+        const particlePass = encoder.beginComputePass();
+        particlePass.setPipeline(runtime.particlePipeline);
+        particlePass.setBindGroup(3, runtime.particleBindGroup);
+        particlePass.dispatchWorkgroups(Math.ceil(PARTICLES / 64), 1);
+        particlePass.end();
         const simPass = encoder.beginComputePass();
         simPass.setPipeline(runtime.simPipeline);
         simPass.setBindGroup(0, surface.simBindGroups[surface.read]);
