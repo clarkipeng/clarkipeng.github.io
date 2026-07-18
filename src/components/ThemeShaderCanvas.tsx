@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ThemeShaderCanvasWebGPU } from './ThemeShaderCanvasWebGPU';
 
 type ShaderTheme = 'light' | 'dark';
@@ -464,9 +464,10 @@ export const ThemeShaderCanvas = (props: {
     if (typeof navigator === 'undefined') return 'webgl';
     return 'gpu' in navigator ? 'webgpu' : 'webgl';
   });
+  const handleUnavailable = useCallback(() => setBackend('webgl'), []);
 
   if (backend === 'webgpu') {
-    return <ThemeShaderCanvasWebGPU {...props} onUnavailable={() => setBackend('webgl')} />;
+    return <ThemeShaderCanvasWebGPU {...props} onUnavailable={handleUnavailable} />;
   }
 
   return <ThemeShaderCanvasWebGL {...props} />;
