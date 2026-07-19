@@ -100,6 +100,8 @@ const PARTICLE_CONFIG = {
   trailSeconds: 0.05,
   intensity: 0.1,
   steerStrength: 0.06,
+  sensorDistance: 4,
+  sensorAngle: 0.55,
 } as const;
 const DIFFUSION_CONFIG = {
   startRate: 0.08,
@@ -176,6 +178,8 @@ const writeParticleSeeds = (particles: Particle[], values: Float32Array) => {
 const shader = `const PARTICLES = ${PARTICLES}u;
 const PARTICLE_INTENSITY = ${PARTICLE_CONFIG.intensity};
 const PARTICLE_STEER_STRENGTH = ${PARTICLE_CONFIG.steerStrength};
+const PARTICLE_SENSOR_DISTANCE = ${PARTICLE_CONFIG.sensorDistance};
+const PARTICLE_SENSOR_ANGLE = ${PARTICLE_CONFIG.sensorAngle};
 
 struct SimParams {
   size: vec2<f32>,
@@ -224,9 +228,9 @@ fn torus_delta(a: f32, b: f32, size: f32) -> f32 {
 @group(3) @binding(3) var<storage, read_write> live_particles: array<vec4<f32>>;
 @group(3) @binding(4) var<uniform> particle_params: ParticleParams;
 
-fn steer_score(pos: vec2<i32>) -> f32 {
+fn steer_score(pos: vec2<f32>) -> f32 {
   let size = vec2<i32>(particle_params.size);
-  let wrapped = vec2<i32>(wrap_index(pos.x, size.x), wrap_index(pos.y, size.y));
+  let wrapped = vec2<i32>(wrap_index(i32(floor(pos.x)), size.x), wrap_index(i32(floor(pos.y)), size.y));
   let value = textureLoad(steer_state, wrapped, 0).r;
   return select(1.0 - value, value, particle_params.target_value > 0.5);
 }
@@ -247,27 +251,26 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let position = select(previous.xy, vec2<f32>(seed_a.x, seed_a.y), reset);
   let previous_velocity = select(history.zw, seed_a.zw, reset);
   let speed = max(length(seed_a.zw), 0.001);
-  let offsets = array<vec2<i32>, 8>(
-    vec2<i32>(-1, -1), vec2<i32>(0, -1), vec2<i32>(1, -1), vec2<i32>(-1, 0),
-    vec2<i32>(1, 0), vec2<i32>(-1, 1), vec2<i32>(0, 1), vec2<i32>(1, 1)
-  );
-  var best_position = vec2<i32>(position);
-  var best_score = steer_score(best_position);
-  for (var j = 0u; j < 8u; j = j + 1u) {
-    let candidate = vec2<i32>(position) + offsets[j];
-    let score = steer_score(candidate);
-    if (score > best_score) {
-      best_score = score;
-      best_position = candidate;
-    }
-  }
-
-  let desired = vec2<f32>(
-    torus_delta(f32(best_position.x) + 0.5, position.x, particle_params.size.x),
-    torus_delta(f32(best_position.y) + 0.5, position.y, particle_params.size.y)
-  );
   let current_direction = normalize(previous_velocity);
-  let desired_direction = select(current_direction, normalize(desired), length(desired) > 0.001);
+  let cosine = cos(PARTICLE_SENSOR_ANGLE);
+  let sine = sin(PARTICLE_SENSOR_ANGLE);
+  let left_direction = vec2<f32>(
+    current_direction.x * cosine - current_direction.y * sine,
+    current_direction.x * sine + current_direction.y * cosine
+  );
+  let right_direction = vec2<f32>(
+    current_direction.x * cosine + current_direction.y * sine,
+    -current_direction.x * sine + current_direction.y * cosine
+  );
+  let center_score = steer_score(position + current_direction * PARTICLE_SENSOR_DISTANCE);
+  let left_score = steer_score(position + left_direction * PARTICLE_SENSOR_DISTANCE);
+  let right_score = steer_score(position + right_direction * PARTICLE_SENSOR_DISTANCE);
+  var desired_direction = current_direction;
+  if (left_score > center_score && left_score >= right_score) {
+    desired_direction = left_direction;
+  } else if (right_score > center_score) {
+    desired_direction = right_direction;
+  }
   let direction = normalize(mix(current_direction, desired_direction, PARTICLE_STEER_STRENGTH));
   let velocity = direction * speed;
   let next_position = vec2<f32>(
