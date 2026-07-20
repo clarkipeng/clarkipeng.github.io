@@ -109,6 +109,10 @@ const DIFFUSION_CONFIG = {
   exponent: 3,
   settleRate: 0.5,
 } as const;
+const DENSITY_CONFIG = {
+  deposit: 0.08,
+  diffusionScale: 0.6,
+} as const;
 const PARTICLES = PARTICLE_CONFIG.count;
 const CELL_SIZE = PARTICLE_CONFIG.cellSize;
 const SETTLE_MS = 600;
@@ -180,6 +184,8 @@ const PARTICLE_INTENSITY = ${PARTICLE_CONFIG.intensity};
 const PARTICLE_STEER_STRENGTH = ${PARTICLE_CONFIG.steerStrength};
 const PARTICLE_SENSOR_DISTANCE = ${PARTICLE_CONFIG.sensorDistance};
 const PARTICLE_SENSOR_ANGLE = ${PARTICLE_CONFIG.sensorAngle};
+const DENSITY_DEPOSIT = ${DENSITY_CONFIG.deposit};
+const DENSITY_DIFFUSION = ${DENSITY_CONFIG.diffusionScale};
 
 struct SimParams {
   size: vec2<f32>,
@@ -231,8 +237,7 @@ fn torus_delta(a: f32, b: f32, size: f32) -> f32 {
 fn steer_score(pos: vec2<f32>) -> f32 {
   let size = vec2<i32>(particle_params.size);
   let wrapped = vec2<i32>(wrap_index(i32(floor(pos.x)), size.x), wrap_index(i32(floor(pos.y)), size.y));
-  let value = textureLoad(steer_state, wrapped, 0).r;
-  return select(1.0 - value, value, particle_params.target_value > 0.5);
+  return textureLoad(steer_state, wrapped, 0).g;
 }
 
 @compute @workgroup_size(64)
@@ -293,19 +298,30 @@ fn particle_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 @group(0) @binding(2) var<uniform> sim_params: SimParams;
 @group(0) @binding(3) var<storage, read> particles: array<vec4<f32>>;
 
-fn sample_state(pos: vec2<i32>) -> f32 {
+fn sample_theme(pos: vec2<i32>) -> f32 {
   let limit = vec2<i32>(sim_params.size) - vec2<i32>(1);
   return textureLoad(sim_src, clamp(pos, vec2<i32>(0), limit), 0).r;
+}
+
+fn sample_density(pos: vec2<i32>) -> f32 {
+  let limit = vec2<i32>(sim_params.size) - vec2<i32>(1);
+  return textureLoad(sim_src, clamp(pos, vec2<i32>(0), limit), 0).g;
 }
 
 @compute @workgroup_size(8, 8)
 fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let p = vec2<i32>(gid.xy);
   if (p.x >= i32(sim_params.size.x) || p.y >= i32(sim_params.size.y)) { return; }
-  let c = sample_state(p);
-  var m = max(max(sample_state(p + vec2<i32>(-1, 0)), sample_state(p + vec2<i32>(1, 0))), max(sample_state(p + vec2<i32>(0, -1)), sample_state(p + vec2<i32>(0, 1))));
-  m = max(m, max(max(sample_state(p + vec2<i32>(-1, -1)), sample_state(p + vec2<i32>(1, -1))), max(sample_state(p + vec2<i32>(-1, 1)), sample_state(p + vec2<i32>(1, 1)))));
-  var v = max(c, mix(c, m, sim_params.diffuse));
+  let c = sample_theme(p);
+  var m = max(max(sample_theme(p + vec2<i32>(-1, 0)), sample_theme(p + vec2<i32>(1, 0))), max(sample_theme(p + vec2<i32>(0, -1)), sample_theme(p + vec2<i32>(0, 1))));
+  m = max(m, max(max(sample_theme(p + vec2<i32>(-1, -1)), sample_theme(p + vec2<i32>(1, -1))), max(sample_theme(p + vec2<i32>(-1, 1)), sample_theme(p + vec2<i32>(1, 1)))));
+  var theme = max(c, mix(c, m, sim_params.diffuse));
+  let density = sample_density(p);
+  let density_neighbors = (
+    sample_density(p + vec2<i32>(-1, 0)) + sample_density(p + vec2<i32>(1, 0))
+    + sample_density(p + vec2<i32>(0, -1)) + sample_density(p + vec2<i32>(0, 1))
+  ) * 0.25;
+  var density_next = mix(density, density_neighbors, min(1.0, sim_params.diffuse * DENSITY_DIFFUSION));
 
   for (var i = 0u; i < PARTICLES; i = i + 1u) {
     if (f32(i) >= sim_params.particle_count) { break; }
@@ -322,10 +338,12 @@ fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let along = clamp(dot(relative, direction) / length_squared, 0.0, 1.0);
     let d = distance(relative, direction * along);
-    v = min(1.0, v + (1.0 - smoothstep(particle.z * 0.35, particle.z, d)) * particle.w * PARTICLE_INTENSITY);
+    let stamp = (1.0 - smoothstep(particle.z * 0.35, particle.z, d)) * particle.w;
+    theme = min(1.0, theme + stamp * PARTICLE_INTENSITY);
+    density_next = min(1.0, density_next + stamp * DENSITY_DEPOSIT);
   }
 
-  textureStore(sim_dst, p, vec4<f32>(clamp(v, 0.0, 1.0), 0.0, 0.0, 1.0));
+  textureStore(sim_dst, p, vec4<f32>(clamp(theme, 0.0, 1.0), clamp(density_next, 0.0, 1.0), 0.0, 1.0));
 }
 
 @group(1) @binding(0) var render_tex: texture_2d<f32>;
@@ -348,6 +366,10 @@ fn state_at(uv: vec2<f32>) -> f32 {
   return textureSampleLevel(render_tex, render_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).r;
 }
 
+fn density_at(uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(render_tex, render_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).g;
+}
+
 @fragment
 fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
   let page_xy = vec2<f32>(render_params.page.x + frag.x, render_params.page.y + frag.y);
@@ -368,8 +390,8 @@ fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
 @compute @workgroup_size(8, 8)
 fn transform_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(transform_params.size.x) || gid.y >= u32(transform_params.size.y)) { return; }
-  let value = textureLoad(transform_src, vec2<i32>(gid.xy), 0).r;
-  textureStore(transform_dst, vec2<i32>(gid.xy), vec4<f32>(1.0 - value, 0.0, 0.0, 1.0));
+  let value = textureLoad(transform_src, vec2<i32>(gid.xy), 0);
+  textureStore(transform_dst, vec2<i32>(gid.xy), vec4<f32>(1.0 - value.r, value.g, 0.0, 1.0));
 }`;
 
 const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime | null> => {
