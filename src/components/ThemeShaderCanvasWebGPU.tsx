@@ -94,20 +94,20 @@ type ReadbackSlot = {
 const PARTICLE_CONFIG = {
   count: 96,
   cellSize: 14,
-  speedScale: 1,
+  speedScale: 0.5,
   radiusMin: 0.65,
   radiusMax: 1.75,
   trailSeconds: 0.05,
-  intensity: 0.1,
+  intensity: 0.3,
   steerStrength: 0.06,
-  sensorDistance: 4,
-  sensorAngle: 0.55,
+  sensorDistance: 1,
+  sensorAngle: 30./180.*3.1415,
 } as const;
 const DIFFUSION_CONFIG = {
-  startRate: 0.08,
-  endRate: 1,
+  startRate: 0.05,
+  endRate: 0.5,
   exponent: 3,
-  settleRate: 1,
+  settleRate: 0.5,
 } as const;
 const PARTICLES = PARTICLE_CONFIG.count;
 const CELL_SIZE = PARTICLE_CONFIG.cellSize;
