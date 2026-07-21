@@ -217,13 +217,13 @@ fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instan
   let pb = b.xy * render_params.resolution;
   let normal = normalize(vec2<f32>(-(pb.y - pa.y), pb.x - pa.x));
   let spacing = select(render_params.resolution.y, render_params.resolution.x, side >= 2u) / f32(SOURCES_PER_SIDE);
-  let half_width = spacing * mix(0.08, 0.025, spectral);
+  let half_width = spacing * mix(0.08, 0.05, spectral);
   let screen = mix(pa, pb, endpoints[vertex_id]) + normal * sides[vertex_id] * half_width;
   let clip = screen / render_params.resolution * 2.0 - 1.0;
   var out: VertexOut;
-  out.position = select(vec4<f32>(2.0, 2.0, 0.0, 1.0), vec4<f32>(clip.x, -clip.y, 0.0, 1.0), f32(step + 1u) / f32(STEPS) <= render_params.progress);
+  out.position = vec4<f32>(clip.x, -clip.y, 0.0, 1.0);
   out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z) * 2.0, spectral) * source_intensity;
-  out.opacity = mix(0.0005, 0.025, spectral);
+  out.opacity = mix(0.0008, 0.035, spectral);
   return out;
 }
 
@@ -252,9 +252,9 @@ fn ribbon_vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index)
   let clip = screen / render_params.resolution * 2.0 - 1.0;
   let offset = (f32(bundle % SOURCES_PER_SIDE) + 0.5) / f32(SOURCES_PER_SIDE);
   var out: RibbonOut;
-  out.position = select(vec4<f32>(2.0, 2.0, 0.0, 1.0), vec4<f32>(clip.x, -clip.y, 0.0, 1.0), f32(step + step_offsets[vertex_id]) / f32(STEPS) <= render_params.progress);
+  out.position = vec4<f32>(clip.x, -clip.y, 0.0, 1.0);
   out.wavelength = point.z;
-  out.opacity = smoothstep(0.005, 0.08, point.w) * (0.00015 + 0.00045 * (1.0 - abs(offset * 2.0 - 1.0)));
+  out.opacity = smoothstep(0.005, 0.08, point.w) * (0.0004 + 0.0008 * (1.0 - abs(offset * 2.0 - 1.0)));
   return out;
 }
 
@@ -446,5 +446,5 @@ export const SpectralLightGadget = () => {
   }, [isDark]);
 
   if (!isDark) return null;
-  return <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 h-full w-full bg-[#050505]" />;
+  return <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 h-full w-full bg-[#050505] opacity-40" />;
 };
