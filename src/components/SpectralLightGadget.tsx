@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
 
-const RAYS = 1000;
-const RAYS_PER_SIDE = RAYS / 4;
+const SOURCES_PER_SIDE = 32;
+const SPECTRAL_SAMPLES = 32;
+const BUNDLES = SOURCES_PER_SIDE * 4;
+const RAYS = BUNDLES * SPECTRAL_SAMPLES;
 const STEPS = 128;
 const FIELD_SIZE = 192;
 
@@ -42,7 +44,10 @@ type Context = {
 
 const shader = `
 const RAYS = ${RAYS}u;
-const RAYS_PER_SIDE = ${RAYS_PER_SIDE}u;
+const SOURCES_PER_SIDE = ${SOURCES_PER_SIDE}u;
+const SPECTRAL_SAMPLES = ${SPECTRAL_SAMPLES}u;
+const BUNDLES = ${BUNDLES}u;
+const VIRTUAL_WAVELENGTHS = 1000.0;
 const STEPS = ${STEPS}u;
 const FIELD_SIZE = ${FIELD_SIZE}u;
 
@@ -118,12 +123,13 @@ fn water_index(wavelength_nm: f32) -> f32 {
 @compute @workgroup_size(64)
 fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= RAYS) { return; }
-  let spectral_index = (gid.x * 613u) % RAYS;
-  let wavelength = mix(380.0, 780.0, f32(spectral_index) / f32(RAYS - 1u));
+  let bundle = gid.x / SPECTRAL_SAMPLES;
+  let spectral_index = gid.x % SPECTRAL_SAMPLES;
+  let wavelength = mix(380.0, 780.0, f32(spectral_index) / f32(SPECTRAL_SAMPLES - 1u));
   let step_length = 1.0 / f32(STEPS);
   let epsilon = vec2<f32>(step_length, step_length * params.resolution.x / params.resolution.y);
-  let side = gid.x / RAYS_PER_SIDE;
-  let offset = (f32(gid.x % RAYS_PER_SIDE) + 0.5) / f32(RAYS_PER_SIDE);
+  let side = bundle / SOURCES_PER_SIDE;
+  let offset = (f32(bundle % SOURCES_PER_SIDE) + 0.5) / f32(SOURCES_PER_SIDE);
   let edge_weight = abs(offset * 2.0 - 1.0);
   let toward_center = select(-1.0, 1.0, offset < 0.5);
   let inward = 1.0 - edge_weight * 0.95;
@@ -158,7 +164,7 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     let n = mix(1.000293, water_n, local_density);
     let grad_n = density_gradient * (water_n - 1.000293);
     let transverse = grad_n - direction * dot(direction, grad_n);
-    let diffraction = sin(f32(gid.x) * 2.39996 + f32(step) * 1.61803) * length(density_gradient) * wavelength / 550.0;
+    let diffraction = sin(f32(bundle) * 2.39996 + f32(step) * 1.61803) * length(density_gradient) * wavelength / 550.0;
     let perpendicular = vec2<f32>(-direction.y, direction.x);
     direction = normalize(direction + transverse * (step_length / n) + perpendicular * diffraction * step_length * 0.0015);
     optical_depth = clamp(optical_depth + local_density * 2.0 / f32(STEPS), 0.0, 1.0);
@@ -169,23 +175,23 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
 @group(0) @binding(0) var<storage, read> rendered_points: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> render_params: Params;
 
-fn gaussian(wavelength: f32, center: f32, width: f32) -> f32 {
-  let x = (wavelength - center) / width;
-  return exp(-0.5 * x * x);
-}
-
 fn wavelength_rgb(w: f32) -> vec3<f32> {
-  let xyz = vec3<f32>(
-    1.056 * gaussian(w, 599.8, 37.9) + 0.362 * gaussian(w, 442.0, 16.0) - 0.065 * gaussian(w, 501.1, 20.4),
-    0.821 * gaussian(w, 568.8, 46.9) + 0.286 * gaussian(w, 530.9, 16.3),
-    1.217 * gaussian(w, 437.0, 11.8) + 0.681 * gaussian(w, 459.0, 26.0)
-  );
-  let rgb = max(vec3<f32>(0.0), vec3<f32>(
-    3.2406 * xyz.x - 1.5372 * xyz.y - 0.4986 * xyz.z,
-    -0.9689 * xyz.x + 1.8758 * xyz.y + 0.0415 * xyz.z,
-    0.0557 * xyz.x - 0.2040 * xyz.y + 1.0570 * xyz.z
-  ));
-  return rgb / max(0.001, max(rgb.r, max(rgb.g, rgb.b)));
+  var rgb = vec3<f32>(0.0);
+  if (w < 440.0) {
+    rgb = vec3<f32>((440.0 - w) / 60.0, 0.0, 1.0);
+  } else if (w < 490.0) {
+    rgb = vec3<f32>(0.0, (w - 440.0) / 50.0, 1.0);
+  } else if (w < 510.0) {
+    rgb = vec3<f32>(0.0, 1.0, (510.0 - w) / 20.0);
+  } else if (w < 580.0) {
+    rgb = vec3<f32>((w - 510.0) / 70.0, 1.0, 0.0);
+  } else if (w < 645.0) {
+    rgb = vec3<f32>(1.0, (645.0 - w) / 65.0, 0.0);
+  } else {
+    rgb = vec3<f32>(1.0, 0.0, 0.0);
+  }
+  let edge = select(select(1.0, 0.3 + 0.7 * (780.0 - w) / 80.0, w > 700.0), 0.3 + 0.7 * (w - 380.0) / 40.0, w < 420.0);
+  return pow(rgb * edge, vec3<f32>(0.8)) * vec3<f32>(0.644, 1.0, 1.408);
 }
 
 struct VertexOut {
@@ -198,8 +204,9 @@ struct VertexOut {
 fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance: u32) -> VertexOut {
   let ray = instance / STEPS;
   let step = instance % STEPS;
-  let side = ray / RAYS_PER_SIDE;
-  let offset = (f32(ray % RAYS_PER_SIDE) + 0.5) / f32(RAYS_PER_SIDE);
+  let bundle = ray / SPECTRAL_SAMPLES;
+  let side = bundle / SOURCES_PER_SIDE;
+  let offset = (f32(bundle % SOURCES_PER_SIDE) + 0.5) / f32(SOURCES_PER_SIDE);
   let source_intensity = 0.35 + 0.65 * (1.0 - abs(offset * 2.0 - 1.0));
   let a = rendered_points[ray * (STEPS + 1u) + step];
   let b = rendered_points[ray * (STEPS + 1u) + step + 1u];
@@ -209,20 +216,53 @@ fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instan
   let pa = a.xy * render_params.resolution;
   let pb = b.xy * render_params.resolution;
   let normal = normalize(vec2<f32>(-(pb.y - pa.y), pb.x - pa.x));
-  let spacing = select(render_params.resolution.y, render_params.resolution.x, side >= 2u) / f32(RAYS_PER_SIDE);
-  let half_width = spacing * mix(0.55, 0.14, spectral);
+  let spacing = select(render_params.resolution.y, render_params.resolution.x, side >= 2u) / f32(SOURCES_PER_SIDE);
+  let half_width = spacing * mix(0.08, 0.025, spectral);
   let screen = mix(pa, pb, endpoints[vertex_id]) + normal * sides[vertex_id] * half_width;
   let clip = screen / render_params.resolution * 2.0 - 1.0;
   var out: VertexOut;
   out.position = select(vec4<f32>(2.0, 2.0, 0.0, 1.0), vec4<f32>(clip.x, -clip.y, 0.0, 1.0), f32(step + 1u) / f32(STEPS) <= render_params.progress);
-  out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z) * 3.0, spectral) * source_intensity;
-  out.opacity = mix(0.018, 0.28, spectral);
+  out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z) * 2.0, spectral) * source_intensity;
+  out.opacity = mix(0.0005, 0.025, spectral);
   return out;
 }
 
 @fragment
 fn fragment(in: VertexOut) -> @location(0) vec4<f32> {
   return vec4<f32>(in.color, in.opacity);
+}
+
+struct RibbonOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) wavelength: f32,
+  @location(1) opacity: f32,
+};
+
+@vertex
+fn ribbon_vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance: u32) -> RibbonOut {
+  let strip = instance / STEPS;
+  let step = instance % STEPS;
+  let bundle = strip / (SPECTRAL_SAMPLES - 1u);
+  let spectral_index = strip % (SPECTRAL_SAMPLES - 1u);
+  let wavelength_offsets = array<u32, 6>(0u, 1u, 1u, 0u, 1u, 0u);
+  let step_offsets = array<u32, 6>(0u, 0u, 1u, 0u, 1u, 1u);
+  let ray = bundle * SPECTRAL_SAMPLES + spectral_index + wavelength_offsets[vertex_id];
+  let point = rendered_points[ray * (STEPS + 1u) + step + step_offsets[vertex_id]];
+  let screen = point.xy * render_params.resolution;
+  let clip = screen / render_params.resolution * 2.0 - 1.0;
+  let offset = (f32(bundle % SOURCES_PER_SIDE) + 0.5) / f32(SOURCES_PER_SIDE);
+  var out: RibbonOut;
+  out.position = select(vec4<f32>(2.0, 2.0, 0.0, 1.0), vec4<f32>(clip.x, -clip.y, 0.0, 1.0), f32(step + step_offsets[vertex_id]) / f32(STEPS) <= render_params.progress);
+  out.wavelength = point.z;
+  out.opacity = smoothstep(0.005, 0.08, point.w) * (0.00015 + 0.00045 * (1.0 - abs(offset * 2.0 - 1.0)));
+  return out;
+}
+
+@fragment
+fn ribbon_fragment(in: RibbonOut) -> @location(0) vec4<f32> {
+  let t = round(clamp((in.wavelength - 380.0) / 400.0, 0.0, 1.0) * (VIRTUAL_WAVELENGTHS - 1.0)) / (VIRTUAL_WAVELENGTHS - 1.0);
+  let wavelength = mix(380.0, 780.0, t);
+  return vec4<f32>(wavelength_rgb(wavelength) * 2.0, in.opacity);
 }`;
 
 export const SpectralLightGadget = () => {
@@ -268,6 +308,22 @@ export const SpectralLightGadget = () => {
         },
         primitive: { topology: 'triangle-list' },
       });
+      const ribbon = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module, entryPoint: 'ribbon_vertex' },
+        fragment: {
+          module,
+          entryPoint: 'ribbon_fragment',
+          targets: [{
+            format,
+            blend: {
+              color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
+              alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
+            },
+          }],
+        },
+        primitive: { topology: 'triangle-list' },
+      });
       const pointBuffer = device.createBuffer({ size: RAYS * (STEPS + 1) * 16, usage: usage.STORAGE });
       const paramsBuffer = device.createBuffer({ size: 48, usage: usage.UNIFORM | usage.COPY_DST });
       const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
@@ -297,6 +353,13 @@ export const SpectralLightGadget = () => {
       }));
       const renderGroup = device.createBindGroup({
         layout: render.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: pointBuffer } },
+          { binding: 1, resource: { buffer: paramsBuffer } },
+        ],
+      });
+      const ribbonGroup = device.createBindGroup({
+        layout: ribbon.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer: pointBuffer } },
           { binding: 1, resource: { buffer: paramsBuffer } },
@@ -349,6 +412,9 @@ export const SpectralLightGadget = () => {
         renderPass.setPipeline(render);
         renderPass.setBindGroup(0, renderGroup);
         renderPass.draw(6, RAYS * STEPS);
+        renderPass.setPipeline(ribbon);
+        renderPass.setBindGroup(0, ribbonGroup);
+        renderPass.draw(6, BUNDLES * (SPECTRAL_SAMPLES - 1) * STEPS);
         renderPass.end();
         device.queue.submit([encoder.finish()]);
         pointerDelta.x *= 0.82;
