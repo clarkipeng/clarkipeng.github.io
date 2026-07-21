@@ -113,6 +113,11 @@ const DENSITY_CONFIG = {
   deposit: 0.08,
   diffusionScale: 0.6,
 } as const;
+const REFRACTION_CONFIG = {
+  baseIndex: 1,
+  densityIndex: 0.35,
+  strength: 8,
+} as const;
 const PARTICLES = PARTICLE_CONFIG.count;
 const CELL_SIZE = PARTICLE_CONFIG.cellSize;
 const SETTLE_MS = 600;
@@ -186,6 +191,9 @@ const PARTICLE_SENSOR_DISTANCE = ${PARTICLE_CONFIG.sensorDistance};
 const PARTICLE_SENSOR_ANGLE = ${PARTICLE_CONFIG.sensorAngle};
 const DENSITY_DEPOSIT = ${DENSITY_CONFIG.deposit};
 const DENSITY_DIFFUSION = ${DENSITY_CONFIG.diffusionScale};
+const REFRACTION_BASE_INDEX = ${REFRACTION_CONFIG.baseIndex};
+const REFRACTION_DENSITY_INDEX = ${REFRACTION_CONFIG.densityIndex};
+const REFRACTION_STRENGTH = ${REFRACTION_CONFIG.strength};
 
 struct SimParams {
   size: vec2<f32>,
@@ -376,9 +384,15 @@ fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
   let global_cell = page_xy / render_params.page.zw * render_params.surface.zw;
   let uv = (global_cell - render_params.surface.xy) / render_params.state_size;
   let px = 1.0 / render_params.state_size;
-  var state = state_at(uv) * 4.0;
-  state += (state_at(uv + vec2<f32>(px.x, 0.0)) + state_at(uv - vec2<f32>(px.x, 0.0)) + state_at(uv + vec2<f32>(0.0, px.y)) + state_at(uv - vec2<f32>(0.0, px.y))) * 2.0;
-  state += state_at(uv + px) + state_at(uv - px) + state_at(uv + vec2<f32>(px.x, -px.y)) + state_at(uv + vec2<f32>(-px.x, px.y));
+  let density = density_at(uv);
+  let gradient = vec2<f32>(
+    density_at(uv + vec2<f32>(px.x, 0.0)) - density_at(uv - vec2<f32>(px.x, 0.0)),
+    density_at(uv + vec2<f32>(0.0, px.y)) - density_at(uv - vec2<f32>(0.0, px.y))
+  ) * 0.5;
+  let sample_uv = clamp(uv + gradient * (REFRACTION_STRENGTH / (REFRACTION_BASE_INDEX + density * REFRACTION_DENSITY_INDEX)) * px, vec2<f32>(0.0), vec2<f32>(1.0));
+  var state = state_at(sample_uv) * 4.0;
+  state += (state_at(sample_uv + vec2<f32>(px.x, 0.0)) + state_at(sample_uv - vec2<f32>(px.x, 0.0)) + state_at(sample_uv + vec2<f32>(0.0, px.y)) + state_at(sample_uv - vec2<f32>(0.0, px.y))) * 2.0;
+  state += state_at(sample_uv + px) + state_at(sample_uv - px) + state_at(sample_uv + vec2<f32>(px.x, -px.y)) + state_at(sample_uv + vec2<f32>(-px.x, px.y));
   state = clamp(state / 16.0, 0.0, 1.0);
   return vec4<f32>(mix(render_params.from_color.rgb, render_params.to_color.rgb, state), 1.0);
 }
