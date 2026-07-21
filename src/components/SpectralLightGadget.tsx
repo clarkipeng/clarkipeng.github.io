@@ -136,6 +136,14 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     case 3u: { position = vec2<f32>(offset, 1.0); direction = normalize(vec2<f32>(lateral, -inward)); }
     default: {}
   }
+  var normal_direction = vec2<f32>(1.0, 0.0);
+  switch side {
+    case 1u: { normal_direction = vec2<f32>(-1.0, 0.0); }
+    case 2u: { normal_direction = vec2<f32>(0.0, 1.0); }
+    case 3u: { normal_direction = vec2<f32>(0.0, -1.0); }
+    default: {}
+  }
+  direction = normalize(mix(direction, normal_direction, smoothstep(0.2, 1.0, params.progress)));
   var optical_depth = 0.0;
 
   for (var step = 0u; step <= STEPS; step = step + 1u) {
@@ -143,16 +151,16 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (step == STEPS) { break; }
     let local_density = density_at(position);
     let density_gradient = vec2<f32>(
-      density_at(position + vec2<f32>(epsilon.x, 0.0)) - density_at(position - vec2<f32>(epsilon.x, 0.0)),
-      density_at(position + vec2<f32>(0.0, epsilon.y)) - density_at(position - vec2<f32>(0.0, epsilon.y))
-    ) * 0.5;
+      (density_at(position + vec2<f32>(epsilon.x, 0.0)) - density_at(position - vec2<f32>(epsilon.x, 0.0))) / (2.0 * epsilon.x),
+      (density_at(position + vec2<f32>(0.0, epsilon.y)) - density_at(position - vec2<f32>(0.0, epsilon.y))) / (2.0 * epsilon.y)
+    );
     let water_n = water_index(wavelength);
     let n = mix(1.000293, water_n, local_density);
     let grad_n = density_gradient * (water_n - 1.000293);
     let transverse = grad_n - direction * dot(direction, grad_n);
     let diffraction = sin(f32(gid.x) * 2.39996 + f32(step) * 1.61803) * length(density_gradient) * wavelength / 550.0;
     let perpendicular = vec2<f32>(-direction.y, direction.x);
-    direction = normalize(direction + transverse * (0.12 / n) + perpendicular * diffraction * 0.0008);
+    direction = normalize(direction + transverse * (step_length / n) + perpendicular * diffraction * step_length * 0.0015);
     optical_depth = clamp(optical_depth + local_density * 2.0 / f32(STEPS), 0.0, 1.0);
     position += direction * step_length;
   }
@@ -183,6 +191,7 @@ fn wavelength_rgb(w: f32) -> vec3<f32> {
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
   @location(0) color: vec3<f32>,
+  @location(1) opacity: f32,
 };
 
 @vertex
@@ -194,24 +203,26 @@ fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instan
   let source_intensity = 0.35 + 0.65 * (1.0 - abs(offset * 2.0 - 1.0));
   let a = rendered_points[ray * (STEPS + 1u) + step];
   let b = rendered_points[ray * (STEPS + 1u) + step + 1u];
+  let spectral = smoothstep(0.005, 0.08, max(a.w, b.w));
   let endpoints = array<f32, 6>(0.0, 0.0, 1.0, 0.0, 1.0, 1.0);
   let sides = array<f32, 6>(-1.0, 1.0, 1.0, -1.0, 1.0, -1.0);
   let pa = a.xy * render_params.resolution;
   let pb = b.xy * render_params.resolution;
   let normal = normalize(vec2<f32>(-(pb.y - pa.y), pb.x - pa.x));
   let spacing = select(render_params.resolution.y, render_params.resolution.x, side >= 2u) / f32(RAYS_PER_SIDE);
-  let half_width = spacing * 0.55;
+  let half_width = spacing * mix(0.55, 0.14, spectral);
   let screen = mix(pa, pb, endpoints[vertex_id]) + normal * sides[vertex_id] * half_width;
   let clip = screen / render_params.resolution * 2.0 - 1.0;
   var out: VertexOut;
   out.position = select(vec4<f32>(2.0, 2.0, 0.0, 1.0), vec4<f32>(clip.x, -clip.y, 0.0, 1.0), f32(step + 1u) / f32(STEPS) <= render_params.progress);
-  out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z), max(a.w, b.w)) * source_intensity;
+  out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z) * 3.0, spectral) * source_intensity;
+  out.opacity = mix(0.018, 0.28, spectral);
   return out;
 }
 
 @fragment
 fn fragment(in: VertexOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.color, 0.018);
+  return vec4<f32>(in.color, in.opacity);
 }`;
 
 export const SpectralLightGadget = () => {
