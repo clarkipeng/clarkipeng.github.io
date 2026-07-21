@@ -29,7 +29,7 @@ type GpuDevice = {
     beginRenderPass: (descriptor: unknown) => {
       setPipeline: (pipeline: unknown) => void;
       setBindGroup: (index: number, bindGroup: unknown) => void;
-      draw: (vertexCount: number, instanceCount?: number) => void;
+      draw: (vertexCount: number) => void;
       end: () => void;
     };
     copyTextureToBuffer: (src: unknown, dst: unknown, size: unknown) => void;
@@ -55,16 +55,12 @@ type WebGpuRuntime = {
   renderPipeline: { getBindGroupLayout: (index: number) => unknown };
   transformPipeline: { getBindGroupLayout: (index: number) => unknown };
   particlePipeline: { getBindGroupLayout: (index: number) => unknown };
-  lightComputePipeline: { getBindGroupLayout: (index: number) => unknown };
-  lightPipeline: { getBindGroupLayout: (index: number) => unknown };
-  lightRenderBindGroup: unknown;
   sampler: unknown;
   simParams: unknown;
   particleParams: unknown;
   renderParams: unknown;
   particleSeedBuffer: unknown;
   particleBuffer: unknown;
-  lightBuffer: unknown;
   smokeReadbacks: ReadbackSlot[];
 };
 
@@ -81,7 +77,6 @@ type WebGpuSurface = {
   renderBindGroups: [unknown, unknown];
   transformBindGroups: [unknown, unknown];
   particleBindGroups: [unknown, unknown];
-  lightBindGroups: [unknown, unknown];
   read: 0 | 1;
 };
 
@@ -118,13 +113,15 @@ const DENSITY_CONFIG = {
   deposit: 0.08,
   diffusionScale: 0.6,
 } as const;
-const LIGHT_RAYS = 1000;
-const LIGHT_STEPS = 128;
+const REFRACTION_CONFIG = {
+  baseIndex: 1,
+  densityIndex: 0.35,
+  strength: 8,
+} as const;
 const PARTICLES = PARTICLE_CONFIG.count;
 const CELL_SIZE = PARTICLE_CONFIG.cellSize;
 const SETTLE_MS = 600;
 const MAX_PARTICLE_BYTES = PARTICLES * 48;
-const LIGHT_BUFFER_BYTES = LIGHT_RAYS * (LIGHT_STEPS + 1) * 16;
 const PARTICLE_SEED_STRIDE_BYTES = PARTICLES * 16;
 const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 2;
 const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
@@ -194,8 +191,9 @@ const PARTICLE_SENSOR_DISTANCE = ${PARTICLE_CONFIG.sensorDistance};
 const PARTICLE_SENSOR_ANGLE = ${PARTICLE_CONFIG.sensorAngle};
 const DENSITY_DEPOSIT = ${DENSITY_CONFIG.deposit};
 const DENSITY_DIFFUSION = ${DENSITY_CONFIG.diffusionScale};
-const LIGHT_RAYS = ${LIGHT_RAYS}u;
-const LIGHT_STEPS = ${LIGHT_STEPS}u;
+const REFRACTION_BASE_INDEX = ${REFRACTION_CONFIG.baseIndex};
+const REFRACTION_DENSITY_INDEX = ${REFRACTION_CONFIG.densityIndex};
+const REFRACTION_STRENGTH = ${REFRACTION_CONFIG.strength};
 
 struct SimParams {
   size: vec2<f32>,
@@ -356,7 +354,9 @@ fn sim_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   textureStore(sim_dst, p, vec4<f32>(clamp(theme, 0.0, 1.0), clamp(density_next, 0.0, 1.0), 0.0, 1.0));
 }
 
-@group(1) @binding(0) var<uniform> render_params: RenderParams;
+@group(1) @binding(0) var render_tex: texture_2d<f32>;
+@group(1) @binding(1) var render_sampler: sampler;
+@group(1) @binding(2) var<uniform> render_params: RenderParams;
 
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
@@ -370,104 +370,31 @@ fn vertex_main(@builtin(vertex_index) index: u32) -> VertexOut {
   return out;
 }
 
-@fragment
-fn fragment_main() -> @location(0) vec4<f32> {
-  return render_params.to_color;
+fn state_at(uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(render_tex, render_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).r;
 }
 
-@group(0) @binding(0) var light_state: texture_2d<f32>;
-@group(0) @binding(1) var light_sampler: sampler;
-@group(0) @binding(2) var<storage, read_write> light_points: array<vec4<f32>>;
-@group(0) @binding(3) var<uniform> light_params: RenderParams;
-
-fn water_index(wavelength_nm: f32) -> f32 {
-  let wavelength_um = wavelength_nm * 0.001;
-  return 1.32292 + 0.00306 / (wavelength_um * wavelength_um);
-}
-
-@compute @workgroup_size(64)
-fn light_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= LIGHT_RAYS) { return; }
-  let permutation = (gid.x * 613u) % LIGHT_RAYS;
-  let wavelength = mix(380.0, 780.0, f32(permutation) / f32(LIGHT_RAYS - 1u));
-  let size = light_params.state_size;
-  let px = 1.0 / size;
-  let step_length = size.x / f32(LIGHT_STEPS);
-  var position = vec2<f32>(0.5, (f32(gid.x) + 0.5) / f32(LIGHT_RAYS) * size.y);
-  var direction = vec2<f32>(1.0, 0.0);
-  var entered = 0.0;
-
-  for (var step = 0u; step <= LIGHT_STEPS; step = step + 1u) {
-    light_points[gid.x * (LIGHT_STEPS + 1u) + step] = vec4<f32>(position, wavelength, entered);
-    if (step == LIGHT_STEPS) { break; }
-    let uv = position / size;
-    let density = textureSampleLevel(light_state, light_sampler, uv, 0.0).r;
-    let density_gradient = vec2<f32>(
-      textureSampleLevel(light_state, light_sampler, uv + vec2<f32>(px.x, 0.0), 0.0).r - textureSampleLevel(light_state, light_sampler, uv - vec2<f32>(px.x, 0.0), 0.0).r,
-      textureSampleLevel(light_state, light_sampler, uv + vec2<f32>(0.0, px.y), 0.0).r - textureSampleLevel(light_state, light_sampler, uv - vec2<f32>(0.0, px.y), 0.0).r
-    ) * 0.5;
-    let water_n = water_index(wavelength);
-    let n = mix(1.000293, water_n, density);
-    let grad_n = density_gradient * (water_n - 1.000293);
-    let transverse = grad_n - direction * dot(direction, grad_n);
-    let edge_spread = sin(f32(gid.x) * 2.39996 + f32(step) * 1.61803) * length(density_gradient) * wavelength / 550.0;
-    direction = normalize(direction + transverse * (step_length * 0.08 / n) + vec2<f32>(0.0, edge_spread * 0.0005));
-    entered = clamp(entered + density * 2.0 / f32(LIGHT_STEPS), 0.0, 1.0);
-    position += direction * step_length;
-    position.y = clamp(position.y, 0.0, size.y);
-  }
-}
-
-@group(0) @binding(0) var<storage, read> rendered_light_points: array<vec4<f32>>;
-@group(0) @binding(1) var<uniform> light_render_params: RenderParams;
-
-fn gaussian(wavelength: f32, center: f32, width: f32) -> f32 {
-  let x = (wavelength - center) / width;
-  return exp(-0.5 * x * x);
-}
-
-fn wavelength_rgb(w: f32) -> vec3<f32> {
-  let xyz = vec3<f32>(
-    1.056 * gaussian(w, 599.8, 37.9) + 0.362 * gaussian(w, 442.0, 16.0) - 0.065 * gaussian(w, 501.1, 20.4),
-    0.821 * gaussian(w, 568.8, 46.9) + 0.286 * gaussian(w, 530.9, 16.3),
-    1.217 * gaussian(w, 437.0, 11.8) + 0.681 * gaussian(w, 459.0, 26.0)
-  );
-  let rgb = max(vec3<f32>(0.0), vec3<f32>(
-    3.2406 * xyz.x - 1.5372 * xyz.y - 0.4986 * xyz.z,
-    -0.9689 * xyz.x + 1.8758 * xyz.y + 0.0415 * xyz.z,
-    0.0557 * xyz.x - 0.2040 * xyz.y + 1.0570 * xyz.z
-  ));
-  return rgb / max(0.001, max(rgb.r, max(rgb.g, rgb.b)));
-}
-
-struct LightVertexOut {
-  @builtin(position) position: vec4<f32>,
-  @location(0) color: vec3<f32>,
-};
-
-@vertex
-fn light_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> LightVertexOut {
-  let ray = instance / LIGHT_STEPS;
-  let step = instance % LIGHT_STEPS;
-  let a = rendered_light_points[ray * (LIGHT_STEPS + 1u) + step];
-  let b = rendered_light_points[ray * (LIGHT_STEPS + 1u) + step + 1u];
-  let endpoints = array<f32, 6>(0.0, 0.0, 1.0, 0.0, 1.0, 1.0);
-  let sides = array<f32, 6>(-1.0, 1.0, 1.0, -1.0, 1.0, -1.0);
-  let page_a = (a.xy + light_render_params.surface.xy) / light_render_params.surface.zw * light_render_params.page.zw - light_render_params.page.xy;
-  let page_b = (b.xy + light_render_params.surface.xy) / light_render_params.surface.zw * light_render_params.page.zw - light_render_params.page.xy;
-  let normal = normalize(vec2<f32>(-(page_b.y - page_a.y), page_b.x - page_a.x));
-  let ray_half_width = light_render_params.page.w / f32(LIGHT_RAYS) * 0.55;
-  let screen = mix(page_a, page_b, endpoints[vertex]) + normal * sides[vertex] * ray_half_width;
-  let clip = screen / light_render_params.resolution * 2.0 - 1.0;
-  var out: LightVertexOut;
-  out.position = vec4<f32>(clip.x, -clip.y, 0.0, 1.0);
-  out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z), max(a.w, b.w));
-  return out;
+fn density_at(uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(render_tex, render_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).g;
 }
 
 @fragment
-fn light_fragment(in: LightVertexOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.color, 0.09);
+fn fragment_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+  let page_xy = vec2<f32>(render_params.page.x + frag.x, render_params.page.y + frag.y);
+  let global_cell = page_xy / render_params.page.zw * render_params.surface.zw;
+  let uv = (global_cell - render_params.surface.xy) / render_params.state_size;
+  let px = 1.0 / render_params.state_size;
+  let density = density_at(uv);
+  let gradient = vec2<f32>(
+    density_at(uv + vec2<f32>(px.x, 0.0)) - density_at(uv - vec2<f32>(px.x, 0.0)),
+    density_at(uv + vec2<f32>(0.0, px.y)) - density_at(uv - vec2<f32>(0.0, px.y))
+  ) * 0.5;
+  let sample_uv = clamp(uv + gradient * (REFRACTION_STRENGTH / (REFRACTION_BASE_INDEX + density * REFRACTION_DENSITY_INDEX)) * px, vec2<f32>(0.0), vec2<f32>(1.0));
+  var state = state_at(sample_uv) * 4.0;
+  state += (state_at(sample_uv + vec2<f32>(px.x, 0.0)) + state_at(sample_uv - vec2<f32>(px.x, 0.0)) + state_at(sample_uv + vec2<f32>(0.0, px.y)) + state_at(sample_uv - vec2<f32>(0.0, px.y))) * 2.0;
+  state += state_at(sample_uv + px) + state_at(sample_uv - px) + state_at(sample_uv + vec2<f32>(px.x, -px.y)) + state_at(sample_uv + vec2<f32>(-px.x, px.y));
+  state = clamp(state / 16.0, 0.0, 1.0);
+  return vec4<f32>(mix(render_params.from_color.rgb, render_params.to_color.rgb, state), 1.0);
 }
 
 @group(2) @binding(0) var transform_src: texture_2d<f32>;
@@ -498,41 +425,15 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
     const simPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'sim_main' } });
     const particlePipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'particle_main' } });
     const transformPipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'transform_main' } });
-    const lightComputePipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'light_main' } });
     const renderPipeline = device.createRenderPipeline({
       layout: 'auto',
       vertex: { module, entryPoint: 'vertex_main' },
       fragment: { module, entryPoint: 'fragment_main', targets: [{ format }] },
       primitive: { topology: 'triangle-list' },
     });
-    const lightPipeline = device.createRenderPipeline({
-      layout: 'auto',
-      vertex: { module, entryPoint: 'light_vertex' },
-      fragment: {
-        module,
-        entryPoint: 'light_fragment',
-        targets: [{
-          format,
-          blend: {
-            color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
-            alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
-          },
-        }],
-      },
-      primitive: { topology: 'triangle-list' },
-    });
     const particleSeedBuffer = device.createBuffer({ size: PARTICLE_SEED_BYTES, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
     const particleBuffer = device.createBuffer({ size: MAX_PARTICLE_BYTES, usage: BUFFER.STORAGE });
-    const lightBuffer = device.createBuffer({ size: LIGHT_BUFFER_BYTES, usage: BUFFER.STORAGE });
     const particleParams = device.createBuffer({ size: 32, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
-    const renderParams = device.createBuffer({ size: 80, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
-    const lightRenderBindGroup = device.createBindGroup({
-      layout: lightPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: lightBuffer } },
-        { binding: 1, resource: { buffer: renderParams } },
-      ],
-    });
 
     return {
       device,
@@ -542,16 +443,12 @@ const createRuntime = async (canvas: HTMLCanvasElement): Promise<WebGpuRuntime |
       renderPipeline,
       transformPipeline,
       particlePipeline,
-      lightComputePipeline,
-      lightPipeline,
-      lightRenderBindGroup,
       sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' }),
       simParams: device.createBuffer({ size: 32, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
       particleParams,
-      renderParams,
+      renderParams: device.createBuffer({ size: 80, usage: BUFFER.UNIFORM | BUFFER.COPY_DST }),
       particleSeedBuffer,
       particleBuffer,
-      lightBuffer,
       smokeReadbacks: Array.from({ length: 3 }, () => ({
         buffer: device.createBuffer({ size: 256 * 3, usage: BUFFER.COPY_DST | BUFFER.MAP_READ }) as MappableBuffer,
         busy: false,
@@ -619,13 +516,17 @@ const createSurface = (
       runtime.device.createBindGroup({
         layout: runtime.renderPipeline.getBindGroupLayout(1),
         entries: [
-          { binding: 0, resource: { buffer: runtime.renderParams } },
+          { binding: 0, resource: views[0] },
+          { binding: 1, resource: runtime.sampler },
+          { binding: 2, resource: { buffer: runtime.renderParams } },
         ],
       }),
       runtime.device.createBindGroup({
         layout: runtime.renderPipeline.getBindGroupLayout(1),
         entries: [
-          { binding: 0, resource: { buffer: runtime.renderParams } },
+          { binding: 0, resource: views[1] },
+          { binding: 1, resource: runtime.sampler },
+          { binding: 2, resource: { buffer: runtime.renderParams } },
         ],
       }),
     ],
@@ -666,26 +567,6 @@ const createSurface = (
           { binding: 2, resource: views[1] },
           { binding: 3, resource: { buffer: runtime.particleBuffer } },
           { binding: 4, resource: { buffer: runtime.particleParams } },
-        ],
-      }),
-    ],
-    lightBindGroups: [
-      runtime.device.createBindGroup({
-        layout: runtime.lightComputePipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: views[0] },
-          { binding: 1, resource: runtime.sampler },
-          { binding: 2, resource: { buffer: runtime.lightBuffer } },
-          { binding: 3, resource: { buffer: runtime.renderParams } },
-        ],
-      }),
-      runtime.device.createBindGroup({
-        layout: runtime.lightComputePipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: views[1] },
-          { binding: 1, resource: runtime.sampler },
-          { binding: 2, resource: { buffer: runtime.lightBuffer } },
-          { binding: 3, resource: { buffer: runtime.renderParams } },
         ],
       }),
     ],
@@ -930,11 +811,6 @@ export const ThemeShaderCanvasWebGPU = ({
         simPass.dispatchWorkgroups(Math.ceil(surface.w / 8), Math.ceil(surface.h / 8));
         simPass.end();
         surface.read = write as 0 | 1;
-        const lightPass = encoder.beginComputePass();
-        lightPass.setPipeline(runtime.lightComputePipeline);
-        lightPass.setBindGroup(0, surface.lightBindGroups[surface.read]);
-        lightPass.dispatchWorkgroups(Math.ceil(LIGHT_RAYS / 64), 1);
-        lightPass.end();
 
         const renderPass = encoder.beginRenderPass({
           colorAttachments: [{
@@ -947,9 +823,6 @@ export const ThemeShaderCanvasWebGPU = ({
         renderPass.setPipeline(runtime.renderPipeline);
         renderPass.setBindGroup(1, surface.renderBindGroups[surface.read]);
         renderPass.draw(3);
-        renderPass.setPipeline(runtime.lightPipeline);
-        renderPass.setBindGroup(0, runtime.lightRenderBindGroup);
-        renderPass.draw(6, LIGHT_RAYS * LIGHT_STEPS);
         renderPass.end();
         runtime.device.queue.submit([encoder.finish()]);
         resetParticles = false;
