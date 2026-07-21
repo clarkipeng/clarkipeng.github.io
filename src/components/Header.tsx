@@ -7,7 +7,7 @@ export const Header = () => {
   const { isDark, showSmoke } = useTheme();
 
   return (
-    <header className={`w-full ${pageBackground}`}>
+    <header className={`relative z-20 w-full ${pageBackground}`}>
       <div className="mx-auto flex min-h-14 w-full max-w-[980px] items-center justify-between gap-5 px-5 sm:px-8">
         <Link
           to="/"

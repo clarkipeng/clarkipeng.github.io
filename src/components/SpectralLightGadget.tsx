@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
+import { useTheme } from '../context/ThemeContext';
 
 const RAYS = 1000;
+const RAYS_PER_SIDE = RAYS / 4;
 const STEPS = 128;
 
 type Device = {
@@ -37,6 +39,7 @@ type Context = {
 
 const shader = `
 const RAYS = ${RAYS}u;
+const RAYS_PER_SIDE = ${RAYS_PER_SIDE}u;
 const STEPS = ${STEPS}u;
 
 struct Params {
@@ -44,7 +47,8 @@ struct Params {
   time: f32,
   reduced_motion: f32,
   pointer: vec2<f32>,
-  padding: vec2<f32>,
+  progress: f32,
+  padding: f32,
 };
 
 @group(0) @binding(0) var<storage, read_write> points: array<vec4<f32>>;
@@ -70,8 +74,16 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
   let wavelength = mix(380.0, 780.0, f32(spectral_index) / f32(RAYS - 1u));
   let step_length = 1.0 / f32(STEPS);
   let epsilon = vec2<f32>(step_length, step_length * params.resolution.x / params.resolution.y);
-  var position = vec2<f32>(0.0, (f32(gid.x) + 0.5) / f32(RAYS));
+  let side = gid.x / RAYS_PER_SIDE;
+  let offset = (f32(gid.x % RAYS_PER_SIDE) + 0.5) / f32(RAYS_PER_SIDE);
+  var position = vec2<f32>(0.0, offset);
   var direction = vec2<f32>(1.0, 0.0);
+  switch side {
+    case 1u: { position = vec2<f32>(1.0, offset); direction = vec2<f32>(-1.0, 0.0); }
+    case 2u: { position = vec2<f32>(offset, 0.0); direction = vec2<f32>(0.0, 1.0); }
+    case 3u: { position = vec2<f32>(offset, 1.0); direction = vec2<f32>(0.0, -1.0); }
+    default: {}
+  }
   var optical_depth = 0.0;
 
   for (var step = 0u; step <= STEPS; step = step + 1u) {
@@ -87,7 +99,8 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grad_n = density_gradient * (water_n - 1.000293);
     let transverse = grad_n - direction * dot(direction, grad_n);
     let diffraction = sin(f32(gid.x) * 2.39996 + f32(step) * 1.61803) * length(density_gradient) * wavelength / 550.0;
-    direction = normalize(direction + transverse * (0.12 / n) + vec2<f32>(0.0, diffraction * 0.0008));
+    let perpendicular = vec2<f32>(-direction.y, direction.x);
+    direction = normalize(direction + transverse * (0.12 / n) + perpendicular * diffraction * 0.0008);
     optical_depth = clamp(optical_depth + local_density * 2.0 / f32(STEPS), 0.0, 1.0);
     position += direction * step_length;
   }
@@ -124,6 +137,7 @@ struct VertexOut {
 fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance: u32) -> VertexOut {
   let ray = instance / STEPS;
   let step = instance % STEPS;
+  let side = ray / RAYS_PER_SIDE;
   let a = rendered_points[ray * (STEPS + 1u) + step];
   let b = rendered_points[ray * (STEPS + 1u) + step + 1u];
   let endpoints = array<f32, 6>(0.0, 0.0, 1.0, 0.0, 1.0, 1.0);
@@ -131,32 +145,35 @@ fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instan
   let pa = a.xy * render_params.resolution;
   let pb = b.xy * render_params.resolution;
   let normal = normalize(vec2<f32>(-(pb.y - pa.y), pb.x - pa.x));
-  let half_width = render_params.resolution.y / f32(RAYS) * 0.55;
+  let spacing = select(render_params.resolution.y, render_params.resolution.x, side >= 2u) / f32(RAYS_PER_SIDE);
+  let half_width = spacing * 0.55;
   let screen = mix(pa, pb, endpoints[vertex_id]) + normal * sides[vertex_id] * half_width;
   let clip = screen / render_params.resolution * 2.0 - 1.0;
   var out: VertexOut;
-  out.position = vec4<f32>(clip.x, -clip.y, 0.0, 1.0);
+  out.position = select(vec4<f32>(2.0, 2.0, 0.0, 1.0), vec4<f32>(clip.x, -clip.y, 0.0, 1.0), f32(step + 1u) / f32(STEPS) <= render_params.progress);
   out.color = mix(vec3<f32>(1.0), wavelength_rgb(a.z), max(a.w, b.w));
   return out;
 }
 
 @fragment
 fn fragment(in: VertexOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.color, 0.1);
+  return vec4<f32>(in.color, 0.018);
 }`;
 
 export const SpectralLightGadget = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { isDark } = useTheme();
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const usage = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
     const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown>; getPreferredCanvasFormat: () => string } }).gpu;
-    if (!canvas || !gpu || !usage) return;
+    if (!isDark || !canvas || !gpu || !usage) return;
 
     let frame = 0;
     let cancelled = false;
     let pointer = { x: 0.58, y: 0.5 };
+    const started = performance.now();
 
     const run = async () => {
       const adapter = await gpu.requestAdapter() as { requestDevice: () => Promise<Device> } | null;
@@ -212,7 +229,8 @@ export const SpectralLightGadget = () => {
           canvas.height = height;
           context.configure({ device, format, alphaMode: 'opaque' });
         }
-        params.set([width, height, now / 1000, reducedMotion ? 1 : 0, pointer.x, pointer.y, 0, 0]);
+        const progress = reducedMotion ? 1 : Math.min(1, (now - started) / 5200);
+        params.set([width, height, now / 1000, reducedMotion ? 1 : 0, pointer.x, pointer.y, progress, 0]);
         device.queue.writeBuffer(paramsBuffer, 0, params);
         const encoder = device.createCommandEncoder();
         const computePass = encoder.beginComputePass();
@@ -246,15 +264,16 @@ export const SpectralLightGadget = () => {
         y: Math.min(0.85, Math.max(0.15, (event.clientY - rect.top) / rect.height)),
       };
     };
-    canvas.addEventListener('pointermove', move);
+    window.addEventListener('pointermove', move);
     void run();
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
-      canvas.removeEventListener('pointermove', move);
+      window.removeEventListener('pointermove', move);
     };
-  }, []);
+  }, [isDark]);
 
-  return <canvas ref={canvasRef} aria-label="Interactive spectral light simulation" className="block aspect-[16/10] w-full bg-[#050505]" />;
+  if (!isDark) return null;
+  return <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 h-full w-full bg-[#050505]" />;
 };
