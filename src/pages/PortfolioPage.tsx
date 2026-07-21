@@ -5,7 +5,7 @@ import { portfolioProjects } from '../data/siteData';
 import { getButtonClass, getRuleClass, getTagClass, pageBackground, wideMeasure } from '../data/theme';
 
 const PortfolioPage = () => (
-  <main className={`relative isolate w-full grow ${pageBackground}`}>
+  <main className={`relative w-full grow ${pageBackground}`}>
     <SpectralLightGadget />
     <section className={`${wideMeasure} relative z-10 py-12 sm:py-16`}>
       <div className="max-w-3xl">
