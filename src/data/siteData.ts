@@ -146,9 +146,9 @@ export const publications = [
     authors: 'Hritik Bansal, Clark Peng, Yonatan Bitton, Roman Goldenberg, Aditya Grover, Kai-Wei Chang',
     venue: 'ICLR 2026; Best Paper at ICML 2025 World Models Workshop',
     date: '2026-04-26',
-    paperUrl: 'https://openreview.net/forum?id=HA8KSQW7SO',
+    paperUrl: 'https://arxiv.org/abs/2503.06800',
     links: [
-      { label: 'OpenReview', href: 'https://openreview.net/forum?id=HA8KSQW7SO' },
+      { label: 'arXiv', href: 'https://arxiv.org/abs/2503.06800' },
       { label: 'Project', href: 'https://videophy2.github.io/' },
     ],
     abstract: 'A benchmark for whether generated videos obey everyday physical cause and effect.',
@@ -162,7 +162,6 @@ export const publications = [
     paperUrl: 'https://arxiv.org/abs/2510.14949',
     links: [
       { label: 'arXiv', href: 'https://arxiv.org/abs/2510.14949' },
-      { label: 'OpenReview', href: 'https://openreview.net/forum?id=RxsImkHOYj' },
     ],
     abstract: 'A study of how image and video models handle English dialects, plus ways to make them fairer.',
   },
