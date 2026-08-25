@@ -144,7 +144,7 @@ export const publications = [
     id: 1,
     title: 'VideoPhy-2: A Challenging Action-Centric Physical Commonsense Evaluation in Video Generation',
     authors: 'Hritik Bansal, Clark Peng, Yonatan Bitton, Roman Goldenberg, Aditya Grover, Kai-Wei Chang',
-    venue: 'ICLR 2026; Best Paper at ICML 2025 WorldModel Workshop',
+    venue: 'ICLR 2026; Best Paper at ICML 2025 World Models Workshop',
     date: '2026-04-26',
     paperUrl: 'https://openreview.net/forum?id=HA8KSQW7SO',
     links: [
@@ -188,8 +188,8 @@ export const experience = [
     company: 'Catapult (YC S26)',
     companyUrl: 'https://playcatapult.io/',
     location: 'San Francisco, CA',
-    period: '2026 - Present',
-    description: 'Building the product and systems behind Catapult.',
+    period: 'Jun 2026 - Present',
+    description: 'Built the multiplayer runtime, orchestration, and replay system for the strategy benchmark.',
     tags: ['Product Engineering', 'Games', 'Systems'],
   },
   {
@@ -199,7 +199,7 @@ export const experience = [
     companyUrl: 'https://camfer.dev',
     location: 'San Francisco, CA',
     period: 'Aug 2025 - Dec 2025',
-    description: 'Worked on text-to-CAD models, LLM post-training and mid-training, and tools for replaying CAD designs.',
+    description: 'Mid/post-trained Qwen2.5-VL and Qwen3-VL for instruction following; built synthetic-data pipelines and a CAD replay layer.',
     tags: ['Multimodal ML', 'CAD', 'Infrastructure'],
   },
   {
@@ -209,8 +209,8 @@ export const experience = [
     companyUrl: 'https://web.cs.ucla.edu/~kwchang/members/',
     location: 'Los Angeles, CA',
     period: 'Oct 2024 - Present',
-    description: 'Worked on benchmarks that ask whether generative models understand what they create.',
-    tags: ['MoE Training', 'FlashAttention', 'Evaluation'],
+    description: 'Routing-alignment training on MoE models; VideoPhy-2 data pipeline and evaluator; DialectGen.',
+    tags: ['MoE Training', 'Evaluation', 'Research'],
   },
   {
     id: 4,
@@ -218,7 +218,7 @@ export const experience = [
     company: 'Scale AI',
     location: 'Los Angeles, CA',
     period: 'Nov 2024 - Aug 2025',
-    description: 'Built reliable test environments and expert solutions for evaluating coding agents.',
+    description: 'Expert competitive-programming data for frontier labs; judges and rubrics for RL evaluation of coding agents.',
     tags: ['LLM Data', 'Competitive Programming', 'Docker'],
   },
   {
@@ -228,7 +228,7 @@ export const experience = [
     companyUrl: 'https://sites.google.com/g.hmc.edu/hmc-mir',
     location: 'Claremont, CA',
     period: 'Jun 2025 - Aug 2025',
-    description: 'Explored ways to steer music models and compare generations.',
+    description: 'Developed self-distillation and DPO adaptation methods for MusicGen steering.',
     tags: ['Music AI', 'DPO', 'Mechanistic Interpretability'],
   },
 ];
@@ -247,14 +247,14 @@ export const leadership = [
   {
     id: 1,
     title: 'UCLA ACM AI',
-    role: 'President',
+    role: 'Co-President',
     period: 'Nov 2025 - Present',
-    description: 'Running UCLA\'s AI community across projects, events, and student-led research.',
+    description: 'Run an 800-member community and 40-officer team across research tracks, ML hackathons, and events drawing thousands of participants; secured club sponsors.',
   },
   {
     id: 2,
     title: 'Kaggle Competitions',
-    role: 'Top 1% Competitor, Top 100 Notebooks',
+    role: 'Top 1% Competitor, 5+ Gold Notebooks (20k+ Forks)',
     period: '2023 - 2025',
     description: 'Published notebooks and methods that other competitors used.',
   },
@@ -269,8 +269,8 @@ export const leadership = [
 
 export const skills = {
   languages: ['Python', 'C++17/20', 'SQL', 'Bash', 'TypeScript', 'Mojo', 'C#'],
-  systems: ['Linux', 'GDB', 'CMake', 'C++ STL', 'C++ concurrency', 'threads/mutexes', 'Docker', 'PostgreSQL'],
-  mlSystems: ['PyTorch', 'JAX', 'FSDP', 'FlashAttention', 'vLLM', 'SGLang', 'MoE Training', 'GPU programming (CUDA/Mojo)'],
+  systems: ['Linux', 'GDB', 'CMake', 'Docker', 'PostgreSQL', 'AWS', 'Azure'],
+  mlSystems: ['PyTorch', 'FSDP', 'FlashAttention', 'vLLM/SGLang', 'distributed training', 'GPU programming (CUDA/Mojo)'],
   infrastructure: ['AWS ECS', 'AWS EC2', 'Lambda Cloud', 'CoreWeave', 'Azure'],
   data: ['NumPy', 'pandas', 'SciPy'],
   creative: ['Unity', 'OpenGL', 'Blender', 'Physics Integrators', '4D Shaders', 'Emergent Simulation'],

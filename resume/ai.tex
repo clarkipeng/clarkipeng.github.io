@@ -78,22 +78,22 @@
 % - Compared against old public 2025 resume PDF and Resume_Work_AI (7-10): retained strongest older signals (Camfer scale, CAD translation/replay, Scale AI coding harnesses, Kaggle, ICPC, graphics) while removing phone number, HMC/MIT Beaverworks, broad research-only framing, and weaker/older project details from the visible version.
 % - Keep visible resume one page. Add role-specific variants as comments first, then promote only the strongest role-relevant bullets.
 % - Formatting rule: experience can use bullets, but the bottom achievements section should stay compact and table-like rather than repeating one bullet under every heading.
-% - Current lead story: CTO at Catapult Games (YC S26), building the product and systems behind https://playcatapult.io.
-% - Catapult Games context: do not frame the company as AI researcher tooling unless the user explicitly changes that positioning.
+% - Current lead story: CTO at Catapult (YC S26), building the product and systems behind https://playcatapult.io.
+% - Catapult context: do not frame the company as AI researcher tooling unless the user explicitly changes that positioning.
 % - For Citadel / quant / systems roles: emphasize C++, Python, algorithms, ICPC, Kaggle, GPU programming, distributed systems, reliability, and hard performance/data-scale numbers.
-% - For AI infrastructure roles: emphasize Catapult Games systems/product engineering, Camfer multimodal training throughput, synthetic data pipelines, distributed rollouts, and cloud lifecycle handling.
+% - For AI infrastructure roles: emphasize Catapult systems/product engineering, Camfer multimodal training throughput, synthetic data pipelines, distributed rollouts, and cloud lifecycle handling.
 % - For research roles: emphasize UCLA NLP, VideoPhy-2 (ICLR 2026), DialectGen, Event Detection via PDF Regression, and HMC music model steering.
-% - Clark was about to join Modular before Catapult Games and learned Mojo/CUDA; keep this as a skills/performance signal unless the user confirms an actual Modular role.
+% - Clark was about to join Modular before Catapult and learned Mojo/CUDA; keep this as a skills/performance signal unless the user confirms an actual Modular role.
 % - Phone number was removed by preference; ask before re-adding it to the header or website.
 %
 % OPTIONAL BACKGROUND BANK FOR FUTURE TAILORING:
-% - Catapult Games details: startup in YC Summer 2026 batch; build visible resume bullets around product, systems, games, deployment, and iteration. Avoid unsupported claims about AI research tooling.
+% - Catapult details: startup in YC Summer 2026 batch; evaluated 19 frontier LLMs from 7 labs across 1K agent games, generating 257M tokens. Avoid unsupported claims about AI research tooling.
 % - If applying to SWE / quant dev: lead with systems credibility, C++ problem solving, ICPC, Kaggle, Dockerized execution, cloud reliability, CUDA/Mojo, and low-level graphics/GPU projects.
 % - Additional defensible systems skills: C++17/20 STL, C++ concurrency/multithreading, Linux, gdb, CMake, CUDA programming model, GPU kernels, PostgreSQL, NumPy, pandas, SciPy.
 % - Kernel-writing context: wrote practice convolution, attention, and other GPU kernels in Mojo; visible resume can use CUDA/Mojo GPU kernels for familiarity, but avoid claiming production handwritten CUDA kernel work unless added later.
 % - If applying to trading / quant research: emphasize Kaggle (active 2023--2025), event-boundary probability-density regression, statistical modeling, leaderboard performance, and algorithmic contest strength.
 % - Scale AI: authored expert competitive-programming solutions and built Dockerized environments for coding-agent/RLVR evaluation. Also contributed a few expert questions to Humanity's Last Exam; keep this as a small subpoint only when benchmark/question-writing experience matters.
-% - UCLA NLP: VideoPhy-2 is ICLR 2026 and won Best Paper at the ICML 2025 WorldModel Workshop; also contributed to DialectGen on dialect robustness in multimodal generation.
+% - UCLA NLP: VideoPhy-2 is ICLR 2026 and won Best Paper at the ICML 2025 World Models Workshop; also contributed to DialectGen on dialect robustness in multimodal generation.
 % - UCLA NLP current MoE project: optimized 30B MoE (3B active) routing-alignment training with teacher/student passes; changed large padded batches into a single packed batch using FlashAttention sequence-length packing, reducing padding/model passes for a 2x speedup.
 % - HMC Music Retrieval Lab: researched MusicGen steering with prompt distillation, DPO, self-distillation, A/B testing, and activation analysis across 1M+ audio datapoints.
 % - Camfer: worked in a 50k+ line codebase; worked on LLM post-training and mid-training; improved model training throughput 10x; accelerated preprocessing/tokenization 100x from hours to minutes; processed 800k CAD parts; built distributed EC2 rollouts and a replay layer that caught dozens of integration-test misses.
@@ -124,76 +124,83 @@
  \begin{itemize}[leftmargin=0.15in, label={}]
     \small{\item{
      \textbf{Languages}{: Python, C++17/20, SQL, Bash, TypeScript, Mojo, C\#} \\
-     \textbf{ML Systems}{: PyTorch, JAX, FSDP, FlashAttention, vLLM, SGLang, distributed training, GPU programming (CUDA/Mojo)} \\
-     \textbf{Systems / Infra}{: Linux, GDB, CMake, C++ STL, C++ concurrency, Docker, PostgreSQL, AWS, Azure, CoreWeave, Lambda Cloud}
+     \textbf{ML Systems}{: PyTorch, FSDP, FlashAttention, vLLM/SGLang, distributed training, GPU programming (CUDA/Mojo)} \\
+     \textbf{Systems / Infra}{: Linux, GDB, CMake, Docker, PostgreSQL, AWS, Azure}
     }}
  \end{itemize}
 
 \section{Experience}
   \resumeSubHeadingListStart
     \resumeSubheading
-      {\href{https://playcatapult.io}{Catapult Games (YC S26)}}{San Francisco, CA}
-      {CTO}{2026 -- Present}
+      {\href{https://playcatapult.io}{Catapult (YC S26)}}{San Francisco, CA}
+      {CTO}{Jun 2026 -- Present}
       \resumeItemListStart
-        \resumeItem{Lead engineering for Catapult Games, building the core product, game systems, and web experience.}
-        \resumeItem{Own product architecture across frontend, backend, deployment, analytics, and internal tooling.}
+        \resumeItem{Built the multiplayer runtime, orchestration, and replay system for an LLM strategy-game benchmark; evaluated 19 frontier LLMs across 1K games, producing 257M tokens of gameplay data.}
       \resumeItemListEnd
 
     \resumeSubheading
       {\href{https://camfer.dev}{Camfer (YC S24)}}{San Francisco, CA}
       {Software Engineering Intern}{Aug 2025 -- Dec 2025}
       \resumeItemListStart
-        \resumeItem{Scaled LLM post-training and mid-training for Qwen2.5-VL and Qwen3-VL using FSDP and multimodal sequence packing, increasing throughput 10x.}
-        \resumeItem{Built a sharded synthetic-data pipeline that generated 600M+ tokens from 800K CAD parts and reduced preprocessing and tokenization from hours to minutes.}
-        \resumeItem{Built asynchronous EC2 rollout system for model error correction and a 10,000+ line SolidWorks/Onshape replay layer that caught dozens of errors missed by integration tests.}
+                \resumeItem{Mid/post-trained Qwen-VL models for instruction following; sequence packing and data preparation drove a 10x throughput gain, with further gains from kernel, quantization, and FSDP tuning.}
+        \resumeItem{Built a sharded synthetic-data pipeline generating 600M+ tokens from 800K CAD parts (60\% pre-training, 100\% SFT); its Onshape support doubled the addressable user base.}
+        \resumeItem{Built async EC2 rollouts for model error correction; a SolidWorks/Onshape replay layer caught dozens of errors integration tests missed.}
       \resumeItemListEnd
 
     \resumeSubheading
       {UCLA NLP Group}{Los Angeles, CA}
       {Student Researcher}{Oct 2024 -- Present}
       \resumeItemListStart
-        \resumeItem{Co-authored \textbf{VideoPhy-2} (ICLR 2026; Best Paper, ICML 2025 WorldModel Workshop), a physical-commonsense benchmark for video generation.}
-        \resumeItem{Optimized 30B MoE (3B active) routing-alignment training by packing teacher and student batches, reducing runtime and memory usage while achieving a 2x speedup.}
+        \resumeItem{Co-authored \href{https://arxiv.org/abs/2503.06800}{\textbf{VideoPhy-2}}, a video-generation physical-commonsense benchmark; built its data pipeline, growing it 6x and enabling a 7B model that beat Gemini by 127\%. ICLR 2026; Best Paper, ICML 2025 World Models Workshop.}
+        \resumeItem{Applied routing-alignment training to MoE models, improving robustness to new languages with better sample efficiency.}
       \resumeItemListEnd
 
     \resumeSubheading
       {Scale AI}{Los Angeles, CA}
       {Technical Intern}{Nov 2024 -- Aug 2025}
       \resumeItemListStart
-        \resumeItem{Authored 100+ expert-level solutions to problems rated 2000+ for LLM coding-evaluation datasets.}
-        \resumeItem{Built 10+ deterministic Docker test environments for open-source Python repositories used in RLVR rubrics and autonomous coding-agent evaluation.}
+        \resumeItem{Wrote 100+ expert competitive-programming solutions used as training data for LLMs at frontier labs.}
+        \resumeItem{Designed judges and rubrics for RL evaluation of coding agents in deterministic Docker environments.}
+      \resumeItemListEnd
+
+    \resumeSubheading
+      {HMC Music Retrieval Lab}{Claremont, CA}
+      {Research Intern}{Jun 2025 -- Aug 2025}
+      \resumeItemListStart
+        \resumeItem{Developed self-distillation and DPO adaptation methods for MusicGen steering, then evaluated them across 1M+ audio datapoints.}
       \resumeItemListEnd
   \resumeSubHeadingListEnd
 
  \section{Projects \& Awards}
   \resumeSubHeadingListStart
     \resumeProjectHeading
-      {\textbf{Competitive Programming} $|$ \emph{ICPC Top 10, USACO Platinum}}{2021 -- Present}
+      {\textbf{Kaggle Competitions} $|$ \emph{Top 1\% Competitor, 5+ Gold Notebooks (20k+ Forks)}}{2023 -- 2025}
       \resumeItemListStart
-        \resumeItem{Placed Top 10 at the ICPC Southern California Regional; solved timed algorithmic problems across DP, geometry, graph theory, and game theory.}
-      \resumeItemListEnd
-
-    \resumeProjectHeading
-      {\textbf{Kaggle Competitions} $|$ \emph{Top 1\% Competitor, Top 100 Notebooks}}{2023 -- 2025}
-      \resumeItemListStart
-        \resumeItem{Developed a probability-density regression framework for event-boundary detection; methodology was adopted by top competitors and outperformed standard segmentation approaches on external datasets.}
-        \resumeItem{Published 5+ gold-medal notebooks with 20k+ forks on model training, inference speed, and data augmentation.}
+        \resumeItem{Developed a probability-density regression framework that beat segmentation baselines at event-boundary detection.}
+        \resumeItem{Open-sourced it in the 1,877-team CMI competition; adopted by nearly all top-scoring solutions - Silver Medal, first-author paper.}
       \resumeItemListEnd
 
     \resumeProjectHeading
       {\textbf{Graphics Projects} $|$ \emph{C++, OpenGL, Unity}}{2022 -- Present}
       \resumeItemListStart
-        \resumeItem{Built a custom C++/OpenGL 4D game engine with BVHs, Verlet sphere physics, and a custom shader; simulated 1M GPU slime agents at 120 FPS; built C++ raytracers for image rendering and audio propagation at 660k rays/min.}
+        \resumeItem{Built a C++/OpenGL 4D game engine, a Unity GPU slime simulation running 1M agents at 120 FPS, and C++ raytracers for image and audio rendering.}
       \resumeItemListEnd
   \resumeSubHeadingListEnd
 
 \section{Leadership}
   \resumeSubHeadingListStart
     \resumeProjectHeading
-      {\textbf{UCLA ACM AI} $|$ \emph{President}}{Nov 2025 -- Present}
+      {\textbf{UCLA ACM AI} $|$ \emph{Co-President}}{Nov 2025 -- Present}
       \resumeItemListStart
-        \resumeItem{Lead UCLA's largest AI organization (800+ members), managing 30 student leaders and a \$5k annual budget across research projects, ML hackathons, and collaborations with ICPC, Studio, Hack, and Cyber.}
+        \resumeItem{Run ACM AI's 800-member community and 40-officer team across research tracks, ML hackathons, and events drawing thousands of participants; secured club sponsors.}
       \resumeItemListEnd
   \resumeSubHeadingListEnd
+
+\section{Distinctions}
+  \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+      ICPC SoCal Regional Top 10 $|$ USACO Platinum $|$ USAPhO Silver
+    }}
+ \end{itemize}
 
 \end{document}
