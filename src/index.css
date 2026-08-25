@@ -59,10 +59,6 @@ body {
   mix-blend-mode: difference;
 }
 
-.theme-text-adaptive :where(a, button) {
-  border-color: currentColor !important;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

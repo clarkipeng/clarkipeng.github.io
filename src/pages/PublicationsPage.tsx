@@ -6,9 +6,6 @@ const PublicationsPage = () => (
   <main className={`w-full grow ${pageBackground}`}>
     <section className={`${contentMeasure} py-12 sm:py-16`}>
       <h1 className="font-sans text-4xl font-medium text-[#202020] dark:text-[#f5f5f2]">Papers</h1>
-      <p className="mt-4 text-xl leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">
-        Papers on how models see, generate, and reason.
-      </p>
 
       <div className="mt-10">
         {publications.map((pub) => (

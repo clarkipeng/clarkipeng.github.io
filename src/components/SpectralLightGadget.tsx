@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
 
-const SOURCES_PER_SIDE = 32;
+const SOURCES_PER_SIDE = 8;
 const SPECTRAL_SAMPLES = 32;
 const BUNDLES = SOURCES_PER_SIDE * 4;
 const RAYS = BUNDLES * SPECTRAL_SAMPLES;
@@ -62,12 +62,10 @@ struct Params {
   padding: vec2<f32>,
 };
 
-fn base_density(p: vec2<f32>, time: f32, reduced_motion: f32, pointer: vec2<f32>) -> f32 {
-  let drift = select(0.035 * vec2<f32>(sin(time * 0.37), cos(time * 0.29)), vec2<f32>(0.0), reduced_motion > 0.5);
-  let a = (p - pointer - drift) * vec2<f32>(1.35, 2.2);
-  let b = (p - (pointer + vec2<f32>(0.12, -0.2) - drift)) * vec2<f32>(2.4, 3.4);
-  let c = (p - (pointer + vec2<f32>(-0.1, 0.23))) * vec2<f32>(2.0, 4.2);
-  return clamp(exp(-dot(a, a) * 9.0) + 0.7 * exp(-dot(b, b) * 12.0) + 0.55 * exp(-dot(c, c) * 14.0), 0.0, 1.0);
+fn base_density(p: vec2<f32>, radius: f32, resolution: vec2<f32>) -> f32 {
+  let distance_to_center = length((p - vec2<f32>(0.5)) * vec2<f32>(resolution.x / resolution.y, 1.0));
+  let edge = 2.0 / resolution.y;
+  return 1.0 - smoothstep(radius - edge, radius + edge, distance_to_center);
 }
 
 @group(1) @binding(0) var fluid_source: texture_2d<f32>;
@@ -75,8 +73,8 @@ fn base_density(p: vec2<f32>, time: f32, reduced_motion: f32, pointer: vec2<f32>
 @group(1) @binding(2) var fluid_target: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(3) var<uniform> fluid_params: Params;
 
-fn fluid_at(uv: vec2<f32>) -> vec3<f32> {
-  return textureSampleLevel(fluid_source, fluid_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb;
+fn fluid_at(uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(fluid_source, fluid_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).r;
 }
 
 @compute @workgroup_size(8, 8)
@@ -84,26 +82,13 @@ fn fluid(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= FIELD_SIZE || gid.y >= FIELD_SIZE) { return; }
   let texel = 1.0 / f32(FIELD_SIZE);
   let uv = (vec2<f32>(gid.xy) + 0.5) * texel;
-  let current = fluid_at(uv);
-  let velocity = current.yz;
-  let advected = fluid_at(uv - velocity * fluid_params.delta_time * 2.0);
   let neighbors = (
     fluid_at(uv + vec2<f32>(texel, 0.0)) + fluid_at(uv - vec2<f32>(texel, 0.0))
     + fluid_at(uv + vec2<f32>(0.0, texel)) + fluid_at(uv - vec2<f32>(0.0, texel))
   ) * 0.25;
-  var density_value = mix(advected.r, neighbors.r, 0.08);
-  var next_velocity = mix(advected.yz, neighbors.yz, 0.12) * 0.985;
-  density_value += (base_density(uv, fluid_params.time, fluid_params.reduced_motion, fluid_params.pointer) - density_value) * 0.003;
-
-  let relative = uv - fluid_params.pointer;
-  let pointer_speed = length(fluid_params.pointer_delta);
-  let influence = exp(-dot(relative, relative) / 0.0025) * smoothstep(0.0005, 0.025, pointer_speed);
-  let pointer_direction = fluid_params.pointer_delta / max(pointer_speed, 0.0001);
-  let dipole = dot(relative / max(length(relative), 0.0001), pointer_direction);
-  density_value += influence * dipole * 0.16;
-  next_velocity += influence * fluid_params.pointer_delta * 7.0;
-
-  textureStore(fluid_target, vec2<i32>(gid.xy), vec4<f32>(clamp(density_value, 0.0, 1.0), clamp(next_velocity, vec2<f32>(-0.12), vec2<f32>(0.12)), 1.0));
+  var density_value = mix(fluid_at(uv), neighbors, 0.08);
+  density_value = mix(density_value, base_density(uv, fluid_params.padding.x, fluid_params.resolution), 1.0 - exp(-6.0 * fluid_params.delta_time));
+  textureStore(fluid_target, vec2<i32>(gid.xy), vec4<f32>(density_value, 0.0, 0.0, 1.0));
 }
 
 @group(0) @binding(0) var light_density: texture_2d<f32>;
@@ -130,26 +115,14 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
   let epsilon = vec2<f32>(step_length, step_length * params.resolution.x / params.resolution.y);
   let side = bundle / SOURCES_PER_SIDE;
   let offset = (f32(bundle % SOURCES_PER_SIDE) + 0.5) / f32(SOURCES_PER_SIDE);
-  let edge_weight = abs(offset * 2.0 - 1.0);
-  let toward_center = select(-1.0, 1.0, offset < 0.5);
-  let inward = 1.0 - edge_weight * 0.95;
-  let lateral = toward_center * edge_weight;
   var position = vec2<f32>(0.0, offset);
-  var direction = normalize(vec2<f32>(inward, lateral));
+  var direction = vec2<f32>(1.0, 0.0);
   switch side {
-    case 1u: { position = vec2<f32>(1.0, offset); direction = normalize(vec2<f32>(-inward, lateral)); }
-    case 2u: { position = vec2<f32>(offset, 0.0); direction = normalize(vec2<f32>(lateral, inward)); }
-    case 3u: { position = vec2<f32>(offset, 1.0); direction = normalize(vec2<f32>(lateral, -inward)); }
+    case 1u: { position = vec2<f32>(1.0, offset); direction = vec2<f32>(-1.0, 0.0); }
+    case 2u: { position = vec2<f32>(offset, 0.0); direction = vec2<f32>(0.0, 1.0); }
+    case 3u: { position = vec2<f32>(offset, 1.0); direction = vec2<f32>(0.0, -1.0); }
     default: {}
   }
-  var normal_direction = vec2<f32>(1.0, 0.0);
-  switch side {
-    case 1u: { normal_direction = vec2<f32>(-1.0, 0.0); }
-    case 2u: { normal_direction = vec2<f32>(0.0, 1.0); }
-    case 3u: { normal_direction = vec2<f32>(0.0, -1.0); }
-    default: {}
-  }
-  direction = normalize(mix(direction, normal_direction, smoothstep(0.2, 1.0, params.progress)));
   var optical_depth = 0.0;
 
   for (var step = 0u; step <= STEPS; step = step + 1u) {
@@ -217,7 +190,7 @@ fn vertex(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instan
   let pb = b.xy * render_params.resolution;
   let normal = normalize(vec2<f32>(-(pb.y - pa.y), pb.x - pa.x));
   let spacing = select(render_params.resolution.y, render_params.resolution.x, side >= 2u) / f32(SOURCES_PER_SIDE);
-  let half_width = spacing * mix(0.08, 0.05, spectral);
+  let half_width = min(1.5, spacing * mix(0.08, 0.05, spectral));
   let screen = mix(pa, pb, endpoints[vertex_id]) + normal * sides[vertex_id] * half_width;
   let clip = screen / render_params.resolution * 2.0 - 1.0;
   var out: VertexOut;
@@ -279,7 +252,7 @@ export const SpectralLightGadget = () => {
     let frame = 0;
     let cancelled = false;
     let pointer = { x: 0.58, y: 0.5 };
-    const pointerDelta = { x: 0, y: 0 };
+    let radius = 0.1;
     const started = performance.now();
 
     const run = async () => {
@@ -383,10 +356,12 @@ export const SpectralLightGadget = () => {
         const progress = reducedMotion ? 1 : Math.min(1, (now - started) / 5200);
         const deltaTime = Math.min(0.033, Math.max(0.001, (now - last) / 1000));
         last = now;
+        const targetRadius = Math.hypot((pointer.x - 0.5) * width / height, pointer.y - 0.5);
+        radius = reducedMotion ? targetRadius : radius + (targetRadius - radius) * (1 - Math.exp(-deltaTime * 6));
         params.set([
           width, height, now / 1000, reducedMotion ? 1 : 0,
-          pointer.x, pointer.y, pointerDelta.x, pointerDelta.y,
-          progress, deltaTime, 0, 0,
+          pointer.x, pointer.y, 0, 0,
+          progress, deltaTime, radius, 0,
         ]);
         device.queue.writeBuffer(paramsBuffer, 0, params);
         const encoder = device.createCommandEncoder();
@@ -417,8 +392,6 @@ export const SpectralLightGadget = () => {
         renderPass.draw(6, BUNDLES * (SPECTRAL_SAMPLES - 1) * STEPS);
         renderPass.end();
         device.queue.submit([encoder.finish()]);
-        pointerDelta.x *= 0.82;
-        pointerDelta.y *= 0.82;
         if (!reducedMotion) frame = requestAnimationFrame(draw);
       };
 
@@ -428,11 +401,9 @@ export const SpectralLightGadget = () => {
     const move = (event: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
       const next = {
-        x: Math.min(0.95, Math.max(0.05, (event.clientX - rect.left) / rect.width)),
-        y: Math.min(0.95, Math.max(0.05, (event.clientY - rect.top) / rect.height)),
+        x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+        y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
       };
-      pointerDelta.x += next.x - pointer.x;
-      pointerDelta.y += next.y - pointer.y;
       pointer = next;
     };
     window.addEventListener('pointermove', move);

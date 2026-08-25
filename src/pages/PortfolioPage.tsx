@@ -8,12 +8,7 @@ const PortfolioPage = () => (
   <main className={`relative w-full grow ${pageBackground}`}>
     <SpectralLightGadget />
     <section className={`${wideMeasure} relative z-10 py-12 sm:py-16`}>
-      <div className="max-w-3xl">
-        <h1 className="font-sans text-4xl font-medium text-[#202020] dark:text-[#f5f5f2]">Gadgets</h1>
-        <p className="mt-4 text-xl leading-8 text-[#4f4f49] dark:text-[#d7d7d0]">
-          Games, simulations, renderers, and small experiments.
-        </p>
-      </div>
+      <h1 className="font-sans text-4xl font-medium text-[#202020] dark:text-[#f5f5f2]">Gadgets</h1>
 
       <div className="mt-10">
         {portfolioProjects.map((project) => (
