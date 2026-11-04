@@ -183,12 +183,12 @@ export const publications = [
 export const experience = [
   {
     id: 1,
-    role: 'CTO',
+    role: 'Co-founder and CTO',
     company: 'Catapult (YC S26)',
     companyUrl: 'https://playcatapult.io/',
     location: 'San Francisco, CA',
     period: 'Jun 2026 - Present',
-    description: 'Built the multiplayer runtime, orchestration, and replay system for the strategy benchmark.',
+    description: 'Built the real-time platform behind Catapult\'s 30 games and the first version of Music Arena.',
     tags: ['Product Engineering', 'Games', 'Systems'],
   },
   {
