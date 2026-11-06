@@ -23,9 +23,16 @@ Ensure your repository Settings > Pages > Source is set to **GitHub Actions**.
 ## Project Structure
 
 - `src/` - Source code
-  - `components/` - Reusable UI components (Sidebar, Headers, etc.)
+  - `components/` - UI components, including the theme shader
   - `pages/` - Page layouts (Home, Portfolio, CV, Publications)
   - `data/` - Configuration files
     - `siteData.ts` - **Edit this file to update content!** (Bio, Projects, Links)
     - `theme.ts` - Design system and colors
 - `public/` - Static assets (images, PDFs)
+- `resume/` - LaTeX sources: `swe.tex` is the published resume, `ai.tex` the research variant
+
+## Resume
+
+```bash
+tectonic resume/swe.tex --outdir /tmp && cp /tmp/swe.pdf public/files/ClarkPengResume.pdf
+```
