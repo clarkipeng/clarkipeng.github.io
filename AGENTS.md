@@ -13,6 +13,7 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 - Write like a human, not a spec sheet. Drop parenthetical jargon piles and model-size asides ("30B MoE (3B active)", "(ICLR 2026; Best Paper, ICML 2025 World Models Workshop)"). State the thing in plain words; venues and awards go in their own clause. Name models by their real shorthand ("Qwen3.5-VL-30B") the way researchers actually say them - never spell out "30B-parameter mixture-of-experts language model".
 - Every factual claim must survive an interviewer probing it. If a claim invites verification that would embarrass (aggregate citations from 1000+ author papers, "validated when Meta published the same thing"), delete it.
 - Never invent or infer facts. If the source material does not state something, ask Clark instead of guessing. Mixing details between projects (e.g., attaching Harvey Mudd's batch packing to UCLA NLP) is the worst failure mode.
+- Check local repos and existing records before asking Clark for technical details. A dependency establishes the project stack, not personal proficiency in every library.
 - Facts live in this file. When Clark corrects a fact, update the Verified facts section immediately so no future edit repeats the mistake.
 - No redundancy at any scale: not just page-level ("already in my header, don't repeat it") but line-level - headings already carry context ("UCLA ACM AI" heading means the bullet says "Run ACM AI's...", not "Run UCLA ACM AI's...").
 - Jargon piles are out even when accurate. "with BVHs, Verlet sphere physics, and a custom shader" is bloat; name what it is and what it did, not its ingredient list.
@@ -24,7 +25,9 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 ## Verified facts
 
 - CTO and co-founder of Catapult (Y Combinator S26), https://playcatapult.io
+- Catapult pivoted from multiplayer games (the first part) to Music Arena (https://musicarena.io), where AI models produce music in FL Studio and people vote. Clark built the first version (producer-arena), the FL Studio plugin/MCP engine, and flpkit (on PyPI); Alan Song wrote most of the current musicarena.io app - do not claim it.
 - Catapult benchmark: 19 frontier LLMs from 7 labs, ~1K agent games, 257M tokens of reproducible gameplay data; Clark started June 2026
+- Catapult platform stack: TypeScript, React, Bun/Node.js, PostgreSQL, Cloudflare Workers/Durable Objects. Verified from local `catapult-games` manifests and `docs/ARCHITECTURE.md`. The current platform focuses on human multiplayer games; model research lives separately in `catapult-research`. Present the benchmark as past work, not the current product definition.
 - UCLA CS B.S., class of 2028, GPA 4.0
 - Camfer (YC S24) intern: goal was getting information into the model via mid-training and post-training of Qwen2.5-VL / Qwen3-VL for instruction following; the 10x training throughput came from multimodal sequence packing and data preparation, with further real gains from kernel swaps (FlashAttention-3, Triton), quantization, and FSDP tuning; 600M+ synthetic tokens from 800K CAD parts (60% pre-training, 100% SFT); adding Onshape support doubled the addressable user base; async EC2 rollouts; SolidWorks/Onshape replay layer
 - VideoPhy-2: ICLR 2026, Best Paper at ICML 2025 World Models Workshop; benchmark of ~3,940 prompts across 197 physical actions; Clark personally built the data-generation pipeline and automated evaluator
