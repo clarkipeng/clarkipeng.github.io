@@ -24,7 +24,7 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 
 ## Verified facts
 
-- CTO and co-founder of Catapult (Y Combinator S26), https://playcatapult.io
+- Co-founder and former CTO of Catapult (Y Combinator S26), https://playcatapult.io. Clark was CTO from June to September 2026, then left to return to UCLA; never describe the role as current.
 - Catapult pivoted from multiplayer games (the first part) to Music Arena (https://musicarena.io), where AI models produce music in FL Studio and people vote. Clark built the first version (producer-arena), the FL Studio plugin/MCP engine, and flpkit (on PyPI); Alan Song wrote most of the current musicarena.io app - do not claim it.
 - Catapult benchmark: 19 frontier LLMs from 7 labs, ~1K agent games, 257M tokens of reproducible gameplay data; Clark started June 2026
 - Catapult platform stack: TypeScript, React, Bun/Node.js, PostgreSQL, Cloudflare Workers/Durable Objects. Verified from local `catapult-games` manifests and `docs/ARCHITECTURE.md`. The current platform focuses on human multiplayer games; model research lives separately in `catapult-research`. Present the benchmark as past work, not the current product definition.

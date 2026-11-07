@@ -1,7 +1,7 @@
 export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
-  title: 'CTO at Catapult, CS at UCLA.',
+  title: 'CS at UCLA, previously CTO at Catapult.',
   bio: 'I like building systems, games, and model-evaluation projects.',
   location: 'Los Angeles, CA / San Jose, CA',
   email: 'cipeng@ucla.edu',
@@ -64,7 +64,7 @@ export const aboutParagraphs = [
 export const highlights = [
   {
     label: 'Catapult',
-    text: 'Building the product and systems behind Catapult.',
+    text: 'Built the product and systems behind Catapult.',
   },
   {
     label: 'Research',
@@ -187,7 +187,7 @@ export const experience = [
     company: 'Catapult (YC S26)',
     companyUrl: 'https://playcatapult.io/',
     location: 'San Francisco, CA',
-    period: 'Jun 2026 - Present',
+    period: 'Jun 2026 - Sep 2026',
     description: 'Built the real-time platform behind Catapult\'s 30 games and the first version of Music Arena.',
     tags: ['Product Engineering', 'Games', 'Systems'],
   },
