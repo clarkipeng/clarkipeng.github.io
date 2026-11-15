@@ -72,7 +72,7 @@
 \begin{document}
 
 % AI TAILORING CONTEXT:
-% ACTIVE VERSION: v2026-citadel-dev
+% ACTIVE VERSION: v2026-research (research-first; for research, MTS, and lab roles such as a16z Frontier)
 % - Visible resume optimized for Citadel SWE / quant dev and general SWE: systems skills, C++/algorithms, cloud reliability, ML training performance, coding-agent evaluation, Kaggle/ICPC, and graphics systems.
 % - Wording rule: keep visible bullets high-signal and manager-readable. Avoid niche implementation crumbs from attention-kernel internals unless tailoring specifically for ML infra / training systems roles.
 % - Compared against old public 2025 resume PDF and Resume_Work_AI (7-10): retained strongest older signals (Camfer scale, CAD translation/replay, Scale AI coding harnesses, Kaggle, ICPC, graphics) while removing phone number, HMC/MIT Beaverworks, broad research-only framing, and weaker/older project details from the visible version.
@@ -110,7 +110,6 @@
     \href{mailto:cipeng@ucla.edu}{\underline{cipeng@ucla.edu}} $|$
     \href{https://linkedin.com/in/clarkpeng}{\underline{linkedin.com/in/clarkpeng}} $|$
     \href{https://github.com/clarkipeng}{\underline{github.com/clarkipeng}} $|$
-    \href{https://x.com/clarkipeng}{\underline{x.com/clarkipeng}} $|$
     \href{https://clarkipeng.github.io}{\underline{clarkipeng.github.io}}
 \end{center}
 
@@ -118,90 +117,87 @@
   \resumeSubHeadingListStart
     \resumeSubheading
       {University of California, Los Angeles}{Los Angeles, CA}
-      {B.S. in Computer Science (GPA: 4.0)}{Expected June 2028}
+      {B.S. in Computer Science (GPA: 3.95)}{Expected June 2028}
   \resumeSubHeadingListEnd
 
-\section{Technical Skills}
- \begin{itemize}[leftmargin=0.15in, label={}]
-    \small{\item{
-     \textbf{Languages}{: Python, C++17/20, SQL, Bash, TypeScript, Mojo, C\#} \\
-     \textbf{ML Systems}{: PyTorch, FSDP, FlashAttention, vLLM/SGLang, distributed training, GPU programming (CUDA/Mojo)} \\
-     \textbf{Systems / Infra}{: Linux, GDB, CMake, Docker, PostgreSQL, AWS, Azure}
-    }}
- \end{itemize}
-
-\section{Experience}
+\section{Research and Engineering Experience}
   \resumeSubHeadingListStart
     \resumeSubheading
-      {\href{https://playcatapult.io}{Catapult (YC S26)}}{San Francisco, CA}
-      {CTO}{Jun 2026 -- Sep 2026}
+      {UCLA NLP Group}{Los Angeles, CA}
+      {Student Researcher}{Oct 2024 -- Present}
       \resumeItemListStart
-        \resumeItem{Built the multiplayer runtime, orchestration, and replay system for an LLM strategy-game benchmark; evaluated 19 frontier LLMs across 1K games, producing 257M tokens of gameplay data.}
+        \resumeItem{Co-first author of \href{https://arxiv.org/abs/2503.06800}{\textbf{VideoPhy-2}}, a physics benchmark for video generation (ICLR 2026, ICML workshop Best Paper); 170+ citations.}
+        \resumeItem{Built its data-generation pipeline, expanding it 6x, and generated all 6,800 videos across 7 models by quantizing each model and parallelizing inference with Ray and Ring/Ulysses sequence parallelism.}
+        \resumeItem{Trained VideoPhy-2-AutoEval, a video-language judge that tracks human ratings far better than Gemini-2.0-Flash.}
+        \resumeItem{Co-authored \href{https://arxiv.org/abs/2510.14949}{\textbf{DialectGen}}, benchmarking and improving dialect robustness in image and video generation (ResponsibleFM, NeurIPS 2025).}
+        \resumeItem{Co-authored \textbf{Cross-Lingual Alignment for Decoder-Only Models using MoE Routers}: routing-alignment training that improves robustness to new languages with better sample efficiency.}
+      \resumeItemListEnd
+
+    \resumeSubheading
+      {\href{https://playcatapult.io}{Catapult (YC S26)}}{San Francisco, CA}
+      {Co-founder and CTO}{Jun 2026 -- Present}
+      \resumeItemListStart
+        \resumeItem{Built a game API that ran 19 frontier LLMs from 7 labs through 1K games, producing 257M tokens of gameplay.}
+        \resumeItem{Built multiplayer infrastructure for 30 games on TypeScript, PostgreSQL, and Cloudflare Durable Objects, with idempotent moves for safe retries and reconnection.}
+        \resumeItem{Built \href{https://musicarena.io}{Music Arena}'s first version, where people vote on AI music, and its C++ plugin for composing in FL Studio.}
       \resumeItemListEnd
 
     \resumeSubheading
       {\href{https://camfer.dev}{Camfer (YC S24)}}{San Francisco, CA}
       {Software Engineering Intern}{Aug 2025 -- Dec 2025}
       \resumeItemListStart
-                \resumeItem{Mid/post-trained Qwen-VL models for instruction following; sequence packing and data preparation drove a 10x throughput gain, with further gains from kernel, quantization, and FSDP tuning.}
-        \resumeItem{Built a sharded synthetic-data pipeline generating 600M+ tokens from 800K CAD parts (60\% pre-training, 100\% SFT); its Onshape support doubled the addressable user base.}
-        \resumeItem{Built async EC2 rollouts for model error correction; a SolidWorks/Onshape replay layer caught dozens of errors integration tests missed.}
-      \resumeItemListEnd
-
-    \resumeSubheading
-      {UCLA NLP Group}{Los Angeles, CA}
-      {Student Researcher}{Oct 2024 -- Present}
-      \resumeItemListStart
-        \resumeItem{Co-authored \href{https://arxiv.org/abs/2503.06800}{\textbf{VideoPhy-2}}, a video-generation physical-commonsense benchmark; built its data pipeline, growing it 6x and enabling a 7B model that beat Gemini by 127\%. ICLR 2026; Best Paper, ICML 2025 World Models Workshop.}
-        \resumeItem{Applied routing-alignment training to MoE models, improving robustness to new languages with better sample efficiency.}
+        \resumeItem{Made Qwen vision-language model mid- and post-training 10x faster through multimodal sequence packing and data preparation, then optimized further with FlashAttention-3, Triton kernels, quantization, and FSDP.}
+        \resumeItem{Built a sharded synthetic-data pipeline turning 800K CAD parts into 600M+ tokens for pretraining and fine-tuning; added Onshape support, doubling the addressable user base.}
+        \resumeItem{Built async EC2 rollouts for model error correction and a CAD replay layer that caught errors tests missed.}
       \resumeItemListEnd
 
     \resumeSubheading
       {Scale AI}{Los Angeles, CA}
       {Technical Intern}{Nov 2024 -- Aug 2025}
       \resumeItemListStart
-        \resumeItem{Wrote 100+ expert competitive-programming solutions used as training data for LLMs at frontier labs.}
-        \resumeItem{Designed judges and rubrics for RL evaluation of coding agents in deterministic Docker environments.}
+        \resumeItem{Designed judges and rubrics for reinforcement learning on coding agents in deterministic Docker environments; wrote 100+ expert competitive-programming solutions used as LLM training data.}
       \resumeItemListEnd
 
     \resumeSubheading
       {HMC Music Retrieval Lab}{Claremont, CA}
       {Research Intern}{Jun 2025 -- Aug 2025}
       \resumeItemListStart
-        \resumeItem{Developed self-distillation and DPO adaptation methods for MusicGen steering, then evaluated them across 1M+ audio datapoints.}
+        \resumeItem{Developed self-distillation and DPO methods for steering MusicGen, evaluated across 1M+ audio clips.}
       \resumeItemListEnd
   \resumeSubHeadingListEnd
 
- \section{Projects \& Awards}
+\section{Selected Projects}
   \resumeSubHeadingListStart
     \resumeProjectHeading
-      {\textbf{Kaggle Competitions} $|$ \emph{Top 1\% Competitor, 5+ Gold Notebooks (20k+ Forks)}}{2023 -- 2025}
+      {\textbf{Event Detection / Kaggle} $|$ \emph{\href{https://arxiv.org/abs/2408.12792}{First-Author Paper}, \href{https://github.com/clarkipeng/EventDetectionPDF}{Code}, 5+ Gold Notebooks (20K+ Forks)}}{2023 -- 2025}
       \resumeItemListStart
-        \resumeItem{Developed a probability-density regression framework that beat segmentation baselines at event-boundary detection.}
-        \resumeItem{Open-sourced it in the 1,877-team CMI competition; adopted by nearly all top-scoring solutions - Silver Medal, \href{https://arxiv.org/abs/2408.12792}{first-author paper}.}
+        \resumeItem{Probability-density regression for event detection, adopted by nearly all top teams of 1,877; Silver Medal.}
       \resumeItemListEnd
 
     \resumeProjectHeading
-      {\textbf{Graphics Projects} $|$ \emph{C++, OpenGL, Unity}}{2022 -- Present}
+      {\textbf{Graphics} $|$ \emph{C++, OpenGL, Unity}}{2022 -- Present}
       \resumeItemListStart
-        \resumeItem{Built a C++/OpenGL 4D game engine, a Unity GPU slime simulation running 1M agents at 120 FPS, and C++ raytracers for image and audio rendering.}
+        \resumeItem{Built a 4D game engine, a GPU slime simulation of 1M agents at 120 FPS, and raytracers for light and sound.}
       \resumeItemListEnd
   \resumeSubHeadingListEnd
 
-\section{Leadership}
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: Python, C++17/20, TypeScript, SQL, Bash, Mojo, C\#} \\
+     \textbf{Machine Learning}{: PyTorch, FSDP, FlashAttention, Triton, vLLM/SGLang, CUDA/Mojo, Ray, quantization} \\
+     \textbf{Infrastructure}{: Linux, Docker, AWS, Azure, PostgreSQL, Cloudflare Durable Objects, GDB, CMake}
+    }}
+ \end{itemize}
+
+\section{Leadership and Distinctions}
   \resumeSubHeadingListStart
     \resumeProjectHeading
       {\textbf{UCLA ACM AI} $|$ \emph{Co-President}}{Nov 2025 -- Present}
       \resumeItemListStart
-        \resumeItem{Run ACM AI's 800-member community and 40-officer team across research tracks, ML hackathons, and events drawing thousands of participants; secured club sponsors.}
+        \resumeItem{Lead an 800-member community and 40-officer team across research tracks, ML hackathons, events, and sponsorships.}
+        \resumeItem{ICPC SoCal Regional Top 10 $|$ USACO Platinum $|$ Codeforces Expert $|$ USAPhO Silver $|$ Kaggle Top 1\%}
       \resumeItemListEnd
   \resumeSubHeadingListEnd
-
-\section{Distinctions}
-  \begin{itemize}[leftmargin=0.15in, label={}]
-    \small{\item{
-      ICPC SoCal Regional Top 10 $|$ USACO Platinum $|$ USAPhO Silver
-    }}
- \end{itemize}
 
 \end{document}
