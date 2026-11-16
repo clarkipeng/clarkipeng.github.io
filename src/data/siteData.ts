@@ -6,7 +6,7 @@ export const siteConfig = {
   location: 'Los Angeles, CA / San Jose, CA',
   email: 'cipeng@ucla.edu',
   website: 'https://clarkipeng.github.io',
-  resumeUrl: '/files/ClarkPengResume.pdf',
+  resumeUrl: '/files/ClarkPengResearchResume.pdf',
   avatarUrl: '/images/clark-peng-profile.jpg',
 };
 
