@@ -41,6 +41,7 @@ const person = {
   name: siteConfig.name,
   url: site,
   image: absolute(siteConfig.avatarUrl),
+  jobTitle: 'Computer science student',
   description: pages[0].description,
   affiliation: { '@type': 'CollegeOrUniversity', name: 'University of California, Los Angeles', url: 'https://www.ucla.edu' },
   sameAs: socialLinks.map((link) => link.href),
@@ -58,11 +59,11 @@ const scholarlyArticles = publications.map((pub) => ({
 const structuredData = (path: string) => {
   const meta = pageMeta(path);
   const graph: object[] = [
-    { '@type': 'WebSite', '@id': `${site}/#website`, url: site, name: siteConfig.name, author: { '@id': personId } },
+    { '@type': 'WebSite', '@id': `${site}/#website`, url: site, name: siteConfig.name, publisher: { '@id': personId } },
     person,
   ];
 
-  if (path === '/') graph.push({ '@type': 'ProfilePage', url: site, name: meta.title, mainEntity: { '@id': personId } });
+  if (path === '/') graph.push({ '@type': 'ProfilePage', url: site, name: meta.title, dateModified: new Date().toISOString().slice(0, 10), mainEntity: { '@id': personId } });
   if (path === '/publications') graph.push(...scholarlyArticles);
 
   return { '@context': 'https://schema.org', '@graph': graph };
@@ -87,6 +88,7 @@ export const renderHead = (path: string) => {
     <meta property="og:description" content="${description}" />
     <meta property="og:url" content="${url}" />
     <meta property="og:image" content="${absolute(siteConfig.avatarUrl)}" />
+    <meta property="og:image:alt" content="${siteConfig.name}" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:site" content="@clarkipeng" />
     <script type="application/ld+json">${json}</script>`;
