@@ -220,7 +220,7 @@ export const Smoke = ({
                 ctx.lineWidth = 0;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'bottom';
-                ctx.font = `20px "Space Grotesk"`;
+                ctx.font = `20px "Inter"`;
                 ctx.strokeText(caption, w / 2, h - 10);
                 ctx.fillText(caption, w / 2, h - 10);
             }
@@ -271,7 +271,7 @@ export const Smoke = ({
             ctx.fillStyle = '#fff';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.font = `14px "Space Grotesk"`;
+            ctx.font = `14px "Inter"`;
             ctx.fillText(text, w / 2, h / 2);
 
             const data = ctx.getImageData(0, 0, w, h).data;
