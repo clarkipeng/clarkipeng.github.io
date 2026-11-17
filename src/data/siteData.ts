@@ -1,7 +1,8 @@
 export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
-  title: 'CS at UCLA, previously CTO at Catapult.',
+  title: 'CS at UCLA, previously CTO at',
+  company: { name: 'Catapult', url: 'https://playcatapult.io' },
   website: 'https://clarkipeng.github.io',
   resumeUrl: '/files/ClarkPengResearchResume.pdf',
   avatarUrl: '/images/clark-peng-profile.jpg',
@@ -53,9 +54,9 @@ export const navigation = [
 ];
 
 export const aboutParagraphs = [
-  'Before Catapult, I worked at Camfer on text-to-CAD models, LLM post-training and mid-training, and CAD tools.',
-  'My research is about understanding generative models. I have worked on VideoPhy-2 for video generation evaluation and DialectGen for dialect robustness.',
-  'Outside of that, I lead ACM AI at UCLA, compete on Kaggle, and build graphics and simulation projects.',
+  'At Catapult (YC S26), I built the platform behind its 30 multiplayer browser games and the first version of Music Arena, where AI models make music in FL Studio and people vote. Before that, I worked at Camfer on text-to-CAD models, LLM post-training and mid-training, and CAD tools.',
+  'My research is on evaluating and training generative models. I co-first-authored VideoPhy-2, a benchmark for physics in generated videos, contributed to DialectGen, and train mixture-of-experts models for cross-lingual alignment at UCLA NLP.',
+  'Outside of that, I co-run ACM AI at UCLA, compete on Kaggle (top 1%), and build graphics and simulation projects.',
 ];
 
 
