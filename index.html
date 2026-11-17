@@ -5,19 +5,20 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Clark Peng</title>
-
-  <!-- SEO Meta Tags -->
-  <meta name="description"
-    content="Clark Peng is a UCLA computer science student and former CTO of Catapult, working on AI systems, model evaluation, and graphics experiments." />
-  <meta name="keywords" content="Clark Peng, Catapult Games, UCLA, Machine Learning, AI Infrastructure, Research" />
   <meta name="author" content="Clark Peng" />
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#050505" media="(prefers-color-scheme: dark)" />
+  <!--seo-->
+  <title>Clark Peng | CS at UCLA</title>
+  <!--/seo-->
 
-  <!-- Open Graph / Social Media -->
-  <meta property="og:title" content="Clark Peng" />
-  <meta property="og:description" content="CS at UCLA, previously CTO at Catapult." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://clarkipeng.github.io" />
+  <!-- Apply the saved theme before first paint -->
+  <script>
+    try {
+      var theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      if (theme === 'dark') document.documentElement.classList.add('dark');
+    } catch (e) {}
+  </script>
 
   <!-- Google Fonts: Inter -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
