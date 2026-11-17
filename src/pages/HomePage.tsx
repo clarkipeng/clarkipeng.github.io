@@ -26,7 +26,16 @@ const HomePage = () => (
             {siteConfig.name}
           </h1>
           <p className="mt-5 max-w-2xl text-xl leading-8 text-[#3d3d39] dark:text-[#d7d7d0]">
-            {siteConfig.title}
+            {siteConfig.title}{' '}
+            <a
+              href={siteConfig.company.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline decoration-black/20 underline-offset-4 hover:text-[#202020] dark:decoration-white/25 dark:hover:text-white"
+            >
+              {siteConfig.company.name}
+            </a>
+            .
           </p>
 
         </div>
