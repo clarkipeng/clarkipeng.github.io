@@ -2,8 +2,6 @@ export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
   title: 'CS at UCLA, previously CTO at Catapult.',
-  bio: 'I like building systems, games, and model-evaluation projects.',
-  location: 'Los Angeles, CA / San Jose, CA',
   email: 'cipeng@ucla.edu',
   website: 'https://clarkipeng.github.io',
   resumeUrl: '/files/ClarkPengResearchResume.pdf',
@@ -61,27 +59,13 @@ export const aboutParagraphs = [
   'Outside of that, I lead ACM AI at UCLA, compete on Kaggle, and build graphics and simulation projects.',
 ];
 
-export const highlights = [
-  {
-    label: 'Catapult',
-    text: 'Built the product and systems behind Catapult.',
-  },
-  {
-    label: 'Research',
-    text: 'Work on how models see, generate, and reason about the world.',
-  },
-  {
-    label: 'Gadgets',
-    text: 'Games, renderers, simulations, and a hidden Smoke page.',
-  },
-];
 
 export const portfolioProjects = [
   {
     id: 1,
     title: '3D Slime Simulation',
     description: 'A real-time 3D slime mold simulation that grows dense, branching organic patterns.',
-    images: ['/images/Slime3D_Shot.png', '/images/Slime3D_Shot1.png', '/images/Slime3D_Shot2.png'],
+    images: ['/images/Slime3D_Shot.webp', '/images/Slime3D_Shot1.webp', '/images/Slime3D_Shot2.webp'],
     tags: ['Simulation', 'GPU', 'Unity'],
     year: '2025',
     featured: true,
@@ -94,7 +78,7 @@ export const portfolioProjects = [
     id: 2,
     title: '4D Fruit Merging Game',
     description: 'A playable 4D puzzle game that makes impossible geometry feel tangible.',
-    images: ['/images/gameImage.png'],
+    images: ['/images/gameImage.webp'],
     tags: ['OpenGL', 'C++', 'Game'],
     year: '2025',
     featured: true,
@@ -119,7 +103,7 @@ export const portfolioProjects = [
     id: 5,
     title: 'RL Arm Targeting Agent',
     description: 'A small physics scene where a learned arm picks up objects and throws them at targets.',
-    images: ['/images/RLHandTarget.png'],
+    images: ['/images/RLHandTarget.webp'],
     tags: ['RL', 'Unity', 'ML-Agents'],
     year: '2022',
     links: [
@@ -232,15 +216,6 @@ export const experience = [
   },
 ];
 
-export const education = [
-  {
-    id: 1,
-    school: 'University of California, Los Angeles',
-    degree: 'B.S. Computer Science',
-    period: '2024 - 2028',
-    description: 'CS at UCLA. I lead ACM AI and spend a lot of time around research and technical projects.',
-  },
-];
 
 export const leadership = [
   {
@@ -266,11 +241,3 @@ export const leadership = [
   },
 ];
 
-export const skills = {
-  languages: ['Python', 'C++17/20', 'SQL', 'Bash', 'TypeScript', 'Mojo', 'C#'],
-  systems: ['Linux', 'GDB', 'CMake', 'Docker', 'PostgreSQL', 'AWS', 'Azure'],
-  mlSystems: ['PyTorch', 'FSDP', 'FlashAttention', 'vLLM/SGLang', 'distributed training', 'GPU programming (CUDA/Mojo)'],
-  infrastructure: ['AWS ECS', 'AWS EC2', 'Lambda Cloud', 'CoreWeave', 'Azure'],
-  data: ['NumPy', 'pandas', 'SciPy'],
-  creative: ['Unity', 'OpenGL', 'Blender', 'Physics Integrators', '4D Shaders', 'Emergent Simulation'],
-};
