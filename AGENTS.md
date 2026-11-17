@@ -59,6 +59,7 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 
 - Minimal, inspired by https://thinkingmachines.ai; standardized on Space Grotesk.
 - Hero shows only Catapult; socials are icon-only in the footer.
+- Never show Clark's email on the site (no mailto, no contact field, not in structured data or llms.txt); he does not want it public (stated 2026-11-17).
 - Theme transition: WebGPU slime-agent diffusion shader (agents steer toward target color, monotonic scalar field, toroidal wrapping), WebGL fallback; theme icon sits mid-right, borderless.
 - Smoke nav link is white/transparent and non-clickable in light mode; visible only once the shader field reaches it in dark mode.
 - Resume page (`/resume`) embeds only the PDF from `siteConfig.resumeUrl`, no text.

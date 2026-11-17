@@ -2,7 +2,6 @@ export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
   title: 'CS at UCLA, previously CTO at Catapult.',
-  email: 'cipeng@ucla.edu',
   website: 'https://clarkipeng.github.io',
   resumeUrl: '/files/ClarkPengResearchResume.pdf',
   avatarUrl: '/images/clark-peng-profile.jpg',
