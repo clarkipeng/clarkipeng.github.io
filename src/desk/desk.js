@@ -32,6 +32,7 @@ const HAND = font(500, TOK.fsHand, 'Caveat');
 // desk take `settle`; moves across the desk take `travel`. Arrivals decelerate (ease-out quart); turns and pans ease in
 // and out; physical motion (lift, tilt, squash) is springs. Exits run at `exit` times their entrance.
 const MOTION = { quick: 0.15, respond: 0.4, settle: 0.7, travel: 0.9, exit: 0.7 };
+const IMPRINT_S = 1; // a lifted card's imprint fades over this long (s)
 const NAME_INK = [30, 34, 40];
 const qs = new URLSearchParams(location.search);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || qs.has('still');
@@ -125,6 +126,7 @@ const GROUPS = {
     ['remember', 1, 0, 1, 1, 'remember where cards were left'],
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
+    ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -214,7 +216,8 @@ const lin = (c) => Math.pow(c / 255, 2.2);
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f };
+// imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S)
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, |cos flip|
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
@@ -554,7 +557,17 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let a = t4.a;
   // Text stays legible because the ink thins out behind it.
   // The ink fades in over the page's first seconds, so the scattered start never shows as noise.
-  let fadeIn = smoothstep(0.6, 2.6, g.st.w) * (1.0 - 0.85 * m.b) * g.w.w;
+  // Pickup imprint (trial): where a card was just lifted, the ink in its old footprint sits a little darker and fades
+  // back as the veins reclaim it. Render only; the agents are untouched.
+  var stamp = 0.0;
+  for (var k = 0u; k < u32(g.d.z); k++) {
+    let c = g.cards[k];
+    if (c.imp.z < 0.002) { continue; }
+    let r = p - c.imp.xy;
+    let l = vec2f(c.flat.z * r.x + c.flat.w * r.y, -c.flat.w * r.x + c.flat.z * r.y);
+    stamp = max(stamp, c.imp.z * (1.0 - smoothstep(-20.0 * g.a.w, 6.0 * g.a.w, boxSd(l, c.geo.xy, c.geo.z))));
+  }
+  let fadeIn = smoothstep(0.6, 2.6, g.st.w) * (1.0 - 0.85 * m.b) * g.w.w * (1.0 + 0.6 * stamp);
   var col: vec3f;
   var conc = 0.0;
   let h = 4.0 * o + 2.0; // halo: a wider look at the same trail
@@ -945,7 +958,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.bounced = s.edgePen = false; s.z = ++topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.bounced = s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -1030,6 +1043,7 @@ function stepCards(dt) {
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
     s.burst *= Math.exp(-dt * 7);
+    if (s.imp && (s.imp.t += dt) >= IMPRINT_S) s.imp = null; // the veins have reclaimed it
     if (s.released && !s.kb && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
       s.released = false; land(s, s.bounced ? Math.min(s.dropS, 0.45) : s.dropS); s.bounced = false; shove(s); } // touched down, shoving the cards under it
   }
@@ -1814,7 +1828,7 @@ async function buildAtlas(g) {
 // ---------- uniforms ----------
 
 // Uniform layout: 18 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (12 vec4 each).
-const G_HEAD = 20, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 12;
+const G_HEAD = 20, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 13;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -1871,7 +1885,8 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     ...(s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
-    ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0])], o);
+    ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
+    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2, 0] : [0, 0, 0, 0])], o);
 }
 
 // Paper: an open card emits its full ink; a closed one a tint share of its mild ink. Blends between them as it opens.
