@@ -1004,7 +1004,7 @@ function stepCards(dt) {
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
-    if (s.squash) { // landing settle: a small damped squash
+    if (s.squash || s.squashV) { // landing settle: a small damped squash
       s.squashV += (-260 * s.squash - 16 * s.squashV) * dt; s.squash += s.squashV * dt;
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
@@ -1019,7 +1019,8 @@ function stepCards(dt) {
 // the card settles with a small squash, and agents held for it (a page whose cards fly in) leave from its edge.
 function land(s, strength) {
   const k = clamp(strength, 0.1, 1.5);
-  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: Math.min(1, k), squashV: 0 });
+  // The squash starts as a push (velocity), not a jump: it dips to about min(1, k) within ~75 ms and springs back.
+  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: s.squash || 0, squashV: (s.squashV || 0) + 29 * Math.min(1, k) });
   if (s.rel < 0) s.rel = 0;
 }
 
