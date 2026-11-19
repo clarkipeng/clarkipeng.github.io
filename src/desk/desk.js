@@ -1073,16 +1073,16 @@ function drawCard(s, S) {
     x.font = '600 13px Inter'; x.fillStyle = '#1d1d1b';
     if (s.oneLine) {
       x.fillText(s.title, 8, y0 + 21);
-      x.font = '400 13px Inter'; x.fillStyle = '#85837b'; x.textAlign = 'right'; x.fillText(s.sub, s.w - 8, y0 + 21);
+      x.font = '400 13px Inter'; x.fillStyle = '#6f6d66'; x.textAlign = 'right'; x.fillText(s.sub, s.w - 8, y0 + 21);
     } else {
       s.titleLines.forEach((l, i) => x.fillText(l, 8, y0 + 20 + i * 18));
-      x.font = '400 13px Inter'; x.fillStyle = '#85837b'; x.fillText(s.sub, 8, y0 + 20 + s.titleLines.length * 18);
+      x.font = '400 13px Inter'; x.fillStyle = '#6f6d66'; x.fillText(s.sub, 8, y0 + 20 + s.titleLines.length * 18);
     }
   } else if (s.kind === 'paper') {
     x.fillStyle = '#3a3a36'; x.fillRect(0, 0, 3, s.h);
     x.font = '600 16px Inter'; x.fillStyle = '#1d1d1b';
     s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
-    x.font = '400 13px Inter'; x.fillStyle = '#85837b';
+    x.font = '400 13px Inter'; x.fillStyle = '#6f6d66';
     x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
   } else if (s.kind === 'polaroid') {
     x.font = '500 13px Inter'; x.fillStyle = '#4a4945'; x.textAlign = 'center';
