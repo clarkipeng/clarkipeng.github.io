@@ -561,11 +561,11 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   // back as the veins reclaim it. Render only; the agents are untouched.
   var stamp = 0.0;
   for (var k = 0u; k < u32(g.d.z); k++) {
-    let c = g.cards[k];
-    if (c.imp.z < 0.002) { continue; }
-    let r = p - c.imp.xy;
-    let l = vec2f(c.flat.z * r.x + c.flat.w * r.y, -c.flat.w * r.x + c.flat.z * r.y);
-    stamp = max(stamp, c.imp.z * (1.0 - smoothstep(-20.0 * g.a.w, 6.0 * g.a.w, boxSd(l, c.geo.xy, c.geo.z))));
+    let im = g.cards[k].imp; // read only what it needs: copying the whole card per pixel is not free
+    if (im.z < 0.002) { continue; }
+    let fl = g.cards[k].flat; let ge = g.cards[k].geo; let r = p - im.xy;
+    let l = vec2f(fl.z * r.x + fl.w * r.y, -fl.w * r.x + fl.z * r.y);
+    stamp = max(stamp, im.z * (1.0 - smoothstep(-20.0 * g.a.w, 6.0 * g.a.w, boxSd(l, ge.xy, ge.z))));
   }
   let fadeIn = smoothstep(0.6, 2.6, g.st.w) * (1.0 - 0.85 * m.b) * g.w.w * (1.0 + 0.6 * stamp);
   var col: vec3f;
