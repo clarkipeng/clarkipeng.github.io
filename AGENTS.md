@@ -59,7 +59,10 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 ## Site
 
 - Minimal, inspired by https://thinkingmachines.ai; standardized on Inter (switched from Space Grotesk in the July 2026 refresh).
-- Hero shows only Catapult; socials are icon-only in the footer.
+- `/` and `/publications` are one desk (the main and research regions) drawn by WebGPU in `src/desk/`, ported from `.context/mockups/k-desk-minimal.*`; the router pans between them.
+  Card copy comes from `siteData.ts`; layout, captions, and media live in `src/data/desk.ts` and `public/desk/`.
+  Videos load only on hover; no WebGPU or reduced motion shows the same desk as a still; dark mode uses the spectrum style.
+  The tune panel exists only with `?tune` in the URL (press `t`).
 - Never show Clark's email on the site (no mailto, no contact field, not in structured data or llms.txt); he does not want it public (stated 2026-11-17).
 - Theme transition: WebGPU slime-agent diffusion shader (agents steer toward target color, monotonic scalar field, toroidal wrapping), WebGL fallback; theme icon sits mid-right, borderless.
 - Smoke nav link is white/transparent and non-clickable in light mode; visible only once the shader field reaches it in dark mode.
