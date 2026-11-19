@@ -76,6 +76,7 @@ const GROUPS = {
     ['landFly', 0.95, 0.3, 2.5, 0.05, 'fly duration s'],
     ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
+    ['flipJitter', 3, 0, 8, 0.1, 'flip rotation jitter deg'],
   ],
   Media: [
     ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
@@ -660,7 +661,7 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
     slot: { x: sx, y: sy, w: sw, r: sr }, order: +d.order, aspect: +(d.aspect || 1), videoSrc: d.video,
-    x: 0, y: 0, w: 0, h: 0, rot: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
+    x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
@@ -740,7 +741,7 @@ function layout() {
     view.worldW = 2 * vw; // one continuous desk: main region, then research to the right
     for (const s of sources) {
       Object.assign(s, fitCard(s, Math.round(s.slot.w * k)));
-      s.x = (s.region + s.slot.x / REF_W) * vw; s.y = (s.slot.y / REF_H) * vh; s.rot = s.slot.r;
+      s.x = (s.region + s.slot.x / REF_W) * vw; s.y = (s.slot.y / REF_H) * vh; s.rot = s.home = s.slot.r;
     }
   } else {
     const pad = 22;
@@ -755,7 +756,7 @@ function layout() {
       const full = Math.min(vw - 56, 380);
       const w = Math.round(s.kind === 'polaroid' ? full * 0.56 : s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
       Object.assign(s, fitCard(s, w, full));
-      s.rot = s.slot.r * 0.7;
+      s.rot = s.home = s.slot.r * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       s.py = y + s.h / 2; y += s.h + 30;
     }
@@ -939,13 +940,15 @@ for (const s of sources) {
   });
 }
 
-// Click turns a card over to its details (and back): it lifts, turns, lays back down, and lands. While it is off the
-// desk it leaves the slime alone (no outline food).
+// Click turns a card over to its details (and back): it lifts, turns, and lays back down, a little differently turned
+// each time (its slot's angle plus a fresh jitter, so nothing drifts), and lands. While it is off the desk it leaves the
+// slime alone (no outline food).
 function flip(s) {
   if (!s.backEl) return;
   s.flipTo = s.flipTo ? 0 : 1;
   s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
+  s.rotFrom = s.rot; s.rotTo = s.home + (Math.random() * 2 - 1) * T.flipJitter;
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
     s.flip = s.emit = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
     if (gpu) drawStill();
@@ -976,6 +979,8 @@ function stepCards(dt) {
     if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / T.flipS);
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip > 0.6); // the real links become clickable as the back faces up
+      // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
+      s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
       if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
     }
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
