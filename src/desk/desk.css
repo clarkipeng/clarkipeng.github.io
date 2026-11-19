@@ -1,0 +1,91 @@
+/* The desk page (/desk): the mockup's stylesheet (.context/mockups/k-desk-minimal.html), scoped to #desk.
+   Rules the mockup put on body apply to #desk; page-level ones (paper background, no scrolling on desktop) apply to the
+   document only while the desk is on it, so every other page and the site theme are untouched. */
+#desk { font-family: Inter, system-ui, sans-serif; line-height: normal; }
+html:has(#desk) #root { min-height: 0; }
+html:has(#desk), html:has(#desk) body { background: #f3f1ea; color: #1d1d1b; }
+html:has(#desk) body { min-height: 100%; overflow-x: hidden; }
+html:has(#desk.desk) body { height: 100%; overflow: hidden; }
+#desk #field { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+#desk.phone #field { position: absolute; }
+#desk #page { position: relative; will-change: transform; }
+/* The desk fades in from bare paper once it is ready, so startup shows no unstyled text, fallback fonts, or pops. */
+#desk #page, #desk #field { transition: opacity .6s ease-out; }
+#desk:not(.ready) :is(#page, #field) { opacity: 0; }
+#desk .hit, #desk .hit > * { transition: opacity .3s, background-color .3s, box-shadow .3s, color .3s; } /* DOM still to live field */
+
+#desk .name { position: absolute; margin: 0; font: 700 64px/1 Inter, sans-serif; letter-spacing: -0.035em; color: #1e2228; white-space: nowrap; }
+#desk .tagline { position: absolute; max-width: 400px; font-size: 16px; line-height: 1.5; color: #2b2b28; }
+/* Text sits on the panning page, so it uses solid ink colors; the render thins the slime behind it. */
+#desk .links { position: fixed; right: 26px; top: 22px; display: flex; gap: 14px; font-size: 14px; color: #2b2b28; }
+#desk .links a { text-decoration: none; opacity: .85; }
+#desk .links a:hover { opacity: 1; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Sources: the DOM keeps an invisible hit target and the accessible text; WebGPU draws the card. */
+#desk .sources { list-style: none; padding: 0; }
+#desk .src { position: absolute; left: 0; top: 0; will-change: transform; transform-origin: 50% 50%; }
+#desk .hit { position: absolute; inset: 0; display: block; overflow: hidden; border-radius: 3px; cursor: pointer; touch-action: none; user-select: none;
+       -webkit-user-drag: none; text-decoration: none; color: inherit; background: #fffdf8; padding: 6px; outline-offset: 3px; }
+#desk .hit:focus-visible { outline: 2px solid #1e2228; }
+#desk .src.dragging .hit { cursor: grabbing; }
+#desk .hit img { display: block; width: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; border-radius: 1px; }
+#desk .cap { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; column-gap: 10px; padding: 8px 2px 0; font-size: 13px; line-height: 1.35; }
+#desk .cap b { font-weight: 600; }
+#desk .cap span { color: #85837b; }
+#desk .polaroid .hit { padding: 8px 8px 0; }
+#desk .polaroid img { aspect-ratio: 4/5; object-position: 50% 30%; }
+#desk .hand { font: 500 13px/1.3 Inter, sans-serif; color: #4a4945; text-align: center; padding: 9px 0 0; }
+#desk .note .hit { background: #fff4a8; padding: 14px 16px; font: 500 23px/1.15 Caveat, cursive; color: #2a2a26; cursor: grab; }
+#desk .paper .hit { padding: 16px 18px 16px 21px; border-left: 3px solid #3a3a36; }
+#desk .paper b { display: block; font-size: 16px; line-height: 1.35; font-weight: 600; }
+#desk .paper small { display: block; margin-top: 6px; color: #85837b; font-size: 13px; }
+/* Back of a flipped card: the WebGPU pass draws it; the DOM keeps the text and the real link buttons in the same spots. */
+#desk .back { position: absolute; inset: 0; visibility: hidden; pointer-events: none; padding: 14px; font-size: 13px; line-height: 1.4; }
+#desk .back p + p { margin-top: 6px; }
+#desk .nav .hit { cursor: pointer; }
+#desk .region-label { display: none; position: absolute; font: 600 18px Inter, sans-serif; letter-spacing: -0.01em; color: #1e2228; }
+#desk.phone .region-label { display: block; }
+#desk.phone .nav { display: none; }
+#desk .back a { position: absolute; pointer-events: auto; display: flex; align-items: center; justify-content: center; border-radius: 13px;
+          font-weight: 600; font-size: 12px; text-decoration: none; outline-offset: 2px; }
+#desk .src.flipped .back { visibility: visible; }
+#desk.gpu .back { color: transparent; }
+#desk.gpu .back a:focus-visible { outline: 2px solid #1e2228; }
+#desk.gpu .back a:hover { background: #1d1d1b0f; } /* the drawn buttons get the same hover the DOM ones would */
+#desk:not(.gpu) .src.flipped .hit > * { visibility: hidden; }
+#desk:not(.gpu) .back { background: #fffdf8; border-radius: 3px; }
+#desk:not(.gpu) .note .back { background: #fff4a8; }
+#desk:not(.gpu) .back a { position: static; display: inline-flex; margin: 10px 6px 0 0; padding: 5px 11px; border: 1px solid #1d1d1b40; color: #1d1d1b; }
+
+#desk.gpu .hit { background: none; color: transparent; }
+#desk.gpu .hit > * { opacity: 0; }
+#desk.gpu .name { clip-path: inset(50%); }
+/* Before WebGPU is up (and without it) the DOM draws the same desk: the startup still and the fallback. */
+#desk:not(.gpu) .hit { box-shadow: 0 1px 2px #1d1d1b17, 0 6px 18px #1d1d1b10; }
+
+/* No WebGPU: the same layout as a still, drawn by the DOM. */
+#desk.nogpu #field { display: none; }
+html:has(#desk.nogpu) body { background-color: #f3f1ea;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .28 0 0 0 0 .22 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+#desk.nogpu .hit { cursor: pointer; }
+
+@media (max-width: 699px) {
+  #desk .links { position: absolute; right: auto; flex-wrap: wrap; gap: 6px 14px; }
+  #desk .hit { cursor: pointer; }
+}
+/* Tweak panel (t key): quiet, small, neutral. */
+#desk .tweak { position: fixed; right: 14px; bottom: 14px; z-index: 6; width: 296px; max-height: calc(100vh - 28px); overflow: auto; padding: 10px 12px;
+         background: #fffdf8f2; border: 1px solid #1d1d1b1a; border-radius: 6px; font: 400 11px/1.3 Inter, sans-serif; color: #3d3c38;
+         box-shadow: 0 6px 24px #1d1d1b14; }
+#desk .tweak label { display: grid; grid-template-columns: 120px 1fr 40px; align-items: center; gap: 6px; margin: 3px 0; }
+#desk .tweak label[hidden] { display: none; }
+#desk .tweak details + details { border-top: 1px solid #1d1d1b14; }
+#desk .tweak summary { cursor: pointer; padding: 6px 0; font-weight: 600; color: #1d1d1b; }
+#desk .tweak-perf { margin: 0 0 6px; color: #85837b; font-variant-numeric: tabular-nums; white-space: pre-line; }
+#desk .tweak input[type=range] { width: 100%; height: 14px; accent-color: #5c5f4a; }
+#desk .tweak input[type=color] { width: 40px; height: 18px; padding: 0; border: 0; background: none; }
+#desk .tweak select { font: inherit; }
+#desk .tweak output { text-align: right; font-variant-numeric: tabular-nums; color: #85837b; }
+#desk .tweak-bar { display: flex; gap: 8px; position: sticky; bottom: -10px; margin: 8px -12px -10px; padding: 8px 12px 10px; background: #fffdf8; border-top: 1px solid #1d1d1b14; }
+#desk .tweak-bar button { font: 500 11px Inter, sans-serif; color: #1d1d1b; background: none; border: 1px solid #1d1d1b33; border-radius: 10px; padding: 3px 10px; cursor: pointer; }
+#desk .hud { position: fixed; left: 12px; top: 10px; z-index: 9; font: 11px ui-monospace, monospace; color: #070; pointer-events: none; white-space: pre; }

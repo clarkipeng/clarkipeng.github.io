@@ -27,11 +27,19 @@ export const pages: PageMeta[] = [
     description: 'Papers by Clark Peng, including VideoPhy-2 at ICLR 2026 and DialectGen at the NeurIPS 2025 ResponsibleFM workshop.',
   },
   {
+    path: '/desk',
+    title: 'Desk | Clark Peng',
+    description: 'Projects and papers by Clark Peng on one desk: a GPU slime mold simulation, a 4D game engine, Catapult (YC S26), and VideoPhy-2 (ICLR 2026).',
+  },
+  {
     path: '/resume',
     title: 'Resume | Clark Peng',
     description: 'Resume of Clark Peng, a computer science student at UCLA and former CTO of Catapult.',
   },
 ];
+
+// The desk's note card is set in Caveat; Inter comes from index.html.
+export const deskFontsUrl = 'https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&display=swap';
 
 export const pageMeta = (path: string) => pages.find((page) => page.path === path) ?? pages[0];
 
@@ -91,7 +99,7 @@ export const renderHead = (path: string) => {
     <meta property="og:image:alt" content="${siteConfig.name}" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:site" content="@clarkipeng" />
-    <script type="application/ld+json">${json}</script>`;
+    <script type="application/ld+json">${json}</script>${path === '/desk' ? `\n    <link rel="stylesheet" href="${deskFontsUrl.replace(/&/g, '&amp;')}" />` : ''}`;
 };
 
 export const llmsText = () => {

@@ -1,0 +1,78 @@
+<canvas id="field" aria-hidden="true"></canvas>
+<main id="page">
+  <h1 class="name">Clark Peng</h1>
+  <p class="tagline">CS at UCLA. I build simulations, games, and ways to check whether AI models understand the physical world.</p>
+  <nav class="links" aria-label="Elsewhere">
+    <a href="https://github.com/clarkipeng">GitHub</a><a href="https://scholar.google.com/citations?user=H2pCsDkAAAAJ&hl=en">Scholar</a><a href="https://www.linkedin.com/in/clarkpeng">LinkedIn</a><a href="https://x.com/clarkipeng">X</a><a href="https://kaggle.com/werus23">Kaggle</a><a href="/files/ClarkPengResearchResume.pdf">Resume</a>
+  </nav>
+
+  <!-- One continuous desk, two regions: main (left) and research (right, reached by panning; #research).
+       data-slot: center x, center y, width, rotation (deg) on a 1440x900 region. data-order: phone column order.
+       Media cards play a crossfading playlist on hover from media/clips.json (data-video is the fallback).
+       data-hue: the card's own hue (spectrum style); data-ink: its ink on paper, emitted while the card is open; data-jink: its ink on the J desk (research); data-still: keep this image even if clips.json has a poster. data-frame: zoom, x, y (crop placement, like object-position) for the image and its clips. Click flips a card; .back holds its details, copy and links only from src/data/siteData.ts. Nav notes pan instead. -->
+  <ul class="sources">
+    <li class="src photo" data-key="slime" data-frame="1.15,0.5,0.5" data-ink="5a52b8" data-hue="8f6cff" data-region="main" data-slot="318,528,336,-1.6" data-order="1" data-aspect="1.7778">
+      <div class="hit" role="button" tabindex="0" aria-label="3D slime simulation: show details" aria-expanded="false">
+        <img src="/desk-media/slime-poster.jpg" alt="3D slime simulation render" draggable="false">
+        <div class="cap"><b>3D slime simulation</b><span>also: the background</span></div></div>
+      <div class="back"><p>A slime mold simulation on the GPU: a million agents leave trails and follow each other's, at 120 FPS.</p><p>Built in Unity.</p><a href="https://github.com/clarkipeng/SlimeSim3D/" target="_blank" rel="noopener">Repository</a><a href="https://youtu.be/nurGFZYDcag" target="_blank" rel="noopener">Video</a></div></li>
+    <li class="src photo" data-key="catapult" data-ink="8a45a8" data-hue="ff8a5c" data-region="main" data-slot="792,500,300,-1.2" data-order="2" data-aspect="1.9048">
+      <div class="hit" role="button" tabindex="0" aria-label="Catapult (YC S26): show details" aria-expanded="false">
+        <img src="/desk-media/catapult-poster.jpg" alt="Catapult landing card" draggable="false">
+        <div class="cap"><b>Catapult (YC S26)</b><span>previously CTO</span></div></div>
+      <div class="back"><p>Co-founded Catapult (YC S26).</p><p>I built the real-time platform behind its 30 multiplayer browser games, then the first version of Music Arena, where AI models make music in FL Studio and people vote.</p><a href="https://playcatapult.io" target="_blank" rel="noopener">playcatapult.io</a><a href="https://musicarena.io" target="_blank" rel="noopener">Music Arena</a></div></li>
+    <li class="src photo" data-key="suika" data-ink="b37a1f" data-hue="f2b544" data-region="main" data-slot="1214,604,214,-2.2" data-order="3" data-aspect="1">
+      <div class="hit" role="button" tabindex="0" aria-label="4D fruit merging game: show details" aria-expanded="false">
+        <img src="/desk-media/suika-poster.jpg" alt="4D fruit merging game" draggable="false">
+        <div class="cap"><b>4D fruit merging game</b><span>playable on itch.io</span></div></div>
+      <div class="back"><p>Suika in four dimensions.</p><p>I wrote the engine from scratch in C++ and OpenGL, with its own 4D physics and rendering.</p><a href="https://github.com/clarkipeng/4dsuika" target="_blank" rel="noopener">Repository</a><a href="https://werus23.itch.io/4d-suika" target="_blank" rel="noopener">Play on itch.io</a></div></li>
+    <li class="src photo" data-key="rl" data-ink="1f8580" data-hue="4fc3f7" data-region="main" data-slot="520,780,238,1.3" data-order="4" data-aspect="1.6667">
+      <div class="hit" role="button" tabindex="0" aria-label="RL arm: show details" aria-expanded="false">
+        <img src="/desk-media/rl-poster.jpg" alt="RL arm" draggable="false">
+        <div class="cap"><b>RL arm</b><span>learned to throw things</span></div></div>
+      <div class="back"><p>A robot arm trained with reinforcement learning in Unity ML-Agents to pick up objects and throw them at targets.</p><a href="https://github.com/clarkipeng/RLHandTargetProject" target="_blank" rel="noopener">Repository</a></div></li>
+    <li class="src photo" data-key="ray" data-frame="1.15,0.2,0.5" data-ink="a8343f" data-hue="ff5d73" data-region="main" data-slot="1214,222,176,2.6" data-order="5" data-aspect="1">
+      <div class="hit" role="button" tabindex="0" aria-label="Raytracer: show details" aria-expanded="false">
+        <img src="/desk-media/ray-poster.jpg" alt="Raytraced scene" draggable="false">
+        <div class="cap"><b>Raytracer</b><span>for light and sound</span></div></div>
+      <div class="back"><p>Path tracers in C++ for light and for sound: the same rays that light a scene also model how audio travels through it.</p><a href="https://github.com/clarkipeng/RayTraceModel" target="_blank" rel="noopener">Repository</a></div></li>
+    <li class="src polaroid" data-key="me" data-frame="1,0.5,0.3" data-hue="f0a3c4" data-region="main" data-slot="610,206,164,3.4" data-order="0" data-aspect="0.8">
+      <div class="hit" role="button" tabindex="0" aria-label="Clark, mid-sentence: more about me" aria-expanded="false">
+        <img src="/images/clark-peng-profile.jpg" alt="" draggable="false">
+        <div class="hand">me, mid-sentence</div></div>
+      <div class="back"><b>Clark Peng</b><p>CS at UCLA, class of 2028.</p><p>Previously co-founder and CTO of Catapult.</p><p>I co-run ACM AI and compete on Kaggle (top 1%).</p><a href="https://github.com/clarkipeng" target="_blank" rel="noopener">GitHub</a><a href="https://scholar.google.com/citations?user=H2pCsDkAAAAJ&amp;hl=en" target="_blank" rel="noopener">Scholar</a><a href="https://www.linkedin.com/in/clarkpeng" target="_blank" rel="noopener">LinkedIn</a><a href="/files/ClarkPengResearchResume.pdf" target="_blank" rel="noopener">Resume</a></div></li>
+    <li class="src note" data-key="note" data-hue="f6e27a" data-region="main" data-slot="852,166,196,-3" data-order="6">
+      <div class="hit" role="button" tabindex="0" aria-label="Ask me about: show links" aria-expanded="false">ask me about:<br>4D geometry, slime molds, why AI video can't pour water</div>
+      <div class="back"><a href="https://github.com/clarkipeng" target="_blank" rel="noopener">GitHub</a><a href="https://scholar.google.com/citations?user=H2pCsDkAAAAJ&hl=en" target="_blank" rel="noopener">Scholar</a><a href="https://www.linkedin.com/in/clarkpeng" target="_blank" rel="noopener">LinkedIn</a><a href="https://x.com/clarkipeng" target="_blank" rel="noopener">X</a><a href="https://kaggle.com/werus23" target="_blank" rel="noopener">Kaggle</a><a href="/files/ClarkPengResearchResume.pdf" target="_blank" rel="noopener">Resume</a></div></li>
+    <li class="src note nav" data-key="to-research" data-region="main" data-slot="1004,786,150,2.2" data-order="7" data-nav="research">
+      <div class="hit" role="link" tabindex="0" aria-label="Research">research →</div></li>
+    <li class="src photo" data-key="vp2" data-hue="ffa13d" data-ink="8c481c" data-jink="8c481c" data-still="1" data-region="research" data-slot="430,318,330,1.4" data-order="10" data-aspect="1.5326">
+      <div class="hit" role="button" tabindex="0" aria-label="VideoPhy-2: can video models do physics?: show details" aria-expanded="false">
+        <img src="/desk-media/papers/vp2-alt.jpg" alt="VideoPhy-2: performance on the dataset under human evaluation" draggable="false">
+        <div class="cap"><b>VideoPhy-2: can video models do physics?</b><span>ICLR 2026 · co-first author</span></div></div>
+      <div class="back"><p>A benchmark for whether video models follow physical commonsense.</p><p>I'm co-first author: I built the data pipeline, generated all 6,800 videos, and trained the automatic evaluator.</p><p>ICLR 2026, and Best Paper at the ICML 2025 World Models Workshop.</p><a href="https://arxiv.org/abs/2503.06800" target="_blank" rel="noopener">arXiv</a><a href="https://videophy2.github.io/" target="_blank" rel="noopener">Project page</a></div></li>
+    <li class="src photo" data-key="pdfr" data-hue="38e0a0" data-ink="2c3c82" data-jink="2c3c82" data-still="1" data-region="research" data-slot="1080,330,262,-1" data-order="11" data-aspect="1.2097">
+      <div class="hit" role="button" tabindex="0" aria-label="Boundary Density Likelihood for Direct Event-Time Supervision: show details" aria-expanded="false">
+        <img src="/desk-media/papers/pdfr.jpg" alt="Event detection figure" draggable="false">
+        <div class="cap"><b>Boundary Density Likelihood for Direct Event-Time Supervision</b><span>arXiv 2024</span></div></div>
+      <div class="back"><p>Finding events by predicting where they're most likely to happen.</p><p>The method came out of my Kaggle work: nearly all top solutions in the Child Mind Institute sleep-detection competition (1,877 teams) used it.</p><p>First author.</p><a href="https://arxiv.org/abs/2408.12792" target="_blank" rel="noopener">arXiv</a><a href="https://github.com/clarkipeng/EventDetectionPDF" target="_blank" rel="noopener">Repository</a><a href="/files/EDPDFR.pdf" target="_blank" rel="noopener">PDF</a></div></li>
+    <li class="src photo" data-key="moe" data-hue="6f9bff" data-ink="54348a" data-jink="54348a" data-still="1" data-region="research" data-slot="770,636,300,1.1" data-order="12" data-aspect="2.4291">
+      <div class="hit" role="button" tabindex="0" aria-label="Cross-Lingual Alignment for Decoder-Only Models using MoE Routers: show details" aria-expanded="false">
+        <img src="/desk-media/papers/moe.jpg" alt="Routing alignment during continued pretraining" draggable="false">
+        <div class="cap"><b>Cross-Lingual Alignment for Decoder-Only Models using MoE Routers</b><span>arXiv 2026</span></div></div>
+      <div class="back"><p>Aligning languages inside LLMs by matching their mixture-of-experts router outputs.</p><p>I'm second author; my batch packing made training 2.1x faster on the same GPU and became the team's default.</p><a href="https://arxiv.org/abs/2610.01921" target="_blank" rel="noopener">arXiv</a></div></li>
+    <li class="src photo" data-key="dialect" data-hue="ff5fb0" data-ink="803c52" data-jink="803c52" data-still="1" data-region="research" data-slot="380,720,330,-1.2" data-order="13" data-aspect="2.5370">
+      <div class="hit" role="button" tabindex="0" aria-label="DialectGen: dialect robustness in image and video generation: show details" aria-expanded="false">
+        <img src="/desk-media/papers/dialectgen.jpg" alt="Model generations for Standard American English and a lower-resource dialect" draggable="false">
+        <div class="cap"><b>DialectGen: dialect robustness in image and video generation</b><span>NeurIPS 2025 workshop</span></div></div>
+      <div class="back"><p>How image and video models handle English dialects, and a way to make them more robust.</p><p>NeurIPS 2025 ResponsibleFM workshop.</p><a href="https://arxiv.org/abs/2510.14949" target="_blank" rel="noopener">arXiv</a></div></li>
+    <li class="src photo" data-key="tsm" data-hue="b98bff" data-ink="1e6460" data-jink="1e6460" data-still="1" data-region="research" data-slot="1130,690,300,-1.6" data-order="14" data-aspect="1.7266">
+      <div class="hit" role="button" tabindex="0" aria-label="Variable-Rate Harmonic-Percussive Time-Scale Modification with Real-Time Playback in Python: show details" aria-expanded="false">
+        <img src="/desk-media/papers/tsm-alt.jpg" alt="Updating the audio buffer with PV and OLA synthesis frames" draggable="false">
+        <div class="cap"><b>Variable-Rate Harmonic-Percussive Time-Scale Modification with Real-Time Playback in Python</b><span>arXiv 2026</span></div></div>
+      <div class="back"><p>Real-time audio time stretching in Python, where the playback rate can change every frame to follow a live performer.</p><p>From the Harvey Mudd Music Retrieval Lab.</p><a href="https://arxiv.org/abs/2609.18999" target="_blank" rel="noopener">arXiv</a><a href="https://github.com/HMC-MIR/TSMRealTime" target="_blank" rel="noopener">Code</a></div></li>
+    <li class="src note nav" data-key="to-main" data-region="research" data-slot="150,112,128,-2.4" data-order="9" data-nav="main">
+      <div class="hit" role="link" tabindex="0" aria-label="Back to the main desk">← back</div></li>
+  </ul>
+  <div class="region-label" aria-hidden="true">research</div>
+</main>
