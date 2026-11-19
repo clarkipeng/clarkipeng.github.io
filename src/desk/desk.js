@@ -1269,7 +1269,7 @@ class Player {
       if (this.state === 'out') this.outNow = true; // the clip that was ending has ended
     }
     const target = this.state === 'on' ? (this.playing() ? 1 : 0) : this.outNow ? 0 : 1;
-    this.mix = target > this.mix ? Math.min(target, this.mix + dt / T.fadeIn) : Math.max(target, this.mix - dt / (this.quick ? MOTION.respond * MOTION.exit : T.fadeOut));
+    this.mix = target > this.mix ? Math.min(target, this.mix + dt / T.fadeIn) : Math.max(target, this.mix - dt / (this.quick ? MOTION.quick : T.fadeOut));
     if (this.state === 'out' && this.outNow && this.mix === 0) {
       this.state = 'rest'; this.outNow = false; this.reset();
       if (qs.has('mlog')) console.log('[media] rest');
