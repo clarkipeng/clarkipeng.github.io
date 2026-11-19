@@ -75,6 +75,8 @@ const GROUPS = {
     ['xfade', 0.6, 0.1, 2, 0.05, 'crossfade s'],
     ['hold', 0, 0, 10, 0.25, 'clip hold s (0 = whole clip)'],
     ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
+    ['focusSoft', 1.2, 0, 2, 0.05, 'background softness while hovering a card'],
+    ['focusS', 0.45, 0.05, 2, 0.05, 'focus fade s'],
   ],
   // Prints: card images treated as photos printed on the desk's paper. A preset sets the knobs below it.
   Prints: [
@@ -730,6 +732,8 @@ const absorbance = (ink) => ink.map((c, i) => -Math.log(Math.max(lin(c), 1e-4) /
 
 const cursor = { x: -1e4, y: -1e4, amt: 0 };
 let topZ = sources.length, hovered = null;
+// Focus: the background eases from sharp to soft while a card is hovered (like depth of field), and back after.
+let focus = 0, focusAt = 0;
 
 // The camera pans across one continuous desk: x = 0 shows the main region, x = viewport width shows research.
 const cam = { x: 0, from: 0, to: 0, t: 1 };
@@ -1403,6 +1407,8 @@ function writeUniforms(g, sm = sim) {
     const el = vs.player.a;
     vu = coverRect((el.videoWidth || 16) / (el.videoHeight || 9), vs.media.w / vs.media.h, vs.frame);
   }
+  { const now = performance.now(), dt = Math.min(0.1, (now - (focusAt || now)) / 1000); focusAt = now;
+    focus += ((hovered && !hovered.dragging ? 1 : 0) - focus) * (1 - Math.exp(-dt / Math.max(0.01, T.focusS / 3))); }
   U.set([s.W, s.H, activeAgents(s), d,
     T.speed / 60 * d, T.deposit * Q.depMul, T.decay, T.diffuse,
     T.sd * d, T.sa, T.turn, 0,
@@ -1412,7 +1418,7 @@ function writeUniforms(g, sm = sim) {
     vs ? vs.id : -1, videoMix, vs?.player.fading ? clamp(vs.player.fade) : 0, cam.x * dev,
     EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.puffR * d,
     T.puff, T.puffDecay, T.hoverE, T.cursorE,
-    st.soft, st.grain, 0, order.length,
+    st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, 0, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
     T.shadowSoft, T.shadow, 0, 0,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
