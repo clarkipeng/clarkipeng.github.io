@@ -77,6 +77,7 @@ const GROUPS = {
     ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
     ['flipJitter', 3, 0, 8, 0.1, 'flip rotation jitter deg'],
+    ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
   ],
   Media: [
     ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
@@ -948,7 +949,7 @@ function flip(s) {
   s.flipTo = s.flipTo ? 0 : 1;
   s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
-  s.rotFrom = s.rot; s.rotTo = s.home + (Math.random() * 2 - 1) * T.flipJitter;
+  s.rotFrom = s.rot; s.rotTo = clamp(s.home + (Math.random() * 2 - 1) * T.flipJitter, -T.maxAngle, T.maxAngle);
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
     s.flip = s.emit = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
     if (gpu) drawStill();
