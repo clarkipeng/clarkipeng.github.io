@@ -997,7 +997,7 @@ function stepCards(dt) {
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
     s.burst *= Math.exp(-dt * 7);
-    if (s.released && s.lift < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; land(s, s.dropS); } // touched down
+    if (s.released && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; land(s, s.dropS); } // touched down
   }
 }
 
