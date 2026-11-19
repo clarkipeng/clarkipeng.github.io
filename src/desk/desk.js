@@ -123,6 +123,7 @@ const GROUPS = {
   Desk: [
     ['tidyDbl', 1, 0, 1, 1, 'double-click the desk to tidy'],
     ['remember', 1, 0, 1, 1, 'remember where cards were left'],
+    ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -940,7 +941,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = null; s.z = ++topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = null; s.bounced = s.edgePen = false; s.z = ++topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -995,8 +996,11 @@ function stepCards(dt) {
       s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= f; s.vy *= f;
       const mx = s.w * 0.25, my = s.h * 0.25;
       const x0 = view.phone ? 0 : s.region * view.w; // cards stay on their own page
-      if (s.x < x0 + mx || s.x > x0 + view.w - mx) { s.x = clamp(s.x, x0 + mx, x0 + view.w - mx); s.vx *= -0.4; }
-      if (s.y < my || s.y > view.docH - my) { s.y = clamp(s.y, my, view.docH - my); s.vy *= -0.4; }
+      if (T.edgeSoft && s.released && !view.phone) edgeSpring(s, x0, dt);
+      else {
+        if (s.x < x0 + mx || s.x > x0 + view.w - mx) { s.x = clamp(s.x, x0 + mx, x0 + view.w - mx); s.vx *= -0.4; }
+        if (s.y < my || s.y > view.docH - my) { s.y = clamp(s.y, my, view.docH - my); s.vy *= -0.4; }
+      }
     }
     const liftT = s.dragging ? 1 : s.hoverOn ? 0.1 : 0;
     s.liftV += (170 * (liftT - s.lift) - 17 * s.liftV) * dt; s.lift = Math.max(0, s.lift + s.liftV * dt);
@@ -1021,8 +1025,24 @@ function stepCards(dt) {
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
     s.burst *= Math.exp(-dt * 7);
-    if (s.released && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; land(s, s.dropS); shove(s); } // touched down, shoving the cards under it
+    if (s.released && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
+      s.released = false; land(s, s.bounced ? Math.min(s.dropS, 0.45) : s.dropS); s.bounced = false; shove(s); } // touched down, shoving the cards under it
   }
+}
+
+
+// Edges push back: a released card that runs past the screen's margin meets a stiff, well-damped spring (zeta 0.7) that
+// turns it around; on the way back it is no faster than an ease-out onto the margin (83 ms), so it is not flung back
+// across the desk. No hard stop anywhere: a card dragged off the edge glides back in the same way.
+function edgeSpring(s, x0, dt) {
+  const r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), m = 12 * view.k, k = 1600, c = 56, back = 12;
+  const lo = x0 + ex + m, hi = x0 + view.w - ex - m, top = ey + m, bot = view.h - ey - m;
+  const px = s.x < lo ? lo - s.x : s.x > hi ? hi - s.x : 0, py = s.y < top ? top - s.y : s.y > bot ? bot - s.y : 0;
+  const push = (v, p) => { v += (k * p - c * v) * dt; return Math.sign(v) === Math.sign(p) ? Math.sign(p) * Math.min(Math.abs(v), Math.abs(p) * back) : v; };
+  if (px) s.vx = push(s.vx, px);
+  if (py) s.vy = push(s.vy, py);
+  if (px || py) s.bounced = true;
+  s.edgePen = Math.abs(px) + Math.abs(py) > 0.5; // it touches down only once it is back inside
 }
 
 // ---------- landing ----------
