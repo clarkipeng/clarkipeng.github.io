@@ -953,7 +953,7 @@ function syncHover() {
 function setHover(s, on) {
   if (view.phone || s.hoverOn === on || (on && (s.flipTo || s.flying))) return;
   s.hoverOn = on;
-  if (on && s.playlist && !s.player) { s.player = new Player(s.playlist); if (!s.still) matchThumbnail(s); }
+  if (on && s.playlist && !s.player) makePlayer(s);
   if (on) { hovered = s; s.hoverSince = performance.now(); } else if (hovered === s) hovered = null;
 }
 
@@ -1337,9 +1337,9 @@ function playlistFor(s) {
   if (e?.clips?.length) return e.clips.map((c) => (typeof c === 'string' ? { src: '/desk-media/' + c, start: 0 } : { src: '/desk-media/' + c.src, start: +c.start || 0 }));
   return s.videoSrc ? [{ src: s.videoSrc, start: 0 }] : null;
 }
-function makeVideo(src) {
+function makeVideo(src, lazy = false) {
   const v = document.createElement('video');
-  v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = 'auto';
+  v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = lazy ? 'none' : 'auto';
   v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
   v.src = src;
   if (qs.has('mlog')) for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended', 'waiting', 'stalled', 'error']) {
@@ -1370,6 +1370,31 @@ const halt = (v, clip) => chain(v, () => {
 // Play from the clip's start: rewinds first unless it is already mid-clip.
 const playFromStart = (v) => chain(v, () => { if (v.ended || v.currentTime < v.clipStart) v.currentTime = v.clipStart; }).then(() => play(v));
 
+// A card's player: two video elements; the first clip loads now, the next only once this card's video starts.
+function makePlayer(s) { s.player = new Player(s.playlist); if (!s.still) matchThumbnail(s); }
+const wake = (v) => chain(v, () => { v.preload = 'auto'; v.load(); v.currentTime = v.clipStart || 0; });
+const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 200));
+// Preload: once the intro is over and the page is idle, each card's first clip loads, one at a time, the page you are on
+// first, so a first hover plays at once. Later clips stay lazy. Nothing preloads on Save-Data or a 2g connection, on
+// phones (no hover), with reduced motion, or without WebGPU; then a player is made on first hover, as before.
+function preloadClips() {
+  const c = navigator.connection;
+  if (dead || view.phone || reduced || !gpu || c?.saveData || /2g$/.test(c?.effectiveType || '')) return;
+  const queue = sources.filter((s) => s.playlist && !s.player).sort((a, b) => (a.region !== page) - (b.region !== page) || a.order - b.order);
+  const next = () => {
+    const s = queue.shift();
+    if (dead || !s) return;
+    if (!s.player) makePlayer(s);
+    const v = s.player.v[0];
+    if (v.readyState >= 4) { idle(next); return; }
+    let done = false;
+    const go = () => { if (!done) { done = true; idle(next); } };
+    for (const ev of ['canplaythrough', 'error', 'stalled']) v.addEventListener(ev, go, { once: true });
+    setTimeout(go, 6000); // a slow clip does not hold up the rest
+  };
+  next();
+}
+
 // Hover playback, one state machine per media card:
 //   rest: the card shows its thumbnail, both elements paused at their clip's start.
 //   on:   the pointer is over the card. The video fades in (T.fadeIn) as it plays from 0, and the playlist runs with
@@ -1381,7 +1406,7 @@ const playFromStart = (v) => chain(v, () => { if (v.ended || v.currentTime < v.c
 class Player {
   constructor(list) {
     this.list = list;
-    this.v = [makeVideo(list[0].src), makeVideo(list[1 % list.length].src)];
+    this.v = [makeVideo(list[0].src), makeVideo(list[1 % list.length].src, true)]; // the next clip waits until this one plays
     this.v.forEach((v, k) => halt(v, list[k % list.length]));
     this.cur = 0; this.i = 0; this.fade = 0; this.fading = false;
     this.state = 'rest'; this.outNow = false; this.mix = 0; this.retry = 0;
@@ -1397,7 +1422,7 @@ class Player {
     halt(this.v[0], this.list[0]); halt(this.v[1], this.list[1 % this.list.length]);
   }
   step(dt, hovered) {
-    if (hovered && this.state === 'rest') { this.state = 'on'; playFromStart(this.a); }
+    if (hovered && this.state === 'rest') { this.state = 'on'; playFromStart(this.a); if (this.b.preload === 'none') wake(this.b); }
     else if (hovered && this.state === 'out') { this.state = 'on'; this.outNow = false; } // keep going from here
     else if (!hovered && this.state === 'on') { this.state = 'out'; this.outNow = !T.finishFirst; }
     if (this.state === 'rest') return;
@@ -2352,7 +2377,8 @@ async function main() {
     body.classList.add('settled');
     return;
   }
-  for (const s of sources) s.playlist = playlistFor(s); // players are made on first hover
+  for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
+  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + T.landFly + 8 * T.landStagger : 0.3) * 1000); // after the intro
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
