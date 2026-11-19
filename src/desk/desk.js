@@ -694,6 +694,24 @@ function cardBox(s, w) {
   const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, '600 13px Inter'); // long titles wrap
   return { w, h: 6 + mh + (oneLine ? 32 : 31 + titleLines.length * 18), media: { x: 6, y: 6, w: mw, h: mh }, title, titleLines, sub, oneLine };
 }
+// One size for both faces, like a real card: the front's own size when the back's copy fits on it at the shared type
+// scale; otherwise the smallest card (up to maxW wide) that fits it, whose image is cropped (cover framing) to at most
+// 25% wider or taller than its own aspect. A note grows taller.
+function fitCard(s, w0, maxW = Math.round(w0 * 1.5)) {
+  const box = cardBox(s, w0);
+  if (!s.backEl || backLayout(s, box).need <= box.h) return box;
+  if (!s.media) return { ...box, h: backLayout(s, box).need };
+  let best = null;
+  for (let w = w0; w <= maxW; w += 2) {
+    const b = cardBox(s, w), chrome = b.h - b.media.h, mw = b.media.w;
+    const mh = Math.max(backLayout(s, b).need - chrome, mw / (s.aspect * 1.25));
+    if (mh > (mw * 1.25) / s.aspect) continue; // the image would be cropped too narrow
+    if (!best || w * (chrome + mh) < best.w * best.h) best = { ...b, h: chrome + mh, media: { ...b.media, h: mh } };
+  }
+  if (best) return best;
+  const b = cardBox(s, maxW), extra = backLayout(s, b).need - b.h; // last resort: as wide as allowed, then taller
+  return extra > 0 ? { ...b, h: b.h + extra, media: { ...b.media, h: b.media.h + extra } } : b;
+}
 let measureCtx = null;
 const measure = () => (measureCtx ||= new OffscreenCanvas(8, 8).getContext('2d'));
 function wrapLines(text, maxW, font) {
@@ -721,7 +739,7 @@ function layout() {
     nameBox = { x: 54 * k, baseline: 46 * k + 60 * k * 0.8, size: 60 * k };
     view.worldW = 2 * vw; // one continuous desk: main region, then research to the right
     for (const s of sources) {
-      Object.assign(s, cardBox(s, Math.round(s.slot.w * k)));
+      Object.assign(s, fitCard(s, Math.round(s.slot.w * k)));
       s.x = (s.region + s.slot.x / REF_W) * vw; s.y = (s.slot.y / REF_H) * vh; s.rot = s.slot.r;
     }
   } else {
@@ -730,13 +748,13 @@ function layout() {
     nameBox = { x: pad, baseline: 30 + 44 * 0.8, size: 44 };
     let y = 0;
     view.worldW = vw;
-    for (const s of sources) if (s.nav) Object.assign(s, cardBox(s, 150)); // phones scroll to research; nav notes stay hidden
+    for (const s of sources) if (s.nav) Object.assign(s, fitCard(s, 150)); // phones scroll to research; nav notes stay hidden
     const order = [...sources].filter((s) => !s.nav).sort((a, b) => a.order - b.order);
     for (const [i, s] of order.entries()) {
       if (s.region && !view.labelY) { view.labelY = y + 10; y += 56; } // research becomes a section further down
       const full = Math.min(vw - 56, 380);
       const w = Math.round(s.kind === 'polaroid' ? full * 0.56 : s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
-      Object.assign(s, cardBox(s, w));
+      Object.assign(s, fitCard(s, w, full));
       s.rot = s.slot.r * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       s.py = y + s.h / 2; y += s.h + 30;
@@ -762,7 +780,6 @@ function layout() {
   }
   cam.x = cam.to = view.phone ? 0 : regionFromHash() * view.w; cam.t = 1; placePage(); setInert(regionFromHash());
   for (const s of sources) {
-    if (s.backEl) ({ w: s.backW, h: s.backH } = backLayout(s));
     if (s.media) {
       const [z, px, py] = s.frame, v = 1 / z;
       Object.assign(s.img.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`,
@@ -773,7 +790,7 @@ function layout() {
 }
 
 function placeDom(s) {
-  const r = s.rot + (s.sway * 180) / Math.PI, sc = 1 + 0.035 * s.lift, w = faceW(s), h = faceH(s);
+  const r = s.rot + (s.sway * 180) / Math.PI, sc = 1 + 0.035 * s.lift, w = s.w, h = s.h;
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(s.x - w / 2).toFixed(2)}px, ${(s.y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${sc.toFixed(4)})`;
   s.el.style.zIndex = s.z;
@@ -1230,14 +1247,13 @@ function drawCard(s, S) {
   return { canvas: c, mediaPx };
 }
 
-// Back of a card: its title, the details, and link buttons along the bottom, in one type scale on every card. A back
-// whose text needs more room than the front gets a bigger sheet instead of smaller type: at least minW wide, so the
-// buttons pair up on narrow cards, and as tall as its text (s.backW, s.backH). Rects are CSS px, so the DOM can put the
-// real links in the same places.
-const BACK = { pad: 14, size: 13, lh: 13 * 1.4, bf: 12, bh: 26, bp: 22, gap: 6, minW: 200 };
-function backLayout(s) {
-  const { pad, size, lh, bf, bh, bp, gap } = BACK, m = measure(), w = Math.max(s.w, BACK.minW);
-  const title = s.backTitle ?? (s.kind === 'note' ? '' : s.title || s.lines?.join(' ') || '');
+// Back of a card: its title, the details, and link buttons along the bottom, in one type scale on every card, on the
+// card's own size (b: the card's box; need is the height its copy takes, which fitCard makes room for). Rects are CSS
+// px, so the DOM can put the real links in the same places.
+const BACK = { pad: 14, size: 13, lh: 13 * 1.4, bf: 12, bh: 26, bp: 22, gap: 6 };
+function backLayout(s, b = s) {
+  const { pad, size, lh, bf, bh, bp, gap } = BACK, m = measure(), w = b.w;
+  const title = s.backTitle ?? (s.kind === 'note' ? '' : b.title || b.lines?.join(' ') || '');
   // Title, then each paragraph after a half-line gap.
   const lines = [];
   let y = pad;
@@ -1255,15 +1271,11 @@ function backLayout(s) {
     buttons.push({ a, x: bx, y: row * (bh + gap), w: bw, h: bh }); bx += bw + gap;
   }
   const blockH = buttons.length ? (row + 1) * bh + row * gap : 0;
-  const h = Math.max(s.h, Math.ceil(lines.length ? y + 8 + blockH + pad : pad + blockH + pad));
+  const need = Math.ceil(lines.length ? y + 8 + blockH + pad : pad + blockH + pad), h = b.h;
   const by = lines.length ? h - pad - blockH : pad;
-  for (const b of buttons) b.y += by;
-  return { lines, buttons, w, h };
+  for (const bt of buttons) bt.y += by;
+  return { lines, buttons, w, h, need };
 }
-// The card's size now: the front's, growing to the back's while the card is edge-on in the middle of the turn.
-const toBack = (s) => (s.flip ? smooth((easeFlip(clamp((s.flip - 0.22) / 0.56)) - 0.3) / 0.4) : 0);
-const faceW = (s) => (s.backW > s.w ? lerp(s.w, s.backW, toBack(s)) : s.w);
-const faceH = (s) => (s.backH > s.h ? lerp(s.h, s.backH, toBack(s)) : s.h);
 function drawBack(s, S) {
   const { lines, buttons, w, h } = backLayout(s), { size, bf, bh } = BACK;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
@@ -1450,7 +1462,7 @@ async function buildAtlas(g) {
   backs.forEach(({ src, canvas: c, buttons }, i) => {
     const p = places[drawn.length + i];
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
-    src.buv = [p.x / AW, p.y / AH, (p.x + src.backW * S) / AW, (p.y + src.backH * S) / AH];
+    src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, buttons);
   });
   shared.atlas = atlas;
@@ -1509,7 +1521,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
   const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * (f - zh), f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * (f - zh), -mu[2], -mv[2], f - zh]);
-  const hw = (faceW(s) * dpr) / 2, hh = (faceH(s) * dpr) / 2;
+  const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2;
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
@@ -1537,7 +1549,7 @@ function writeUniforms(g, sm = sim, hold = false) {
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
     if (!view.phone && x.region !== s.page) return false;
-    const r = Math.hypot(Math.max(x.w, x.backW || 0), Math.max(x.h, x.backH || 0)) / 2 + 100 * Math.max(T.shadowSoft, 1);
+    const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
   const vs = videoSrc;
