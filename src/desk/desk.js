@@ -75,7 +75,7 @@ const GROUPS = {
     ['xfade', 0.6, 0.1, 2, 0.05, 'crossfade s'],
     ['hold', 0, 0, 10, 0.25, 'clip hold s (0 = whole clip)'],
     ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
-    ['focusSoft', 1.2, 0, 2, 0.05, 'background softness while hovering a card'],
+    ['focusSoft', 1.5, 0, 2, 0.05, 'background softness while hovering a card'],
     ['focusS', 0.45, 0.05, 2, 0.05, 'focus fade s'],
   ],
   // Prints: card images treated as photos printed on the desk's paper. A preset sets the knobs below it.
