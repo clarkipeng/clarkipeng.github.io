@@ -117,8 +117,10 @@ const GROUPS = {
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
   Camera: [
-    ['panS', MOTION.travel, 0.2, 2.5, 0.05, 'pan duration s'],
-    ['panEase', 'cubic', 0, 0, 0, 'pan easing'],
+    ['panS', 1, 0.2, 2.5, 0.05, 'pan duration s'],
+    ['panEase', 'glide', 0, 0, 0, 'pan easing'],
+    ['parallax', 0.06, 0, 0.3, 0.01, 'outgoing page parallax (x screen)'],
+    ['cardsAhead', 0.22, 0, 0.6, 0.01, 'incoming cards ride ahead (x screen)'],
   ],
   // Desk: what the desk does with cards you move.
   Desk: [
@@ -132,7 +134,16 @@ const GROUPS = {
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
 // four corners | center: one blob under the card | ring2: max plus a second ridge farther out
 const EDGE_MODES = ['none', 'max', 'plus', 'corners', 'center', 'ring2'];
+// glide: one camera move whose speed rises gently (as u^1.5) and settles long and soft (as (1 - u)^3): the integral of
+// that speed profile, tabulated. No linear stretch, no corner.
+const glide = (() => {
+  const N = 512, acc = [0];
+  let sum = 0;
+  for (let i = 1; i <= N; i++) { const u = (i - 0.5) / N; sum += u ** 1.5 * (1 - u) ** 3; acc.push(sum); }
+  return (u) => { const x = Math.min(1, Math.max(0, u)) * N, i = Math.floor(x); return i >= N ? 1 : (acc[i] + (acc[i + 1] - acc[i]) * (x - i)) / sum; };
+})();
 const EASES = {
+  glide,
   cubic: (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2),
   quint: (u) => (u < 0.5 ? 16 * u ** 5 : 1 - (-2 * u + 2) ** 5 / 2),
   sine: (u) => -(Math.cos(Math.PI * u) - 1) / 2,
@@ -540,7 +551,12 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let pd = wd - vec2f(g.pg.x, 0.0);   // device px on the active page
   // During a page change the outgoing page slides out as the frozen image of its last frame.
   if (g.pg.y > 0.5 && g.pg.y < 1.5 && (pd.x < 0.0 || pd.x >= g.pg.w)) {
-    return textureLoad(frozen, clamp(vec2i(wd - vec2f(g.pg.z, 0.0)), vec2i(0), vec2i(textureDimensions(frozen)) - 1), 0);
+    // It fades into bare paper over its last eighth toward the incoming page, so no hard edge meets the live page; where
+    // it runs ahead of the camera (parallax) the gap is paper too.
+    let fx = wd.x - g.pg.z;
+    let edge = select(fx, g.pg.w - fx, g.pg.z < g.pg.x);
+    let fr = textureLoad(frozen, clamp(vec2i(vec2f(fx, wd.y)), vec2i(0), vec2i(textureDimensions(frozen)) - 1), 0);
+    return mix(vec4f(pow(g.bg.rgb, vec3f(1.0 / 2.2)), 1.0), fr, smoothstep(0.0, 0.125 * g.pg.w, edge));
   }
   let p = pd * q;          // everything below is in sim px, except the crisp masks and edge coverage
   let s = g.a.w;           // sim px per CSS px
@@ -882,7 +898,7 @@ function switchPage(region, instant) {
     encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
     gpu.device.queue.submit([enc.finish()]);
     shared.fz = 1 - shared.fz;
-    trans.on = true; trans.frozenX = page * view.w;
+    trans.on = true; trans.frozenX = trans.frozen0 = page * view.w; trans.dir = from;
   }
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
@@ -901,7 +917,9 @@ function holdPage(sm) {
 function stepCam(dt) {
   if (cam.t >= 1) return;
   cam.t = Math.min(1, cam.t + dt / T.panS);
-  cam.x = lerp(cam.from, cam.to, EASES[T.panEase](cam.t));
+  const e = EASES[T.panEase](cam.t);
+  cam.x = lerp(cam.from, cam.to, e);
+  if (trans.on) trans.frozenX = trans.frozen0 - trans.dir * T.parallax * view.w * e; // the outgoing page leaves a little faster
   if (cam.t >= 1) trans.on = false;
   placePage();
 }
@@ -1267,7 +1285,10 @@ function flyIn(from, delay) {
     const edges = [[lx, -1, 0], [view.w - lx, 1, 0], [ly, 0, -1], [view.h - ly, 0, 1]];
     const [d, ex, ey] = from ? edges[from > 0 ? 1 : 0] : edges.reduce((a, b) => (b[0] < a[0] ? b : a));
     const turn = (hash01(s.id) < 0.5 ? -1 : 1) * (6 + 6 * hash01(s.id + 7));
-    s.fly = { at: delay + i * T.landStagger, x: s.x, y: s.y, r: s.rot, dx: ex * (d + off), dy: ey * (d + off), dr: turn };
+    // A page change: on the camera's clock and curve, each card rides in a little ahead of the desk and settles onto it as
+    // the camera arrives, landing one after another from just before the camera stops. The first visit: from the edge.
+    s.fly = from ? { at: 0, dur: Math.max(0.2, T.panS - 0.12 + i * 0.04), ease: glide, x: s.x, y: s.y, r: s.rot, dx: from * T.cardsAhead * view.w, dy: 0, dr: turn * 0.4 }
+      : { at: delay + i * T.landStagger, x: s.x, y: s.y, r: s.rot, dx: ex * (d + off), dy: ey * (d + off), dr: turn };
     Object.assign(s, { flying: true, z: ++topZ, vx: 0, vy: 0, released: false }); // in the air: above the cards that already landed
   }
   Object.assign(flights, { on: true, t: 0 });
@@ -1280,8 +1301,8 @@ function stepFlights(dt) {
   for (const s of sources) {
     const k = s.fly;
     if (!k) continue;
-    const u = clamp((flights.t - k.at) / T.landFly), m = 1 - easeOutQuart(u);
-    s.x = k.x + k.dx * m; s.y = k.y + k.dy * m; s.rot = k.r + k.dr * (1 - easeOutBack(u));
+    const u = clamp((flights.t - k.at) / (k.dur ?? T.landFly)), m = 1 - (k.ease ?? easeOutQuart)(u);
+    s.x = k.x + k.dx * m; s.y = k.y + k.dy * m; s.rot = k.r + k.dr * (k.ease ? m : 1 - easeOutBack(u));
     s.flyLift = FLY_LIFT * (1 - u) ** 2;
     if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flyLift: 0, flying: false, fly: null }); land(s, 1); }
     else busy = true;
@@ -1900,7 +1921,7 @@ function inkOn(s, tint, base, hueMix = 1) {
 const clock = { t: 0, frame: 0 };
 const NAME_ABS = absorbance(NAME_INK);
 // The page change in progress: the outgoing page is a frozen image whose desk origin is frozenX (CSS px).
-const trans = { on: false, frozenX: 0, fade: 0 };
+const trans = { on: false, frozenX: 0, frozen0: 0, dir: 0, fade: 0 };
 function writeUniforms(g, sm = sim, hold = false) {
   const s = sm, d = s.dpr, dev = shared.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
