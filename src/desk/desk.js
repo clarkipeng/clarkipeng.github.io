@@ -28,6 +28,10 @@ const TOK = {
 };
 const font = (weight, px = TOK.fs, family = 'Inter') => `${weight} ${px}px ${family}`;
 const HAND = font(500, TOK.fsHand, 'Caveat');
+// Motion: a few durations and two curves. Things the user triggers respond in `respond`; cards that come down onto the
+// desk take `settle`; moves across the desk take `travel`. Arrivals decelerate (ease-out quart); turns and pans ease in
+// and out; physical motion (lift, tilt, squash) is springs. Exits run at `exit` times their entrance.
+const MOTION = { quick: 0.15, respond: 0.4, settle: 0.7, travel: 0.9, exit: 0.7 };
 const NAME_INK = [30, 34, 40];
 const qs = new URLSearchParams(location.search);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || qs.has('still');
@@ -71,7 +75,7 @@ const GROUPS = {
     ['shadow', 1.35, 0, 5, 0.05, 'shadow strength'],
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
-    ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s'],
+    ['flipS', MOTION.settle, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
     ['backs', 'pen', 0, 0, 0, 'back style (quiet, index, pen)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
@@ -84,7 +88,7 @@ const GROUPS = {
     ['landR', 29, 0, 60, 1, 'burst reach px'],
     ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
     ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
-    ['landFly', 0.95, 0.3, 2.5, 0.05, 'fly duration s'],
+    ['landFly', MOTION.travel, 0.3, 2.5, 0.05, 'fly duration s'],
     ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
     ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
@@ -92,14 +96,14 @@ const GROUPS = {
     ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
   ],
   Media: [
-    ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
+    ['fadeIn', MOTION.respond, 0.05, 2, 0.05, 'fade in s'],
     ['fadeOut', 1, 0.1, 3, 0.05, 'fade out s'],
     ['finishFirst', 1, 0, 1, 1, 'finish clip before fading out'],
     ['xfade', 0.6, 0.1, 2, 0.05, 'crossfade s'],
     ['hold', 0, 0, 10, 0.25, 'clip hold s (0 = whole clip)'],
     ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
     ['focusSoft', 1.5, 0, 2, 0.05, 'background softness while hovering a card'],
-    ['focusS', 0.45, 0.05, 2, 0.05, 'focus fade s'],
+    ['focusS', MOTION.respond, 0.05, 2, 0.05, 'focus fade s (release takes exit x this)'],
   ],
   // Prints: card images treated as photos printed on the desk's paper. A preset sets the knobs below it.
   Prints: [
@@ -112,7 +116,7 @@ const GROUPS = {
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
   Camera: [
-    ['panS', 0.9, 0.2, 2.5, 0.05, 'pan duration s'],
+    ['panS', MOTION.travel, 0.2, 2.5, 0.05, 'pan duration s'],
     ['panEase', 'cubic', 0, 0, 0, 'pan easing'],
   ],
 };
@@ -972,6 +976,8 @@ function flip(s) {
   }
 }
 
+// Hover's clock: the card's own response and the background's focus ease in together, and let go a little faster.
+const hoverTau = (rising) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION.exit);
 // Springs: lift rises while dragging, tilt leans toward velocity (max ~8 deg), released cards glide and settle.
 function stepCards(dt) {
   const maxTilt = (T.tilt * Math.PI) / 180;
@@ -993,9 +999,9 @@ function stepCards(dt) {
     for (const [i, t] of [tx, ty].entries()) { s.tiltV[i] += (150 * (t - s.tilt[i]) - 9 * s.tiltV[i]) * dt; s.tilt[i] += s.tiltV[i] * dt; }
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
-    s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / 0.25));
+    s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
     if (s.flip !== s.flipTo) {
-      s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / T.flipS);
+      s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip > 0.6); // the real links become clickable as the back faces up
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
@@ -1096,7 +1102,7 @@ function shove(p) {
   for (const [b, [tx, ty]] of pos) {
     const dist = Math.hypot(tx - b.x, ty - b.y);
     if (b === p || dist < 0.5) continue;
-    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: 0.3 + 0.3 * clamp(dist / (250 * view.k)) };
+    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: MOTION.respond * (0.75 + 0.75 * clamp(dist / (250 * view.k))) };
     b.vx = b.vy = 0;
   }
 }
@@ -1263,7 +1269,7 @@ class Player {
       if (this.state === 'out') this.outNow = true; // the clip that was ending has ended
     }
     const target = this.state === 'on' ? (this.playing() ? 1 : 0) : this.outNow ? 0 : 1;
-    this.mix = target > this.mix ? Math.min(target, this.mix + dt / T.fadeIn) : Math.max(target, this.mix - dt / (this.quick ? 0.25 : T.fadeOut));
+    this.mix = target > this.mix ? Math.min(target, this.mix + dt / T.fadeIn) : Math.max(target, this.mix - dt / (this.quick ? MOTION.respond * MOTION.exit : T.fadeOut));
     if (this.state === 'out' && this.outNow && this.mix === 0) {
       this.state = 'rest'; this.outNow = false; this.reset();
       if (qs.has('mlog')) console.log('[media] rest');
@@ -1784,7 +1790,8 @@ function writeUniforms(g, sm = sim, hold = false) {
   { const now = performance.now(), dt = Math.min(0.1, (now - (focusAt || now)) / 1000); focusAt = now;
     // While any card is flipping, the background snaps back toward sharp; afterwards it follows the hover again. Same smoothing.
     const flipping = sources.some((o) => o.flip !== o.flipTo);
-    focus += ((hovered && !hovered.dragging && !flipping ? 1 : 0) - focus) * (1 - Math.exp(-dt / Math.max(0.01, T.focusS / 3))); }
+    const want = hovered && !hovered.dragging && !flipping ? 1 : 0;
+    focus += (want - focus) * (1 - Math.exp(-dt / hoverTau(want > focus))); }
   U.set([s.W, s.H, hold ? s.n : activeAgents(s), d,
     T.speed / 60 * d, T.deposit * Q.depMul, T.decay, T.diffuse,
     T.sd * d, T.sa, T.turn, 0,

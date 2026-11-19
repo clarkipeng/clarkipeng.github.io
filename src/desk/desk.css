@@ -6,7 +6,8 @@
 html:has(#desk) #root { min-height: 0; }
 html:has(#desk), html:has(#desk) body { background: var(--paper); color: var(--text); }
 /* The slime's olive ink themes the browser's own surfaces: selection, underlines, and focus rings (deep olive, 5.8:1 on paper). */
-html:has(#desk) { --paper: #f3f1ea; --stock: #fffdf8; --note: #fff4a8; --note-strip: #f7ea98; --text: #1d1d1b; --text-2: #2b2b28; --body: #3d3c38; --muted: #6f6d66; --ink: #a5a970; --ink-deep: #5c5f4a; }
+html:has(#desk) { --paper: #f3f1ea; --stock: #fffdf8; --note: #fff4a8; --note-strip: #f7ea98; --text: #1d1d1b; --text-2: #2b2b28; --body: #3d3c38; --muted: #6f6d66; --ink: #a5a970; --ink-deep: #5c5f4a;
+  --t-quick: .15s; --t-respond: .4s; --t-settle: .7s; --ease-out: cubic-bezier(.25, 1, .5, 1); } /* MOTION in the script */
 #desk ::selection { background: #a5a97066; }
 #desk a { text-decoration-color: var(--ink); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 #desk :focus-visible { outline: 2px solid var(--ink-deep); outline-offset: 3px; }
@@ -16,18 +17,18 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk.phone #field { position: absolute; }
 #desk #page { position: relative; will-change: transform; }
 /* The desk fades in from bare paper once it is ready, so startup shows no unstyled text, fallback fonts, or pops. */
-#desk #page, #desk #field { transition: opacity .6s ease-out; }
+#desk #page, #desk #field { transition: opacity var(--t-settle) var(--ease-out); }
 #desk:not(.ready) :is(#page, #field) { opacity: 0; }
 /* The first visit starts from bare paper; its cards fly in. Opacity, not visibility: hidden text has no innerText to measure. */
 #desk.intro:not(.gpu) .sources { opacity: 0; pointer-events: none; }
-#desk .hit, #desk .hit > * { transition: opacity .3s, background-color .3s, box-shadow .3s, color .3s; } /* DOM still to live field */
+#desk .hit, #desk .hit > * { transition: opacity var(--t-respond), background-color var(--t-respond), box-shadow var(--t-respond), color var(--t-respond); transition-timing-function: var(--ease-out); } /* DOM still to live field */
 
 #desk .name { position: absolute; margin: 0; font: 800 64px/1 Inter, sans-serif; font-optical-sizing: auto; letter-spacing: -0.03em; color: #1e2228; white-space: nowrap; }
 #desk .tagline { position: absolute; max-width: 400px; font-size: 16px; line-height: 1.5; color: var(--text-2); }
 /* Text sits on the panning page, so it uses solid ink colors; the render thins the slime behind it. */
 #desk .links { position: fixed; right: 19px; top: 14px; display: flex; gap: 4px; color: var(--text-2); }
 /* Logo icons, ink at rest and their own brand color on hover (Kaggle's cyan deepened to 3.5:1 on the paper); 32px hit areas. */
-#desk .links a { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; opacity: .85; transition: color .15s, opacity .15s; }
+#desk .links a { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; opacity: .85; transition: color var(--t-quick) var(--ease-out), opacity var(--t-quick) var(--ease-out); }
 #desk .links svg { display: block; width: 18px; height: 18px; }
 #desk .links a:hover, #desk .links a:focus-visible { opacity: 1; color: var(--brand); }
 #desk .links .i-gh { --brand: #181717; } #desk .links .i-scholar { --brand: #4285f4; } #desk .links .i-linkedin { --brand: #0a66c2; }
@@ -58,7 +59,7 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk.phone .region-label { display: block; }
 #desk.phone .nav { display: none; }
 /* The back's links: the drawn text is the link; the DOM link is its hit area, with an ink wash on hover and the deep-ink focus ring. */
-#desk .back a { position: absolute; pointer-events: auto; color: transparent; text-decoration: none; border-radius: 2px; outline-offset: 1px; transition: background-color .15s; }
+#desk .back a { position: absolute; pointer-events: auto; color: transparent; text-decoration: none; border-radius: 2px; outline-offset: 1px; transition: background-color var(--t-quick) var(--ease-out); }
 #desk .back a:hover, #desk .back a:focus-visible { background: #5c5f4a1f; } /* the link's own ink at 12%: the paper darkens, the text does not */
 #desk .src.flipped .back { visibility: visible; }
 #desk .back { color: transparent; }
