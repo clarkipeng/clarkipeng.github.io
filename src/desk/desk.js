@@ -1305,7 +1305,8 @@ function backLayout(s, b = s) {
     const links = s.backLinks.map((a, i) => linkAt(a, x0, BK.first + i * row, m.measureText(a.textContent).width));
     return { st, lines: [], links, w, h: b.h, need: BK.first + (links.length - 1) * row + BK.bottom };
   }
-  const title = s.backTitle ?? (b.title || b.lines?.join(' ') || ''), label = b.sub || '';
+  // No label line: it only repeated the front's caption (Clark: no redundancy).
+  const title = s.backTitle ?? (b.title || b.lines?.join(' ') || ''), label = '';
   const strip = st.ruled && label && s.kind !== 'polaroid'; // index: the label gets its own strip along the top
   const lines = [];
   let y = BK.first + (strip ? BK.strip : 0) - TYPE.title.lh, gapNext = 0;
