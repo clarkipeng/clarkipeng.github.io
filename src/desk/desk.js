@@ -1114,7 +1114,7 @@ function backLayout(s) {
   const buttons = [];
   let bx = pad, row = 0;
   for (const a of s.backLinks) {
-    const bw = Math.ceil(m.measureText(a.textContent + ' ↗').width) + bp;
+    const bw = Math.ceil(m.measureText(a.textContent).width) + bp;
     if (bx + bw > w - pad && bx > pad) { bx = pad; row++; }
     buttons.push({ a, x: bx, y: row * (bh + gap), w: bw, h: bh }); bx += bw + gap;
   }
@@ -1139,7 +1139,7 @@ function drawBack(s, S) {
     x.beginPath(); x.roundRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, b.h / 2);
     x.strokeStyle = '#1d1d1b40'; x.lineWidth = 1; x.stroke();
     x.font = `600 ${bf}px Inter`; x.fillStyle = '#1d1d1b'; x.textAlign = 'center';
-    x.fillText(b.a.textContent + ' ↗', b.x + b.w / 2, b.y + bh / 2 + bf * 0.36); x.textAlign = 'left';
+    x.fillText(b.a.textContent, b.x + b.w / 2, b.y + bh / 2 + bf * 0.36); x.textAlign = 'left';
   }
   return { canvas: c, buttons, size, w, h };
 }
