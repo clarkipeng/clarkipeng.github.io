@@ -76,7 +76,7 @@ const GROUPS = {
     ['landFly', 0.95, 0.3, 2.5, 0.05, 'fly duration s'],
     ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
-    ['flipJitter', 3, 0, 8, 0.1, 'flip rotation jitter deg'],
+    ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
     ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
   ],
   Media: [
@@ -949,7 +949,9 @@ function flip(s) {
   s.flipTo = s.flipTo ? 0 : 1;
   s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
-  s.rotFrom = s.rot; s.rotTo = clamp(s.home + (Math.random() * 2 - 1) * T.flipJitter, -T.maxAngle, T.maxAngle);
+  // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
+  const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  s.rotFrom = s.rot; s.rotTo = clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle);
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
     s.flip = s.emit = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
     if (gpu) drawStill();
