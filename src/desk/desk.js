@@ -122,6 +122,7 @@ const GROUPS = {
   // Desk: what the desk does with cards you move.
   Desk: [
     ['tidyDbl', 1, 0, 1, 1, 'double-click the desk to tidy'],
+    ['remember', 1, 0, 1, 1, 'remember where cards were left'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -764,6 +765,7 @@ function layout() {
       Object.assign(s, fitCard(s, Math.round(s.slot.w * k)));
       s.x = (s.region + s.slot.x / REF_W) * vw; s.y = (s.slot.y / REF_H) * vh; s.rot = s.home = s.slot.r;
     }
+    restoreDesk(); // where they were left last time, if still valid
   } else {
     const pad = 22;
     view.labelY = 0;
@@ -1032,6 +1034,7 @@ function land(s, strength) {
   // The squash starts as a push (velocity), not a jump: it dips to about min(1, k) within ~75 ms and springs back.
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: s.squash || 0, squashV: (s.squashV || 0) + 29 * Math.min(1, k) });
   if (s.rel < 0) s.rel = 0;
+  saveDesk(); // something just settled
 }
 
 
@@ -1127,6 +1130,7 @@ const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H
 // Tidy: every card on this page glides back home, one after another, turning to its home angle, and lands.
 function tidy() {
   if (view.phone) return;
+  forgetDesk();
   let i = 0;
   for (const s of sources.filter((o) => o.region === page && !o.dragging && !o.flying)) {
     const [tx, ty, tr] = homeOf(s), dist = Math.hypot(tx - s.x, ty - s.y);
@@ -1141,6 +1145,42 @@ addEventListener('dblclick', (e) => { // on the bare desk only, not on a card, a
   if (!T.tidyDbl || e.target.closest?.('.src, a, button, input, select, .tweak, .name, .tagline')) return;
   getSelection()?.removeAllRanges(); tidy();
 });
+
+
+// ---------- the desk remembers ----------
+// Where each card was left, and its angle, is kept in this browser as fractions of its page, and comes back on the next
+// visit (the intro flies cards to those spots). A changed layout, another size class, or a spot that would be off screen
+// falls back to the slot. Tidy forgets it.
+const SAVE_KEY = 'desk-cards-v1';
+const layoutSig = () => sources.map((s) => s.key + ':' + s.el.dataset.slot).join('|');
+const sizeClass = () => (view.w >= 1100 ? 'l' : 'm') + (view.w / view.h > 1.45 ? 'w' : 'n');
+function saveDesk() {
+  if (!T.remember || view.phone) return;
+  const cards = {};
+  for (const s of sources) {
+    if (s.flying || s.dragging) continue;
+    const [hx, hy, hr] = homeOf(s), v = s.shove, x = v ? v.tx : s.x, y = v ? v.ty : s.y;
+    const r = v?.tr ?? (s.flip !== s.flipTo ? s.rotTo : s.rot);
+    if (Math.hypot(x - hx, y - hy) > 0.5 || Math.abs(r - hr) > 0.05) cards[s.key] = [(x - s.region * view.w) / view.w, y / view.h, r].map((n) => +n.toFixed(4));
+  }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ sig: layoutSig(), size: sizeClass(), cards })); } catch { /* storage off */ }
+}
+function forgetDesk() { try { localStorage.removeItem(SAVE_KEY); } catch { /* storage off */ } }
+function restoreDesk() {
+  if (!T.remember) return;
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { /* storage off or bad data */ }
+  if (!d) return;
+  if (d.sig !== layoutSig() || d.size !== sizeClass()) { forgetDesk(); return; }
+  for (const s of sources) {
+    const c = d.cards?.[s.key];
+    if (!Array.isArray(c) || c.length !== 3 || !c.every(Number.isFinite)) continue;
+    const x = (s.region + c[0]) * view.w, y = c[1] * view.h, rot = clamp(c[2], -T.maxAngle, T.maxAngle);
+    const r = obb({ ...s, rot }), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), x0 = s.region * view.w;
+    if (x - ex < x0 - 1 || x + ex > x0 + view.w + 1 || y - ey < -1 || y + ey > view.h + 1) continue; // off screen: its slot
+    Object.assign(s, { x, y, rot });
+  }
+}
 
 // Fly-in: a page's cards arrive one after another, slightly turned and a little above the desk, decelerating into their
 // places with a small overshoot, and each lands. Before they leave their places the page's ink is cleared and each agent
