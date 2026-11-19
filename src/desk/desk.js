@@ -119,6 +119,10 @@ const GROUPS = {
     ['panS', MOTION.travel, 0.2, 2.5, 0.05, 'pan duration s'],
     ['panEase', 'cubic', 0, 0, 0, 'pan easing'],
   ],
+  // Desk: what the desk does with cards you move.
+  Desk: [
+    ['tidyDbl', 1, 0, 1, 1, 'double-click the desk to tidy'],
+  ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
 // four corners | center: one blob under the card | ring2: max plus a second ridge farther out
@@ -1106,14 +1110,37 @@ function shove(p) {
     b.vx = b.vy = 0;
   }
 }
-// A shoved card slides out with an ease-out (chained cards a beat later) and lands, harder the further it went.
+// A shoved (or tidied) card slides out with an ease-out (chained cards a beat later) and lands, harder the further it went.
 function stepShove(s, dt) {
   const v = s.shove;
   v.t += dt;
   const e = easeOutQuart(clamp(v.t / v.dur));
   s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
+  if (v.tr !== undefined) s.rot = v.fr + (v.tr - v.fr) * e; // tidy turns it home too
   if (v.t >= v.dur) { s.shove = null; land(s, clamp(0.15 + v.dist / (300 * view.k), 0.1, 0.7)); placeDom(s); }
 }
+
+
+// ---------- tidy ----------
+// A card's home: its slot on this layout, at its slot's angle.
+const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H) * view.h, s.slot.r];
+// Tidy: every card on this page glides back home, one after another, turning to its home angle, and lands.
+function tidy() {
+  if (view.phone) return;
+  let i = 0;
+  for (const s of sources.filter((o) => o.region === page && !o.dragging && !o.flying)) {
+    const [tx, ty, tr] = homeOf(s), dist = Math.hypot(tx - s.x, ty - s.y);
+    if (dist < 0.5 && Math.abs(tr - s.rot) < 0.05) continue;
+    Object.assign(s, { vx: 0, vy: 0, released: false, key: null });
+    if (reduced || !gpu) { Object.assign(s, { x: tx, y: ty, rot: tr, shove: null }); placeDom(s); continue; } // instant
+    s.shove = { fx: s.x, fy: s.y, tx, ty, fr: s.rot, tr, dist, t: -0.05 * i++, dur: MOTION.settle };
+  }
+  if (reduced && gpu) drawStill();
+}
+addEventListener('dblclick', (e) => { // on the bare desk only, not on a card, a link, the text, or the panel
+  if (!T.tidyDbl || e.target.closest?.('.src, a, button, input, select, .tweak, .name, .tagline')) return;
+  getSelection()?.removeAllRanges(); tidy();
+});
 
 // Fly-in: a page's cards arrive one after another, slightly turned and a little above the desk, decelerating into their
 // places with a small overshoot, and each lands. Before they leave their places the page's ink is cleared and each agent
@@ -2130,7 +2157,9 @@ function tweakPanel() {
   };
   const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
   replay.onclick = () => flyIn(0, INTRO_DELAY); // starts over from bare paper
-  bar.append(copy, reset, replay);
+  const tidyB = Object.assign(document.createElement('button'), { textContent: 'tidy' });
+  tidyB.onclick = () => tidy();
+  bar.append(copy, reset, replay, tidyB);
   panel.append(bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
   const perf = panel.querySelector('.tweak-perf');
