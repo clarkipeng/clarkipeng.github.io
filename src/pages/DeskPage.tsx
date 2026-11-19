@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { deskFontsUrl } from '../data/seo';
 import html from '../desk/desk.html?raw';
 import '../desk/desk.css';
@@ -19,6 +19,9 @@ const fontSheet = () => {
     el.addEventListener('error', () => done(), { once: true });
   });
 };
+
+// The markup is set once; the desk script owns it from then on.
+const markup = { __html: html };
 
 // /desk: the desk mockup's markup and script, as is. The markup is prerendered (crawlers read it); the script draws the
 // WebGPU desk over it, and leaving the page tears it down.
@@ -45,7 +48,9 @@ const DeskPage = () => {
     };
   }, []);
 
-  return <div id="desk" className="desk" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div id="desk" className="desk" ref={ref} dangerouslySetInnerHTML={markup} />;
 };
 
-export default DeskPage;
+// Memoized: a location change (the desk's own #research hash) re-renders the shell, and must not reset the markup the
+// desk script is drawing on.
+export default memo(DeskPage);
