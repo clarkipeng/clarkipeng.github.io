@@ -25,9 +25,13 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk .name { position: absolute; margin: 0; font: 800 64px/1 Inter, sans-serif; font-optical-sizing: auto; letter-spacing: -0.03em; color: #1e2228; white-space: nowrap; }
 #desk .tagline { position: absolute; max-width: 400px; font-size: 16px; line-height: 1.5; color: #2b2b28; }
 /* Text sits on the panning page, so it uses solid ink colors; the render thins the slime behind it. */
-#desk .links { position: fixed; right: 26px; top: 22px; display: flex; gap: 14px; font-size: 14px; color: #2b2b28; }
-#desk .links a { text-decoration: none; opacity: .85; border-radius: 2px; }
-#desk .links a:hover { opacity: 1; text-decoration-line: underline; }
+#desk .links { position: fixed; right: 19px; top: 14px; display: flex; gap: 4px; color: #2b2b28; }
+/* Logo icons, ink at rest and their own brand color on hover (Kaggle's cyan deepened to 3.5:1 on the paper); 32px hit areas. */
+#desk .links a { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; opacity: .85; transition: color .15s, opacity .15s; }
+#desk .links svg { display: block; width: 18px; height: 18px; }
+#desk .links a:hover, #desk .links a:focus-visible { opacity: 1; color: var(--brand); }
+#desk .links .i-gh { --brand: #181717; } #desk .links .i-scholar { --brand: #4285f4; } #desk .links .i-linkedin { --brand: #0a66c2; }
+#desk .links .i-x { --brand: #000; } #desk .links .i-kaggle { --brand: #0b88c2; } #desk .links .i-resume { --brand: #5c5f4a; }
 
 /* Sources: the DOM keeps an invisible hit target and the accessible text; WebGPU draws the card. */
 #desk .sources { list-style: none; padding: 0; }
@@ -46,22 +50,21 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk .paper .hit { padding: 16px 18px 16px 21px; border-left: 3px solid #3a3a36; }
 #desk .paper b { display: block; font-size: 16px; line-height: 1.35; font-weight: 600; }
 #desk .paper small { display: block; margin-top: 6px; color: #6f6d66; font-size: 13px; }
-/* Back of a flipped card: the WebGPU pass draws it; the DOM keeps the text and the real link buttons in the same spots. */
+/* Back of a flipped card: the WebGPU pass draws it; the DOM keeps the text and the real links (hit areas) in the same spots. */
 #desk .back { position: absolute; inset: 0; visibility: hidden; pointer-events: none; padding: 14px; font-size: 13px; line-height: 1.4; }
 #desk .back p + p { margin-top: 6px; }
 #desk .nav .hit { cursor: pointer; }
 #desk .region-label { display: none; position: absolute; font: 600 18px Inter, sans-serif; font-optical-sizing: none; letter-spacing: -0.01em; color: #1e2228; }
 #desk.phone .region-label { display: block; }
 #desk.phone .nav { display: none; }
-#desk .back a { position: absolute; pointer-events: auto; display: flex; align-items: center; justify-content: center; border-radius: 13px;
-          font-weight: 600; font-size: 12px; text-decoration: none; outline-offset: 2px; }
+/* The back's links: the drawn text is the link; the DOM link is its hit area, with an ink wash on hover and the deep-ink focus ring. */
+#desk .back a { position: absolute; pointer-events: auto; color: transparent; text-decoration: none; border-radius: 2px; outline-offset: 1px; transition: background-color .15s; }
+#desk .back a:hover, #desk .back a:focus-visible { background: #5c5f4a1f; } /* the link's own ink at 12%: the paper darkens, the text does not */
 #desk .src.flipped .back { visibility: visible; }
-#desk.gpu .back { color: transparent; }
-#desk.gpu .back a:hover { background: #1d1d1b0f; } /* the drawn buttons get the same hover the DOM ones would */
+#desk .back { color: transparent; }
 #desk:not(.gpu) .src.flipped .hit > * { visibility: hidden; }
-#desk:not(.gpu) .back { background: #fffdf8; border-radius: 3px; }
-#desk:not(.gpu) .note .back { background: #fff4a8; }
-#desk:not(.gpu) .back a { position: static; display: inline-flex; margin: 10px 6px 0 0; padding: 5px 11px; border: 1px solid #1d1d1b40; color: #1d1d1b; }
+/* Without WebGPU the same drawn back is the .back's background (desk.js paintDomBack). */
+#desk:not(.gpu) .back { background: center / 100% 100% no-repeat; border-radius: 3px; }
 
 #desk.gpu .hit { background: none; color: transparent; }
 #desk.gpu .hit > * { opacity: 0; }
@@ -76,7 +79,7 @@ html:has(#desk.nogpu) body { background-color: #f3f1ea;
 #desk.nogpu .hit { cursor: pointer; }
 
 @media (max-width: 699px) {
-  #desk .links { position: absolute; right: auto; flex-wrap: wrap; gap: 6px 14px; }
+  #desk .links { position: absolute; right: auto; flex-wrap: wrap; gap: 4px; margin-left: -7px; }
   #desk .hit { cursor: pointer; }
 }
 /* Tweak panel (t key): quiet, small, neutral. */

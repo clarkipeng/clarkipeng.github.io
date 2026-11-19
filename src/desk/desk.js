@@ -62,6 +62,7 @@ const GROUPS = {
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s'],
+    ['backs', 'pen', 0, 0, 0, 'back style (quiet, index, pen)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
@@ -126,7 +127,7 @@ const LOOKS = {
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
     main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
 };
-const CHOICES = { look: Object.keys(LOOKS), edgeMode: EDGE_MODES, panEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
+const CHOICES = { backs: ['quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, panEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 const T = { ...DEFAULTS };
@@ -787,6 +788,7 @@ function layout() {
       Object.assign(s.img.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`,
         objectViewBox: z > 1 ? `inset(${py * (1 - v) * 100}% ${(1 - px) * (1 - v) * 100}% ${(1 - py) * (1 - v) * 100}% ${px * (1 - v) * 100}%)` : '' });
     }
+    if (!gpu && s.flipTo) paintDomBack(s); // the still fallback's open backs follow the new size
     placeDom(s);
   }
 }
@@ -953,6 +955,7 @@ function flip(s) {
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
   s.rotFrom = s.rot; s.rotTo = clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle);
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
+    if (!gpu && s.flipTo) paintDomBack(s);
     s.flip = s.emit = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
     if (gpu) drawStill();
   }
@@ -1255,53 +1258,165 @@ function drawCard(s, S) {
   return { canvas: c, mediaPx };
 }
 
-// Back of a card: its title, the details, and link buttons along the bottom, in one type scale on every card, on the
-// card's own size (b: the card's box; need is the height its copy takes, which fitCard makes room for). Rects are CSS
-// px, so the DOM can put the real links in the same places.
-const BACK = { pad: 14, size: 13, lh: 13 * 1.4, bf: 12, bh: 26, bp: 22, gap: 6 };
+// ---------- card backs ----------
+// The back of a card, in one of three styles (?backs=, or the panel):
+//   quiet: type alone; links are ink text with a thin underline. The sticky note lists its links with small icons.
+//   index: an index card: a label strip, a header rule, and body lines on faint rules. The note is ruled and handwritten.
+//   pen:   quiet cards with a hand-drawn underline under each link; the note's links are handwritten in Caveat.
+// Every back uses one type scale and an 8px spacing grid, and its first baseline sits 32px below its top edge. Material
+// follows the front: paper cards stay paper, the polaroid's back is matte photo-paper stock, the note stays yellow.
+// Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
+const BACK_STYLES = {
+  quiet: { underline: 'line', note: 'icons' },
+  index: { underline: 'line', note: 'ruled', ruled: true },
+  pen: { underline: 'pen', note: 'pen' },
+};
+const INK = '#a5a970', INK_DEEP = '#5c5f4a', NOTE_INK = '#2a2a26';
+const STOCK = { photo: '#fffdf8', paper: '#fffdf8', polaroid: '#f5f0e4', note: '#fff4a8' };
+const TYPE = {
+  title: { font: '600 14px Inter', lh: 20, color: '#1d1d1b' },
+  label: { font: '400 12px Inter', lh: 16, color: '#6f6d66' },
+  body: { font: '400 13px Inter', lh: 20, color: '#3d3c38' },
+  link: { font: '500 13px Inter', color: INK_DEEP },
+  noteLink: { font: '500 14px Inter', color: NOTE_INK },
+  noteHand: { font: '500 22px Caveat', color: NOTE_INK },
+};
+const BK = { pad: 16, first: 32, row: 24, gap: 16, bottom: 22, strip: 32 };
+// Small monochrome marks for the note's links (quiet), by link text; 24-unit boxes except GitHub (16).
+const ICONS = {
+  GitHub: [16, 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z'],
+  Scholar: [24, 'M5.242 13.769L0 9.5 12 0l12 9.5-5.242 4.269C17.548 11.249 14.978 9.5 12 9.5c-2.977 0-5.548 1.748-6.758 4.269zM12 10a7 7 0 1 0 0 14 7 7 0 0 0 0-14z'],
+  LinkedIn: [24, 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z'],
+  X: [24, 'M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z'],
+  Kaggle: [24, 'M18.825 23.859c-.022.092-.117.141-.281.141h-3.139c-.187 0-.351-.082-.492-.248l-5.178-6.589-1.448 1.374v5.111c0 .235-.117.352-.351.352H5.505c-.236 0-.354-.117-.354-.352V.353c0-.233.118-.353.354-.353h2.431c.234 0 .351.12.351.353v14.343l6.203-6.272c.165-.165.33-.246.495-.246h3.239c.144 0 .236.06.281.18.046.149.034.255-.036.315l-6.555 6.344 6.836 8.507c.095.104.117.208.075.339z'],
+  Resume: [24, 'M6 1.5h8.5L20 7v14a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 4.5 21V3A1.5 1.5 0 0 1 6 1.5zm7.5 1.8V8h4.7zM8 12v1.6h8V12zm0 4v1.6h8V16z'],
+};
+const backStyle = () => BACK_STYLES[T.backs] || BACK_STYLES.pen;
+
+// A link: its text at (x, base) and its hit area (a 24px row, 4px wider than the text on each side).
+const linkAt = (a, x, base, tw, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
+
 function backLayout(s, b = s) {
-  const { pad, size, lh, bf, bh, bp, gap } = BACK, m = measure(), w = b.w;
-  const title = s.backTitle ?? (s.kind === 'note' ? '' : b.title || b.lines?.join(' ') || '');
-  // Title, then each paragraph after a half-line gap.
+  const st = backStyle(), w = b.w, m = measure(), { pad, row } = BK;
+  if (s.kind === 'note') {
+    // A tidy list, one link per line, from the same first baseline as every other back.
+    const hand = st.note !== 'icons', f = hand ? TYPE.noteHand : TYPE.noteLink, x0 = pad + (hand ? 0 : 20);
+    m.font = f.font;
+    const links = s.backLinks.map((a, i) => linkAt(a, x0, BK.first + i * row, m.measureText(a.textContent).width));
+    return { st, lines: [], links, w, h: b.h, need: BK.first + (links.length - 1) * row + BK.bottom };
+  }
+  const title = s.backTitle ?? (b.title || b.lines?.join(' ') || ''), label = b.sub || '';
+  const strip = st.ruled && label && s.kind !== 'polaroid'; // index: the label gets its own strip along the top
   const lines = [];
-  let y = pad;
-  const add = (t, wgt, para) => { if (lines.length && para) y += lh * 0.5; for (const l of wrapLines(t, w - 2 * pad, `${wgt} ${size}px Inter`)) { lines.push([l, wgt, y]); y += lh; } };
-  if (title) add(title, 600, false);
-  s.backParas.forEach((t) => add(t, 400, true));
-  // Buttons in reading order, left to right and wrapping down; the block sits at the bottom (at the top on a back with no
-  // text), at least 8px below the text.
-  m.font = `600 ${bf}px Inter`;
-  const buttons = [];
-  let bx = pad, row = 0;
+  let y = BK.first + (strip ? BK.strip : 0) - TYPE.title.lh, gapNext = 0;
+  const add = (t, kind) => {
+    const f = TYPE[kind];
+    y += gapNext;
+    wrapLines(t, w - 2 * pad, f.font).forEach((l, i) => { y += i || kind !== 'label' ? f.lh : 18; lines.push({ t: l, f, y }); });
+  };
+  if (title) add(title, 'title');
+  if (label && !strip) add(label, 'label');
+  // Paragraphs: 8px apart; on ruled cards each one just starts on the next rule.
+  let ruleTop = null;
+  if (strip || (st.ruled && s.kind !== 'polaroid')) { ruleTop = y + 10; y = ruleTop + 15 - TYPE.body.lh; }
+  gapNext = ruleTop == null ? 8 : 0;
+  s.backParas.forEach((t) => { add(t, 'body'); gapNext = ruleTop == null ? 8 : 0; });
+  // Links: ink text in rows along the bottom, the last baseline 22px above the bottom edge (top, on a back with no text).
+  m.font = TYPE.link.font;
+  const rows = [[]];
+  let x = pad;
   for (const a of s.backLinks) {
-    const bw = Math.ceil(m.measureText(a.textContent).width) + bp;
-    if (bx + bw > w - pad && bx > pad) { bx = pad; row++; }
-    buttons.push({ a, x: bx, y: row * (bh + gap), w: bw, h: bh }); bx += bw + gap;
+    const tw = m.measureText(a.textContent).width;
+    if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; }
+    rows.at(-1).push([a, x, tw]); x += tw + BK.gap;
   }
-  const blockH = buttons.length ? (row + 1) * bh + row * gap : 0;
-  const need = Math.ceil(lines.length ? y + 8 + blockH + pad : pad + blockH + pad), h = b.h;
-  const by = lines.length ? h - pad - blockH : pad;
-  for (const bt of buttons) bt.y += by;
-  return { lines, buttons, w, h, need };
+  // Ruled: the links sit on rules too (at least one empty rule above them), and their rule darkens as the underline.
+  const pitch = ruleTop == null ? row : TYPE.body.lh, lift = ruleTop == null ? 32 : 2 * TYPE.body.lh;
+  const need = Math.ceil((lines.length ? y : 0) + lift + BK.bottom + (rows.length - 1) * pitch);
+  let base0 = b.h - BK.bottom - (rows.length - 1) * pitch;
+  if (ruleTop != null) base0 = ruleTop + 15 + Math.floor((base0 - ruleTop - 15) / pitch) * pitch;
+  const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * pitch, tw, pitch)));
+  return { st, lines, links, w, h: b.h, need, strip: strip ? label : null, ruleTop, ruleEnd: base0 + (rows.length - 1) * pitch + 5 };
 }
+
+// Deterministic noise, so the atlas looks the same on every build.
+function rng(seed) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
+// Matte stock: a faint, fine grain (photo-paper backs and the note).
+function grain(x, cw, ch, amt, seed) {
+  const img = x.getImageData(0, 0, cw, ch), d = img.data, r = rng(seed);
+  for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * amt; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  x.putImageData(img, 0, 0);
+}
+// A hand-drawn underline: a slightly wavering, slightly tilted stroke that starts and ends a touch past the word.
+function penLine(x, x0, x1, y, seed, width) {
+  const r = rng(seed * 7919 + 17), tilt = (r() - 0.5) * 1.2, ph = r() * 6.28, n = Math.max(4, Math.round((x1 - x0) / 6));
+  x.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, px = x0 - 2 + (x1 - x0 + 3) * u;
+    const py = y + tilt * (u - 0.5) + Math.sin(ph + u * 5) * 0.45;
+    i ? x.lineTo(px, py) : x.moveTo(px, py);
+  }
+  x.lineWidth = width; x.lineCap = 'round'; x.lineJoin = 'round'; x.stroke();
+}
+
 function drawBack(s, S) {
-  const { lines, buttons, w, h } = backLayout(s), { size, bf, bh } = BACK;
-  const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
-  x.fillStyle = s.kind === 'note' ? '#fff4a8' : '#fffdf8'; x.fillRect(0, 0, c.width, c.height);
+  const L = backLayout(s), { st, lines, links, w, h } = L, { pad } = BK;
+  const cw = Math.ceil(w * S), chh = Math.ceil(h * S);
+  const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true });
+  x.fillStyle = STOCK[s.kind]; x.fillRect(0, 0, cw, chh);
+  if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
+  if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
+  if (s.kind === 'note') { x.fillStyle = '#f7ea98'; x.fillRect(0, 0, w, 22); } // the same sticky strip as the front
   x.textBaseline = 'alphabetic';
-  for (const [t, wgt, y] of lines) { x.font = `${wgt} ${size}px Inter`; x.fillStyle = wgt === 600 ? '#1d1d1b' : '#3d3c38'; x.fillText(t, BACK.pad, y + size - 2); }
-  for (const b of buttons) {
-    x.beginPath(); x.roundRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, b.h / 2);
-    x.strokeStyle = '#1d1d1b40'; x.lineWidth = 1; x.stroke();
-    x.font = `600 ${bf}px Inter`; x.fillStyle = '#1d1d1b'; x.textAlign = 'center';
-    x.fillText(b.a.textContent, b.x + b.w / 2, b.y + bh / 2 + bf * 0.36); x.textAlign = 'left';
+  // index: the label strip, the header rule, and faint rules under every line to the bottom of the card
+  if (L.strip) {
+    x.fillStyle = '#f3efe3'; x.fillRect(0, 0, w, BK.strip);
+    x.fillStyle = '#1d1d1b14'; x.fillRect(0, BK.strip - 1, w, 1);
+    x.font = TYPE.label.font; x.fillStyle = TYPE.label.color; x.fillText(L.strip, pad, 21);
   }
-  return { canvas: c, buttons, size, w, h };
+  if (L.ruleTop != null) {
+    x.fillStyle = '#5c5f4a99'; x.fillRect(pad - 4, L.ruleTop, w - 2 * pad + 8, 1);
+    x.fillStyle = '#a5a97047';
+    for (let ry = L.ruleTop + TYPE.body.lh; ry <= L.ruleEnd; ry += TYPE.body.lh) x.fillRect(pad - 4, ry, w - 2 * pad + 8, 1);
+  }
+  if (s.kind === 'note' && st.note === 'ruled') {
+    x.fillStyle = '#c9b95e66';
+    for (let ry = BK.first + 5; ry < h - 6; ry += BK.row) x.fillRect(0, ry, w, 1);
+  }
+  for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
+  links.forEach((k, i) => {
+    const t = k.a.textContent;
+    if (s.kind === 'note') {
+      const hand = st.note !== 'icons';
+      x.font = hand ? TYPE.noteHand.font : TYPE.noteLink.font; x.fillStyle = NOTE_INK;
+      x.fillText(t, k.tx, k.base);
+      if (!hand && ICONS[t]) {
+        const [vb, d] = ICONS[t], sz = 12;
+        x.save(); x.translate(pad, k.base - 11); x.scale(sz / vb, sz / vb); x.fillStyle = NOTE_INK; x.fill(new Path2D(d)); x.restore();
+      }
+      if (st.note === 'pen') { x.strokeStyle = '#8f9360'; penLine(x, k.tx, k.tx + k.tw, k.base + 4, i + 1, 1.3); }
+      else if (st.note === 'icons') { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
+      return;
+    }
+    x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(t, k.tx, k.base);
+    if (st.underline === 'pen') { x.strokeStyle = '#8f9360'; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15); }
+    else if (L.ruleTop == null) { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
+    else { x.fillStyle = INK_DEEP; x.fillRect(k.tx, k.base + 5, k.tw, 1); } // the link's stretch of its rule
+  });
+  return { canvas: c, links, w, h };
 }
-// The DOM links sit exactly on the drawn buttons.
-function placeBackLinks(s, buttons) {
-  for (const b of buttons) Object.assign(b.a.style, { left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' });
+// The DOM links sit exactly on the drawn ones, as their hit areas.
+function placeBackLinks(s, links) {
+  for (const k of links) Object.assign(k.a.style, { left: k.x + 'px', top: k.y + 'px', width: k.w + 'px', height: k.h + 'px' });
+}
+// Without WebGPU the DOM shows the same drawn back, as the .back's background, with the links over it.
+function paintDomBack(s) {
+  const S = Math.min(3, devicePixelRatio || 1), { canvas: oc, links } = drawBack(s, S);
+  const c = Object.assign(document.createElement('canvas'), { width: oc.width, height: oc.height });
+  c.getContext('2d').drawImage(oc, 0, 0);
+  s.backEl.style.backgroundImage = `url(${c.toDataURL()})`;
+  placeBackLinks(s, links);
 }
 
 // ---------- GPU ----------
@@ -1467,11 +1582,11 @@ async function buildAtlas(g) {
     src.uv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     src.mediaUV = mediaPx ? [mediaPx.x / (src.w * S), mediaPx.y / (src.h * S), (mediaPx.x + mediaPx.w) / (src.w * S), (mediaPx.y + mediaPx.h) / (src.h * S)] : [0, 0, 0, 0];
   });
-  backs.forEach(({ src, canvas: c, buttons }, i) => {
+  backs.forEach(({ src, canvas: c, links }, i) => {
     const p = places[drawn.length + i];
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
-    placeBackLinks(src, buttons);
+    placeBackLinks(src, links);
   });
   shared.atlas = atlas;
 }
@@ -1807,7 +1922,8 @@ function tweakPanel() {
       applyLook(v); sync();
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
-    if (RESEED.includes(k) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
+    // a back style can change card sizes, so it rebuilds the desk too
+    if ((RESEED.includes(k) || k === 'backs') && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
   };
   for (const [name, params] of Object.entries(GROUPS)) {
     const group = Object.assign(document.createElement('details'), { open: name === 'Agents' || name === 'Card outlines' });
