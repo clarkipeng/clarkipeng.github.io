@@ -124,6 +124,7 @@ const GROUPS = {
     ['tidyDbl', 1, 0, 1, 1, 'double-click the desk to tidy'],
     ['remember', 1, 0, 1, 1, 'remember where cards were left'],
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
+    ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -933,7 +934,10 @@ for (const s of sources) {
     if (s.flying) return;
     s.nav ? navigate(s) : flip(s);
   });
-  hit.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.nav ? navigate(s) : flip(s); } });
+  hit.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.nav ? navigate(s) : flip(s); }
+    else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging) { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
+  });
   hit.addEventListener('pointerdown', (e) => {
     if (view.phone || !gpu || reduced || e.button !== 0 || s.flying) return; // reduced motion: cards stay put (a click still flips)
     const press = { x: deskX(e), y: deskY(e), ox: s.x - deskX(e), oy: s.y - deskY(e), moved: false };
@@ -941,7 +945,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = null; s.bounced = s.edgePen = false; s.z = ++topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.bounced = s.edgePen = false; s.z = ++topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -991,6 +995,7 @@ function stepCards(dt) {
   for (const s of sources) {
     if (view.phone && s.nav) continue; // hidden on phones, parked off the desk
     if (s.shove) stepShove(s, dt);
+    else if (s.kb) stepKey(s, dt); // s.kb: where the keys are taking it
     else if (!s.dragging && !s.flying) {
       const f = Math.exp(-dt * 7);
       s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= f; s.vy *= f;
@@ -1002,7 +1007,7 @@ function stepCards(dt) {
         if (s.y < my || s.y > view.docH - my) { s.y = clamp(s.y, my, view.docH - my); s.vy *= -0.4; }
       }
     }
-    const liftT = s.dragging ? 1 : s.hoverOn ? 0.1 : 0;
+    const liftT = s.dragging ? 1 : s.keyHeld ? 0.3 : s.hoverOn ? 0.1 : 0;
     s.liftV += (170 * (liftT - s.lift) - 17 * s.liftV) * dt; s.lift = Math.max(0, s.lift + s.liftV * dt);
     let tx = 0, ty = 0;
     if (s.dragging) { tx = s.vx * 0.00045; ty = s.vy * 0.00045; const m = Math.hypot(tx, ty); if (m > maxTilt) { tx *= maxTilt / m; ty *= maxTilt / m; } }
@@ -1025,7 +1030,7 @@ function stepCards(dt) {
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
     s.burst *= Math.exp(-dt * 7);
-    if (s.released && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
+    if (s.released && !s.kb && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
       s.released = false; land(s, s.bounced ? Math.min(s.dropS, 0.45) : s.dropS); s.bounced = false; shove(s); } // touched down, shoving the cards under it
   }
 }
@@ -1043,6 +1048,27 @@ function edgeSpring(s, x0, dt) {
   if (py) s.vy = push(s.vy, py);
   if (px || py) s.bounced = true;
   s.edgePen = Math.abs(px) + Math.abs(py) > 0.5; // it touches down only once it is back inside
+}
+
+
+// Keyboard moving: arrow keys nudge the focused card (Shift for bigger steps). It lifts a little and follows the keys
+// closely; once they stop it comes down with the same settle and shove as a drop. With reduced motion it just moves.
+const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+function nudge(s, [dx, dy], big) {
+  const step = (big ? 40 : 8) * view.k, x0 = s.region * view.w, r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), m = 12 * view.k;
+  const k = s.kb || { tx: s.shove ? s.shove.tx : s.x, ty: s.shove ? s.shove.ty : s.y };
+  k.tx = clamp(k.tx + dx * step, Math.min(x0 + ex + m, s.x), Math.max(x0 + view.w - ex - m, s.x)); // stays on screen
+  k.ty = clamp(k.ty + dy * step, Math.min(ey + m, s.y), Math.max(view.h - ey - m, s.y));
+  Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, dropS: 0.25 });
+  if (s.z !== topZ) s.z = ++topZ;
+  clearTimeout(s.keyTimer);
+  s.keyTimer = setTimeout(() => { s.keyHeld = false; if (reduced) { s.kb = null; shove(s); saveDesk(); drawStill(); } }, 300);
+  if (reduced) { Object.assign(s, { x: k.tx, y: k.ty }); placeDom(s); drawStill(); } else s.released = true;
+}
+function stepKey(s, dt) {
+  const k = s.kb, e = 1 - Math.exp(-dt / 0.06);
+  s.x += (k.tx - s.x) * e; s.y += (k.ty - s.y) * e;
+  if (!s.keyHeld && Math.hypot(k.tx - s.x, k.ty - s.y) < 0.5) Object.assign(s, { x: k.tx, y: k.ty, kb: null });
 }
 
 // ---------- landing ----------
@@ -1129,6 +1155,7 @@ function shove(p) {
   for (const [b, [tx, ty]] of pos) {
     const dist = Math.hypot(tx - b.x, ty - b.y);
     if (b === p || dist < 0.5) continue;
+    if (reduced) { Object.assign(b, { x: tx, y: ty }); placeDom(b); continue; } // no motion: it is just out of the way
     b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: MOTION.respond * (0.75 + 0.75 * clamp(dist / (250 * view.k))) };
     b.vx = b.vy = 0;
   }
@@ -2034,7 +2061,7 @@ function frame(now) {
   }
   qualityCheck(dt);
   if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
-  for (const s of sources) if (s.dragging || s.shove || s.lift > 0.001 || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
+  for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
   if (hud && clock.frame % 15 === 0) {
     const iv = [...stats.intervals].sort((a, b) => a - b);
