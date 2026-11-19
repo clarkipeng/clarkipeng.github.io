@@ -244,8 +244,8 @@ export const SpectralLightGadget = () => {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const usage = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
-    const textureUsage = (globalThis as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
+    const usage = (globalThis as unknown as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
+    const textureUsage = (globalThis as unknown as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
     const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown>; getPreferredCanvasFormat: () => string } }).gpu;
     if (!isDark || !canvas || !gpu || !usage || !textureUsage) return;
 

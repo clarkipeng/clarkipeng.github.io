@@ -2,6 +2,7 @@ export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
   title: 'CS at UCLA, previously CTO at',
+  tagline: 'CS at UCLA. I build simulations, games, and ways to check whether AI models understand the physical world.',
   company: { name: 'Catapult', url: 'https://playcatapult.io' },
   website: 'https://clarkipeng.github.io',
   resumeUrl: '/files/ClarkPengResearchResume.pdf',
@@ -51,6 +52,13 @@ export const navigation = [
   { label: 'Gadgets', href: '/portfolio' },
   { label: 'Papers', href: '/publications' },
   { label: 'Resume', href: '/resume' },
+];
+
+// The short version, on the back of the photo on the desk.
+export const shortBio = [
+  'CS at UCLA, previously CTO at Catapult.',
+  'My research is on evaluating and training generative models.',
+  'I co-run ACM AI at UCLA, compete on Kaggle (top 1%), and build graphics and simulation projects.',
 ];
 
 export const aboutParagraphs = [

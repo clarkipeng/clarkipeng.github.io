@@ -124,9 +124,9 @@ const SETTLE_MS = 600;
 const MAX_PARTICLE_BYTES = PARTICLES * 48;
 const PARTICLE_SEED_STRIDE_BYTES = PARTICLES * 16;
 const PARTICLE_SEED_BYTES = PARTICLE_SEED_STRIDE_BYTES * 2;
-const BUFFER = (globalThis as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
-const TEXTURE = (globalThis as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
-const MAP_MODE = (globalThis as { GPUMapMode?: Record<string, number> }).GPUMapMode;
+const BUFFER = (globalThis as unknown as { GPUBufferUsage?: Record<string, number> }).GPUBufferUsage;
+const TEXTURE = (globalThis as unknown as { GPUTextureUsage?: Record<string, number> }).GPUTextureUsage;
+const MAP_MODE = (globalThis as unknown as { GPUMapMode?: Record<string, number> }).GPUMapMode;
 
 const colors: Record<ShaderTheme, [number, number, number]> = {
   light: [251 / 255, 251 / 255, 250 / 255],
