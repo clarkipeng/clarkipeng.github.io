@@ -77,6 +77,7 @@ const GROUPS = {
     ['landFly', 0.95, 0.3, 2.5, 0.05, 'fly duration s'],
     ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
+    ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
     ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
     ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
   ],
@@ -919,7 +920,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.z = ++topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = null; s.z = ++topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -966,7 +967,8 @@ function stepCards(dt) {
   const maxTilt = (T.tilt * Math.PI) / 180;
   for (const s of sources) {
     if (view.phone && s.nav) continue; // hidden on phones, parked off the desk
-    if (!s.dragging && !s.flying) {
+    if (s.shove) stepShove(s, dt);
+    else if (!s.dragging && !s.flying) {
       const f = Math.exp(-dt * 7);
       s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= f; s.vy *= f;
       const mx = s.w * 0.25, my = s.h * 0.25;
@@ -997,7 +999,7 @@ function stepCards(dt) {
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
     s.burst *= Math.exp(-dt * 7);
-    if (s.released && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; land(s, s.dropS); } // touched down
+    if (s.released && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; land(s, s.dropS); shove(s); } // touched down, shoving the cards under it
   }
 }
 
@@ -1009,6 +1011,91 @@ function land(s, strength) {
   const k = clamp(strength, 0.1, 1.5);
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: Math.min(1, k), squashV: 0 });
   if (s.rel < 0) s.rel = 0;
+}
+
+
+// ---------- shove ----------
+// A dropped card shoves the cards it comes down on out of its way. Each is pushed straight away from its pusher's center
+// just far enough to clear it (further after a throw), and a pushed card can push the next. Targets are solved once, at
+// touch-down, kept on screen and clear of the name, tagline, and links; then each card slides there and lands softly.
+const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1];
+function obb(s, x = s.x, y = s.y) {
+  const a = (s.rot * Math.PI) / 180, c = Math.cos(a), n = Math.sin(a);
+  return { x, y, hw: s.w / 2, hh: s.h / 2, u: [c, n], v: [-n, c] };
+}
+const reach = (r, n) => r.hw * Math.abs(dot2(r.u, n)) + r.hh * Math.abs(dot2(r.v, n)); // half extent along axis n
+// How far rectangle b must move along unit d to clear rectangle a by pad (separating axes); 0 if they do not overlap.
+function clearance(a, b, d, pad) {
+  let t = Infinity;
+  for (const n of [a.u, a.v, b.u, b.v]) {
+    const ca = a.x * n[0] + a.y * n[1], ra = reach(a, n) + pad, cb = b.x * n[0] + b.y * n[1], rb = reach(b, n);
+    if (cb - rb >= ca + ra || cb + rb <= ca - ra) return 0;
+    const dn = dot2(d, n);
+    if (dn > 1e-3) t = Math.min(t, (ca + ra - cb + rb) / dn);
+    else if (dn < -1e-3) t = Math.min(t, (cb + rb - ca + ra) / -dn);
+  }
+  return t;
+}
+// Boxes no shoved card may end on (desk px): the name, the tagline, and the links.
+function keepOut(x0) {
+  const p = 10 * view.k, out = [nameEl, taglineEl].map((el) => ({ l: el.offsetLeft, t: el.offsetTop, r: el.offsetLeft + el.offsetWidth, b: el.offsetTop + el.offsetHeight }));
+  const lb = linksEl.getBoundingClientRect();
+  out.push({ l: x0 + lb.left, t: lb.top, r: x0 + lb.right, b: lb.bottom });
+  return out.map((b) => ({ l: b.l - p, t: b.t - p, r: b.r + p, b: b.b + p }));
+}
+// A shoved card's spot, moved fully on screen (unless it already hung off) and then out of the text the shortest way.
+function placeable(s, x, y, x0, boxes) {
+  const r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), m = 12 * view.k;
+  const onScreen = (px, py) => px - ex >= x0 + m - 0.5 && px + ex <= x0 + view.w - m + 0.5 && py - ey >= m - 0.5 && py + ey <= view.h - m + 0.5;
+  x = clamp(x, Math.min(x0 + ex + m, s.x), Math.max(x0 + view.w - ex - m, s.x));
+  y = clamp(y, Math.min(ey + m, s.y), Math.max(view.h - ey - m, s.y));
+  for (const b of boxes) {
+    if (Math.min(x + ex, b.r) <= Math.max(x - ex, b.l) || Math.min(y + ey, b.b) <= Math.max(y - ey, b.t)) continue;
+    const opts = [[b.r + ex, y], [b.l - ex, y], [x, b.b + ey], [x, b.t - ey]].filter(([px, py]) => onScreen(px, py));
+    if (opts.length) [x, y] = opts.reduce((p, q) => (Math.hypot(q[0] - x, q[1] - y) < Math.hypot(p[0] - x, p[1] - y) ? q : p));
+  }
+  return [x, y];
+}
+function shove(p) {
+  if (!T.shove || view.phone) return;
+  const x0 = p.region * view.w, pad = 6 * view.k, boxes = keepOut(x0);
+  const m = T.shove * (1 + 0.8 * clamp(p.dropS - 0.25)); // dropS - 0.25 is the release speed over landThrow
+  const at = (s) => (s.shove ? [s.shove.tx, s.shove.ty] : [s.x, s.y]);
+  const others = sources.filter((s) => s !== p && s.region === p.region && !s.dragging && !s.flying);
+  const pos = new Map([[p, [p.x + p.vx / 7, p.y + p.vy / 7]]]), depth = new Map([[p, 0]]); // p's resting spot
+  let front = [p];
+  for (let it = 0; it < 5 && front.length; it++) { // chains: whoever moved this pass pushes on the next
+    const next = new Set();
+    for (const a of front) {
+      const [ax, ay] = pos.get(a), A = obb(a, ax, ay);
+      for (const b of others) {
+        if (b === a) continue;
+        let [bx, by] = pos.get(b) || at(b);
+        const l = Math.hypot(bx - ax, by - ay), d = l > 1e-3 ? [(bx - ax) / l, (by - ay) / l] : [0, 1];
+        const t = clearance(A, obb(b, bx, by), d, pad);
+        if (!t || !Number.isFinite(t)) continue;
+        [bx, by] = placeable(b, bx + d[0] * t * m, by + d[1] * t * m, x0, boxes);
+        pos.set(b, [bx, by]);
+        if (!depth.has(b)) depth.set(b, depth.get(a) + 1);
+        next.add(b);
+      }
+    }
+    front = [...next];
+  }
+  for (const [b, [tx, ty]] of pos) {
+    const dist = Math.hypot(tx - b.x, ty - b.y);
+    if (b === p || dist < 0.5) continue;
+    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: 0.3 + 0.3 * clamp(dist / (250 * view.k)) };
+    b.vx = b.vy = 0;
+  }
+}
+// A shoved card slides out with an ease-out (chained cards a beat later) and lands, harder the further it went.
+function stepShove(s, dt) {
+  const v = s.shove;
+  v.t += dt;
+  const e = easeOutQuart(clamp(v.t / v.dur));
+  s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
+  if (v.t >= v.dur) { s.shove = null; land(s, clamp(0.15 + v.dist / (300 * view.k), 0.1, 0.7)); placeDom(s); }
 }
 
 // Fly-in: a page's cards arrive one after another, slightly turned and a little above the desk, decelerating into their
@@ -1060,6 +1147,7 @@ function stepFlights(dt) {
 // Puts every card still in the air straight into its place (a new layout, or the page changed again mid-flight).
 function endFlights() {
   for (const s of sources) {
+    if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k) continue;
     Object.assign(s, { x: k.x, y: k.y, rot: k.r, flyLift: 0, flying: false, fly: null, rel: 1e3 });
@@ -1841,7 +1929,7 @@ function frame(now) {
   }
   qualityCheck(dt);
   if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
-  for (const s of sources) if (s.dragging || s.lift > 0.001 || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
+  for (const s of sources) if (s.dragging || s.shove || s.lift > 0.001 || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
   if (hud && clock.frame % 15 === 0) {
     const iv = [...stats.intervals].sort((a, b) => a - b);
