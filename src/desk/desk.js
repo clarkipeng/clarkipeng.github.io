@@ -1408,7 +1408,9 @@ function writeUniforms(g, sm = sim) {
     vu = coverRect((el.videoWidth || 16) / (el.videoHeight || 9), vs.media.w / vs.media.h, vs.frame);
   }
   { const now = performance.now(), dt = Math.min(0.1, (now - (focusAt || now)) / 1000); focusAt = now;
-    focus += ((hovered && !hovered.dragging ? 1 : 0) - focus) * (1 - Math.exp(-dt / Math.max(0.01, T.focusS / 3))); }
+    // While any card is flipping, the background snaps back toward sharp; afterwards it follows the hover again. Same smoothing.
+    const flipping = sources.some((o) => o.flip !== o.flipTo);
+    focus += ((hovered && !hovered.dragging && !flipping ? 1 : 0) - focus) * (1 - Math.exp(-dt / Math.max(0.01, T.focusS / 3))); }
   U.set([s.W, s.H, activeAgents(s), d,
     T.speed / 60 * d, T.deposit * Q.depMul, T.decay, T.diffuse,
     T.sd * d, T.sa, T.turn, 0,
