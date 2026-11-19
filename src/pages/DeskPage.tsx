@@ -3,14 +3,16 @@ import { deskFontsUrl } from '../data/seo';
 import html from '../desk/desk.html?raw';
 import '../desk/desk.css';
 
-// The desk measures its note text in Caveat, so the font's stylesheet must be in before the desk starts.
+// The desk measures its text in its own fonts, so their stylesheet must be in before the desk starts. It stands in for
+// the site's Inter sheet (the prerendered /desk already has it); two Inter sheets would fight over the same faces.
 const fontSheet = () => {
-  let link = document.querySelector<HTMLLinkElement>(`link[href="${deskFontsUrl}"]`);
-  if (link?.sheet) return Promise.resolve();
+  let link = document.querySelector<HTMLLinkElement>('link[href^="https://fonts.googleapis.com/css2?family=Inter"]');
+  if (link?.getAttribute('href') === deskFontsUrl && link.sheet) return Promise.resolve();
   if (!link) {
-    link = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: deskFontsUrl });
+    link = Object.assign(document.createElement('link'), { rel: 'stylesheet' });
     document.head.append(link);
   }
+  if (link.getAttribute('href') !== deskFontsUrl) link.href = deskFontsUrl;
   const el = link;
   return new Promise<void>((done) => {
     el.addEventListener('load', () => done(), { once: true });

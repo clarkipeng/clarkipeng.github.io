@@ -1255,8 +1255,11 @@ function createSim(g, page) {
   mx.fillStyle = '#000'; mx.fillRect(0, 0, CW, CH);
   mx.globalCompositeOperation = 'lighter';
   if (page === 0) {
-    mx.font = `700 ${nameBox.size * dev}px Inter`;
-    mx.letterSpacing = `${-0.035 * nameBox.size * dev}px`; // matches the DOM name (Inter, -0.035em)
+    // The DOM name's own weight and tracking, so the two never drift; both sizes are past Inter's 32px optical size,
+    // so the canvas gets the same display cut.
+    const ns = getComputedStyle(nameEl);
+    mx.font = `${ns.fontWeight} ${nameBox.size * dev}px Inter`;
+    mx.letterSpacing = `${parseFloat(ns.letterSpacing) * dev}px`;
     const drawName = (color, blur) => { mx.filter = blur ? `blur(${blur * dev}px)` : 'none'; mx.fillStyle = color; mx.fillText('Clark Peng', nameBox.x * dev, nameBox.baseline * dev); };
     drawName('#f00', 0);
     drawName('#00f', 10); drawName('#00f', 10);
@@ -1788,7 +1791,7 @@ async function main() {
   for (const s of sources) if (!s.still && clipLists[s.key]?.poster) s.img.src = '/desk-media/' + clipLists[s.key].poster; // an explicit still wins
   layout(); // the startup still uses the final layout right away
   panTo(regionFromHash(), true);
-  const fontsReady = Promise.all([document.fonts.load('700 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
+  const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
   await Promise.race([fontsReady, new Promise((r) => setTimeout(r, 3000))]);
   mark('fonts');
   layout(); // card sizes measured with the real fonts

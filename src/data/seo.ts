@@ -38,8 +38,12 @@ export const pages: PageMeta[] = [
   },
 ];
 
-// The desk's note card is set in Caveat; Inter comes from index.html.
-export const deskFontsUrl = 'https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&display=swap';
+// Each page loads one font stylesheet; two Inter sheets would fight over the same faces. The site's is the default in
+// index.html. The desk's adds Inter's optical-size axis (the name takes the display cut) and Caveat for its notes.
+const siteFontsUrl = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
+export const deskFontsUrl =
+  'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Caveat:wght@500;700&display=swap';
+const fontsUrl = (path: string) => (path === '/desk' ? deskFontsUrl : siteFontsUrl);
 
 export const pageMeta = (path: string) => pages.find((page) => page.path === path) ?? pages[0];
 
@@ -99,7 +103,8 @@ export const renderHead = (path: string) => {
     <meta property="og:image:alt" content="${siteConfig.name}" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:site" content="@clarkipeng" />
-    <script type="application/ld+json">${json}</script>${path === '/desk' ? `\n    <link rel="stylesheet" href="${deskFontsUrl.replace(/&/g, '&amp;')}" />` : ''}`;
+    <script type="application/ld+json">${json}</script>
+    <link rel="stylesheet" href="${escapeHtml(fontsUrl(path))}" />`;
 };
 
 export const llmsText = () => {
