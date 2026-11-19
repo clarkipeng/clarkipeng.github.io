@@ -1155,7 +1155,7 @@ function tidy() {
   for (const s of sources.filter((o) => o.region === page && !o.dragging && !o.flying)) {
     const [tx, ty, tr] = homeOf(s), dist = Math.hypot(tx - s.x, ty - s.y);
     if (dist < 0.5 && Math.abs(tr - s.rot) < 0.05) continue;
-    Object.assign(s, { vx: 0, vy: 0, released: false, key: null });
+    Object.assign(s, { vx: 0, vy: 0, released: false, kb: null });
     if (reduced || !gpu) { Object.assign(s, { x: tx, y: ty, rot: tr, shove: null }); placeDom(s); continue; } // instant
     s.shove = { fx: s.x, fy: s.y, tx, ty, fr: s.rot, tr, dist, t: -0.05 * i++, dur: MOTION.settle };
   }
