@@ -18,6 +18,16 @@ const MAX = 16;
 const REF_W = 1440, REF_H = 900, PHONE = 700;
 const STEP = 1 / 60;
 const PAPER = [0xf3, 0xf1, 0xea];
+// Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
+// custom properties (--paper, --stock, ...), so the DOM still and no-WebGPU fallback match the GPU drawing.
+const TOK = {
+  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', note: '#fff4a8', noteStrip: '#f7ea98',
+  text: '#1d1d1b', text2: '#2b2b28', body: '#3d3c38', muted: '#6f6d66', // muted is AA (4.5:1) on paper and every stock
+  ink: '#a5a970', inkDeep: '#5c5f4a', inkLine: '#85895c', // inkLine: drawn link underlines, 3:1 on every stock
+  fs: 13, fsHand: 23, lhBody: 20, radius: 3,
+};
+const font = (weight, px = TOK.fs, family = 'Inter') => `${weight} ${px}px ${family}`;
+const HAND = font(500, TOK.fsHand, 'Caveat');
 const NAME_INK = [30, 34, 40];
 const qs = new URLSearchParams(location.search);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || qs.has('still');
@@ -146,7 +156,7 @@ const PAGE_NAMES = ['main', 'research'];
 const STYLE_PARAMS = [
   ['mode', 'paper', 0, 0, 0, 'style'],
   ['bg', 'f3f1ea', 0, 0, 0, 'background'],
-  ['ink', '929664', 0, 0, 0, 'ink'],
+  ['ink', 'a5a970', 0, 0, 0, 'ink'],
   ['opacity', 1, 0, 4, 0.05, 'ink opacity'],
   ['gain', 1.1, 0.1, 4, 0.01, 'gain'],
   ['gamma', 1.8, 0.4, 3, 0.01, 'gamma'],
@@ -678,7 +688,7 @@ let nameBox = null; // CSS px: { x, baseline, size }
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 function cardBox(s, w) {
   if (s.kind === 'note') {
-    const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, '500 23px Caveat');
+    const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
     return { w, h: 28 + lines.length * 26.5, media: null, lines };
   }
   if (s.kind === 'paper') {
@@ -692,10 +702,10 @@ function cardBox(s, w) {
   const mw = w - 12, mh = mw / s.aspect;
   const [title, sub] = [s.el.querySelector('.cap b').textContent, s.el.querySelector('.cap span').textContent];
   const m = measure();
-  m.font = '600 13px Inter'; const tw = m.measureText(title).width;
-  m.font = '400 13px Inter'; const sw = m.measureText(sub).width;
+  m.font = font(600); const tw = m.measureText(title).width;
+  m.font = font(400); const sw = m.measureText(sub).width;
   const oneLine = tw + sw + 14 < mw - 4;
-  const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, '600 13px Inter'); // long titles wrap
+  const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
   return { w, h: 6 + mh + (oneLine ? 32 : 31 + titleLines.length * 18), media: { x: 6, y: 6, w: mw, h: mh }, title, titleLines, sub, oneLine };
 }
 // One size for both faces, like a real card: the front's own size when the back's copy fits on it at the shared type
@@ -1305,9 +1315,9 @@ function coverRect(ia, ma, [z, px, py]) {
 function drawCard(s, S) {
   const cw = Math.ceil(s.w * S), ch = Math.ceil(s.h * S);
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
-  x.fillStyle = s.kind === 'note' ? '#fff4a8' : '#fffdf8';
+  x.fillStyle = s.kind === 'note' ? TOK.note : TOK.stock;
   x.fillRect(0, 0, cw, ch);
-  if (s.kind === 'note') x.fillStyle = '#f7ea98', x.fillRect(0, 0, cw, 22 * S); // the sticky strip is a touch darker
+  if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, 22 * S); // the sticky strip is a touch darker
   let mediaPx = null;
   if (s.media) {
     const m = s.media;
@@ -1322,25 +1332,25 @@ function drawCard(s, S) {
   x.textBaseline = 'alphabetic';
   if (s.kind === 'photo') {
     const y0 = s.media.y + s.media.h;
-    x.font = '600 13px Inter'; x.fillStyle = '#1d1d1b';
+    x.font = font(600); x.fillStyle = TOK.text;
     if (s.oneLine) {
       x.fillText(s.title, 8, y0 + 21);
-      x.font = '400 13px Inter'; x.fillStyle = '#6f6d66'; x.textAlign = 'right'; x.fillText(s.sub, s.w - 8, y0 + 21);
+      x.font = font(400); x.fillStyle = TOK.muted; x.textAlign = 'right'; x.fillText(s.sub, s.w - 8, y0 + 21);
     } else {
       s.titleLines.forEach((l, i) => x.fillText(l, 8, y0 + 20 + i * 18));
-      x.font = '400 13px Inter'; x.fillStyle = '#6f6d66'; x.fillText(s.sub, 8, y0 + 20 + s.titleLines.length * 18);
+      x.font = font(400); x.fillStyle = TOK.muted; x.fillText(s.sub, 8, y0 + 20 + s.titleLines.length * 18);
     }
   } else if (s.kind === 'paper') {
-    x.fillStyle = '#3a3a36'; x.fillRect(0, 0, 3, s.h);
-    x.font = '600 16px Inter'; x.fillStyle = '#1d1d1b';
+    x.fillStyle = TOK.body; x.fillRect(0, 0, 3, s.h);
+    x.font = font(600, 16); x.fillStyle = TOK.text;
     s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
-    x.font = '400 13px Inter'; x.fillStyle = '#6f6d66';
+    x.font = font(400); x.fillStyle = TOK.muted;
     x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
   } else if (s.kind === 'polaroid') {
-    x.font = '500 13px Inter'; x.fillStyle = '#4a4945'; x.textAlign = 'center';
+    x.font = font(500); x.fillStyle = TOK.body; x.textAlign = 'center';
     x.fillText(s.el.querySelector('.hand').textContent, s.w / 2, s.media.y + s.media.h + 23);
   } else {
-    x.font = '500 23px Caveat'; x.fillStyle = '#2a2a26';
+    x.font = HAND; x.fillStyle = TOK.text2;
     s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
   }
   return { canvas: c, mediaPx };
@@ -1359,15 +1369,15 @@ const BACK_STYLES = {
   index: { underline: 'line', note: 'ruled', ruled: true },
   pen: { underline: 'pen', note: 'pen' },
 };
-const INK = '#a5a970', INK_DEEP = '#5c5f4a', NOTE_INK = '#2a2a26';
-const STOCK = { photo: '#fffdf8', paper: '#fffdf8', polaroid: '#f5f0e4', note: '#fff4a8' };
+const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
+const STOCK = { photo: TOK.stock, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note };
 const TYPE = {
-  title: { font: '600 14px Inter', lh: 20, color: '#1d1d1b' },
-  label: { font: '400 12px Inter', lh: 16, color: '#6f6d66' },
-  body: { font: '400 13px Inter', lh: 20, color: '#3d3c38' },
-  link: { font: '500 13px Inter', color: INK_DEEP },
-  noteLink: { font: '500 14px Inter', color: NOTE_INK },
-  noteHand: { font: '500 22px Caveat', color: NOTE_INK },
+  title: { font: font(600), lh: TOK.lhBody, color: TOK.text },
+  label: { font: font(400), lh: 16, color: TOK.muted },
+  body: { font: font(400), lh: TOK.lhBody, color: TOK.body },
+  link: { font: font(500), color: INK_DEEP },
+  noteLink: { font: font(500), color: NOTE_INK },
+  noteHand: { font: HAND, color: NOTE_INK },
 };
 const BK = { pad: 16, first: 32, row: 24, gap: 16, bottom: 22, strip: 32 };
 // Small monochrome marks for the note's links (quiet), by link text; 24-unit boxes except GitHub (16).
@@ -1456,11 +1466,11 @@ function drawBack(s, S) {
   if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
-  if (s.kind === 'note') { x.fillStyle = '#f7ea98'; x.fillRect(0, 0, w, 22); } // the same sticky strip as the front
+  if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, w, 22); } // the same sticky strip as the front
   x.textBaseline = 'alphabetic';
   // index: the label strip, the header rule, and faint rules under every line to the bottom of the card
   if (L.strip) {
-    x.fillStyle = '#f3efe3'; x.fillRect(0, 0, w, BK.strip);
+    x.fillStyle = TOK.stockWarm; x.fillRect(0, 0, w, BK.strip);
     x.fillStyle = '#1d1d1b14'; x.fillRect(0, BK.strip - 1, w, 1);
     x.font = TYPE.label.font; x.fillStyle = TYPE.label.color; x.fillText(L.strip, pad, 21);
   }
@@ -1484,12 +1494,12 @@ function drawBack(s, S) {
         const [vb, d] = ICONS[t], sz = 12;
         x.save(); x.translate(pad, k.base - 11); x.scale(sz / vb, sz / vb); x.fillStyle = NOTE_INK; x.fill(new Path2D(d)); x.restore();
       }
-      if (st.note === 'pen') { x.strokeStyle = '#8f9360'; penLine(x, k.tx, k.tx + k.tw, k.base + 4, i + 1, 1.3); }
+      if (st.note === 'pen') { x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, i + 1, 1.3); }
       else if (st.note === 'icons') { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
       return;
     }
     x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(t, k.tx, k.base);
-    if (st.underline === 'pen') { x.strokeStyle = '#8f9360'; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15); }
+    if (st.underline === 'pen') { x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15); }
     else if (L.ruleTop == null) { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
     else { x.fillStyle = INK_DEEP; x.fillRect(k.tx, k.base + 5, k.tw, 1); } // the link's stretch of its rule
   });
