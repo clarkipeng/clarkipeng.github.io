@@ -2,7 +2,8 @@
 // Every step: excitation field E -> a few tens of thousands of agents (steer, deposit by atomics) -> trail diffuse/decay.
 // The slime lives on a soft, lower-resolution grid under the whole desk; cards lie on top. Agents only find a little
 // food in a thin band just outside each card's edge, so veins hug the cards as a soft outline that follows a dragged card.
-// Clicking a card flips it in 3D to its back (details and links) and puffs the agents under it outward.
+// Clicking a card flips it in 3D to its back (details and links). Every time a card comes down onto the desk (the first
+// visit's fly-in, a flip, a drop, a page change) it lands: one burst of ink from its edge, scaled by how hard it landed.
 // One fragment pass at full device resolution draws paper grain, one muted ink (Beer-Lambert, so it darkens like dye),
 // the crisp signature, and the cards (atlas texture, video via importExternalTexture) with soft drop shadows.
 // The DOM keeps invisible hit targets and the accessible text.
@@ -61,12 +62,20 @@ const GROUPS = {
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s'],
-    ['puff', 1.6, 0, 6, 0.05, 'flip puff strength'],
-    ['puffAt', 0, 0, 0.6, 0.02, 'puff after landing s'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
-    ['puffR', 29, 0, 60, 1, 'flip puff radius px'],
-    ['puffDecay', 0.955, 0.8, 0.995, 0.001, 'flip puff decay / step'],
+  ],
+  // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
+  // of speed, and releases any agents waiting for it (a page's network grows out of its cards when they fly in).
+  Landing: [
+    ['intro', 1, 0, 1, 1, 'fly-in on first visit (?intro=0 skips)'],
+    ['landBurst', 1.8, 0, 6, 0.05, 'burst strength (speed x)'],
+    ['landR', 29, 0, 60, 1, 'burst reach px'],
+    ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
+    ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
+    ['landFly', 0.95, 0.3, 2.5, 0.05, 'fly duration s'],
+    ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
+    ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
   ],
   Media: [
     ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
@@ -182,7 +191,8 @@ const lin = (c) => Math.pow(c / 255, 2.2);
 const COMMON = /* wgsl */ `
 struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f };
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
-// uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), puff trigger, |cos flip|
+// uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, |cos flip|
+// inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
 struct G {
@@ -195,15 +205,15 @@ struct G {
   n: vec4f,   // ink absorbance rgb (paper style), sim px per device px
   k: vec4f,   // name ink absorbance rgb, 1 in how many agents feel the edge food
   v: vec4f,   // video card, video mix, crossfade to the next clip, camera x on the desk (device px)
-  x: vec4f,   // edge mode, ridge distance, ridge width, puff margin (sim px)
-  y: vec4f,   // puff boost, puff decay, hover excitation, cursor excitation
+  x: vec4f,   // edge mode, ridge distance, ridge width, landing burst reach (sim px)
+  y: vec4f,   // landing burst speed-up, burst decay, hover excitation, cursor excitation
   z: vec4f,   // ink softness (texels), ink grain, unused, on-screen card count
   w: vec4f,   // second ring on, second ring at (x ridge distance), corner emphasis, ink opacity
-  u: vec4f,   // shadow softness, shadow strength, unused, unused
+  u: vec4f,   // shadow softness, shadow strength, release window (s), unused
   st: vec4f,  // style (0 paper, 1 spectrum, 2 j), glow, halo, page clock (s)
   bg: vec4f,  // page background, linear rgb
   pg: vec4f,  // page origin on the desk (device px), transition (1 slide, 2 + a: crossfade by a), frozen page origin (device px), canvas width (device px)
-  jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px), unused, unused
+  jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px); hold (1: clear the ink, hold the agents), unused
   pr: vec4f,  // prints: desaturate, white balance to paper, black lift, duotone at rest
   pq: vec4f,  // prints: paper grain, matte edge (CSS px), unused, unused
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
@@ -268,6 +278,16 @@ fn wrap(p: vec2f) -> vec2f { return p - floor(p / g.a.xy) * g.a.xy; }
 fn eAt(p: vec2f) -> f32 { return textureLoad(etex, clamp(vec2i(p * 0.5), vec2i(0), vec2i(textureDimensions(etex)) - 1), 0).r; }
 fn dir(a: f32) -> vec2f { return vec2f(cos(a), sin(a)); }
 fn ridge(d: f32, at: f32) -> f32 { let b = (d - at) / g.x.z; return exp(-b * b); }
+// Heading straight out through card c's nearest edge from p (under the card or just outside it).
+fn outward(c: Card, p: vec2f) -> f32 {
+  let r = p - c.flat.xy; let cs = c.flat.zw;
+  let l = vec2f(cs.x * r.x + cs.y * r.y, -cs.y * r.x + cs.x * r.y);
+  let q = abs(l) - c.geo.xy * c.misc.x;
+  var n = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), q.x > q.y);
+  if (q.x > 0.0 && q.y > 0.0) { n = normalize(q); }
+  n *= select(vec2f(-1.0), vec2f(1.0), l >= vec2f(0.0));
+  return atan2(cs.y * n.x + cs.x * n.y, cs.x * n.x - cs.y * n.y);
+}
 // Food card k leaves at p, by edge mode (see EDGE_MODES in JS). Distances in sim px.
 fn food(k: u32, p: vec2f) -> f32 {
   let mode = u32(g.x.x);
@@ -315,18 +335,49 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   rs = pcg(i * 1664525u + pcg(u32(g.d.w) + 17u));
   let a = agents[i];
   var pos = a.xy; var ang = a.z;
-  // w packs the hue tag (index of the card whose color it carries) and the puff (1 right after a card flips over this
-  // agent, decaying over about a second): w = tag * 2 + puff.
-  var tag = floor(a.w * 0.5);
-  var puff = a.w - tag * 2.0;
+  // w packs the hue tag (index of the card whose color it carries) and the burst (set when a card lands next to the
+  // agent, decaying over about a second): w = tag * 8 + burst. Negative w: held, waiting for card -w - 1 to land.
+  var tag = floor(a.w / 8.0);
+  var puff = a.w - tag * 8.0;
+  if (g.jq.z > 0.5) { // hold: every agent waits for the nearest card about to land (the page's ink is cleared meanwhile)
+    var best = -1.0; var bd = 1e12;
+    for (var k = 0u; k < u32(g.d.z); k++) {
+      let c = g.cards[k];
+      if (c.inv1.w >= 0.0) { continue; }
+      let dd = distance(pos, c.flat.xy);
+      if (dd < bd) { bd = dd; best = f32(k); }
+    }
+    if (best >= 0.0) { agents[i] = vec4f(pos, ang, -1.0 - best); }
+    return;
+  }
+  if (a.w < 0.0) {
+    // Held: the agent waits, still and inkless, until its card lands, then leaves from a random point on the card's edge,
+    // heading outward with the landing's burst, at its own moment within the release window.
+    tag = -a.w - 1.0;
+    let c = g.cards[u32(tag)];
+    let since = c.inv1.w - f32(pcg(i ^ 0x9e3779b9u) >> 8u) / 16777216.0 * g.u.z;
+    if (since < 0.0) { return; }
+    puff = 0.0;
+    if (since < 0.25) {
+      let h = c.geo.xy * c.misc.x + vec2f(1.5 * g.a.w);
+      let t = rnd() * 2.0 * (h.x + h.y);
+      let side = select(-1.0, 1.0, rnd() < 0.5);
+      var l = vec2f(h.x * side, t - 2.0 * h.x - h.y); var n = vec2f(side, 0.0);
+      if (t < 2.0 * h.x) { l = vec2f(t - h.x, h.y * side); n = vec2f(0.0, side); }
+      let cs = c.flat.zw;
+      pos = wrap(c.flat.xy + vec2f(cs.x * l.x - cs.y * l.y, cs.y * l.x + cs.x * l.y));
+      ang = atan2(cs.y * n.x + cs.x * n.y, cs.x * n.x - cs.y * n.y) + (rnd() - 0.5) * 1.2;
+      puff = c.inv2.w * (0.8 + 0.2 * rnd()); // nearly one speed, so they leave as a coherent ring
+    } // else it missed its moment (not running then, under auto quality): it joins where it is
+  }
   if (rnd() < g.d.x) { // respawn anywhere, carrying the color of the nearest card
     let np = vec2f(rnd(), rnd()) * g.a.xy;
     var best = 0.0; var bd = 1e12;
     for (var j = 0u; j < u32(g.z.w); j++) { let k = cardAt(j); let dd = distance(np, g.cards[k].flat.xy); if (dd < bd) { bd = dd; best = f32(k); } }
-    agents[i] = vec4f(np, rnd() * 6.2831853, best * 2.0);
+    agents[i] = vec4f(np, rnd() * 6.2831853, best * 8.0);
     return;
   }
-  // A flipping card puffs the agents under it and just around it radially outward.
+  // A card landing sends the agents under it and just around it out through its edge.
   for (var j = 0u; j < u32(g.z.w); j++) {
     let k = cardAt(j);
     let c = g.cards[k];
@@ -334,14 +385,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // they carry its ink out along the network, and inks mix like dye where the veins meet.
     if (c.ink.w > 0.02 && distance(pos, c.flat.xy) < c.bound.x + 24.0 * g.a.w && rnd() < 0.3 * c.ink.w && cardSd(k, pos) < 24.0 * g.a.w) { tag = f32(k); }
     if (c.bound.z > 0.5 && cardSd(k, pos) < g.x.w) {
-      let r = pos - c.flat.xy;
-      ang = atan2(r.y, r.x) + (rnd() - 0.5) * 0.6;
-      puff = 1.0;
+      ang = outward(c, pos) + (rnd() - 0.5) * 1.2;
+      puff = max(puff, c.inv2.w * (0.8 + 0.2 * rnd()));
     }
   }
   puff *= g.y.y;
   let e = eAt(pos);
-  let sd = g.c.x; let sa = g.c.y; let turn = g.c.z * (1.0 - puff);
+  let sd = g.c.x; let sa = g.c.y; let turn = g.c.z * (1.0 - min(puff, 1.0));
   let edgy = i % u32(g.k.w) == 0u;
   let f = sense(pos + dir(ang) * sd, edgy);
   let l = sense(pos + dir(ang - sa) * sd, edgy);
@@ -354,7 +404,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   pos = wrap(pos + dir(ang) * g.b.x * (1.0 + g.f.y * e + g.y.x * puff));
   let q = vec2u(min(pos, g.a.xy - 1.0));
   let at = (q.y * u32(g.a.x) + q.x) * 4u;
-  let amt = g.b.y * (1.0 + 2.0 * e) * (1.0 - 0.7 * puff) * 4096.0;
+  let amt = g.b.y * (1.0 + 2.0 * e) * (1.0 - 0.7 * min(puff, 1.0)) * 4096.0;
   // rgb carries color: on paper the ink's absorbance (the shared olive, or the agent's card ink while that card is open),
   // so overlapping inks darken like dye; in spectrum the card's hue as light, brighter while the card is open.
   let ck = g.cards[u32(tag)];
@@ -362,7 +412,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (g.st.x > 0.5 && g.st.x < 1.5) { tint = ck.hue.rgb * (1.0 + ck.ink.w); }
   atomicAdd(&dep[at], u32(tint.r * amt)); atomicAdd(&dep[at + 1u], u32(tint.g * amt)); atomicAdd(&dep[at + 2u], u32(tint.b * amt));
   atomicAdd(&dep[at + 3u], u32(amt));
-  agents[i] = vec4f(pos, ang, tag * 2.0 + puff);
+  agents[i] = vec4f(pos, ang, tag * 8.0 + puff);
 }`;
 
 const DIFFUSE_WGSL = COMMON + /* wgsl */ `
@@ -391,6 +441,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
   let d = vec4f(f32(atomicExchange(&dep[k], 0u)), f32(atomicExchange(&dep[k + 1u], 0u)), f32(atomicExchange(&dep[k + 2u], 0u)), f32(atomicExchange(&dep[k + 3u], 0u))) / 4096.0;
   var v = mix(c, s / 9.0, g.b.w) * g.b.z + d;
   if (v.a > 1.0) { v /= v.a; } // density saturates; the hue keeps its proportions
+  if (g.jq.z > 0.5) { v = vec4f(0.0); } // hold: the page starts over from bare paper
   textureStore(dst, p, v);
 }`;
 
@@ -606,11 +657,14 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     region: d.region === 'research' ? 1 : 0, nav: d.nav, hueHex: d.hue || '888888', // the card's own hue (spectrum style)
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
     jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
-    backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0, puffArm: false,
+    backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
     slot: { x: sx, y: sy, w: sw, r: sr }, order: +d.order, aspect: +(d.aspect || 1), videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
+    // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
+    // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
+    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0,
   };
 });
 
@@ -655,6 +709,7 @@ function wrapLines(text, maxW, font) {
 }
 
 function layout() {
+  endFlights(); // a new layout puts every card in its slot
   const vw = document.documentElement.clientWidth, vh = innerHeight;
   const phone = vw < PHONE;
   body.classList.toggle('phone', phone);
@@ -738,7 +793,7 @@ let focus = 0, focusAt = 0;
 // The camera pans across one continuous desk: x = 0 shows the main region, x = viewport width shows research.
 const cam = { x: 0, from: 0, to: 0, t: 1 };
 const regionFromHash = () => (location.hash === '#research' ? 1 : 0);
-const WARM_STEPS = 150; // a page you have not seen yet arrives already formed
+const WARM_STEPS = 150; // with reduced motion, a page you have not seen yet is formed before it is drawn
 let page = 0;
 // Tab stays on the page you see: the other page's cards are inert (focusing one would scroll the desk sideways).
 const setInert = (region) => { for (const s of sources) s.el.inert = !view.phone && s.region !== region; };
@@ -760,8 +815,10 @@ function drawStill() {
   encodeRender(enc, gpu.ctx.getCurrentTexture().createView());
   gpu.device.queue.submit([enc.finish()]);
 }
-// Freeze the outgoing page's current frame; it slides out as an image while the incoming page's own sim runs.
+// Freeze the outgoing page's current frame; it slides out as an image while the incoming page's own sim runs. The
+// incoming page starts from bare paper and its cards fly in from the side the camera pans toward.
 function switchPage(region, instant) {
+  const from = Math.sign(region - page);
   if (!instant) {
     writeUniforms(gpu);
     const enc = gpu.device.createCommandEncoder();
@@ -773,7 +830,16 @@ function switchPage(region, instant) {
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
   page = region; sim = sims[page];
+  if (!instant) flyIn(from, PAN_LEAD);
   tweakSync?.();
+}
+// Clear a page's ink and hold its agents, each for the nearest card about to land (cards with rel < 0): one sim step.
+function holdPage(sm) {
+  writeUniforms(gpu, sm, true);
+  const enc = gpu.device.createCommandEncoder();
+  encodeStep(enc, 'ad', null, sm, sm.n);
+  gpu.device.queue.submit([enc.finish()]);
+  sm.t = Math.max(sm.t, 4.5); sm.warm = 0; // nothing to fade in or catch up: the ink shows from its first deposit
 }
 function stepCam(dt) {
   if (cam.t >= 1) return;
@@ -810,7 +876,7 @@ function syncHover() {
 }
 
 function setHover(s, on) {
-  if (view.phone || s.hoverOn === on || (on && s.flipTo)) return;
+  if (view.phone || s.hoverOn === on || (on && (s.flipTo || s.flying))) return;
   s.hoverOn = on;
   if (on && s.playlist && !s.player) { s.player = new Player(s.playlist); if (!s.still) matchThumbnail(s); }
   if (on) { hovered = s; s.hoverSince = performance.now(); } else if (hovered === s) hovered = null;
@@ -821,11 +887,12 @@ for (const s of sources) {
   hit.addEventListener('click', (e) => {
     e.preventDefault();
     if (s.suppressClick) { s.suppressClick = false; return; }
+    if (s.flying) return;
     s.nav ? navigate(s) : flip(s);
   });
-  hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); s.nav ? navigate(s) : flip(s); } });
+  hit.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.nav ? navigate(s) : flip(s); } });
   hit.addEventListener('pointerdown', (e) => {
-    if (view.phone || !gpu || reduced || e.button !== 0) return; // reduced motion: cards stay put (a click still flips)
+    if (view.phone || !gpu || reduced || e.button !== 0 || s.flying) return; // reduced motion: cards stay put (a click still flips)
     const press = { x: deskX(e), y: deskY(e), ox: s.x - deskX(e), oy: s.y - deskY(e), moved: false };
     hit.setPointerCapture(e.pointerId);
     let lt = performance.now();
@@ -843,6 +910,8 @@ for (const s of sources) {
       if (press.moved) {
         s.suppressClick = true; s.dragging = false; s.released = true; s.el.classList.remove('dragging');
         const keep = performance.now() - lt > 80 ? 0 : 0.35; // a little momentum, none if held still before letting go
+        // It lands when it touches down: a gentle drop gives a small burst, a throw a bigger one. It keeps its own angle.
+        s.dropS = 0.25 + (Math.hypot(s.vx, s.vy) * (keep ? 1 : 0)) / T.landThrow;
         s.vx *= keep; s.vy *= keep;
         if (!hit.matches(':hover')) setHover(s, false);
       }
@@ -853,8 +922,8 @@ for (const s of sources) {
   });
 }
 
-// Click turns a card over to its details (and back): it lifts, turns, and lays back down. While it is off the desk it
-// leaves the slime alone (no outline food), and the agents under it get a puff when it lands.
+// Click turns a card over to its details (and back): it lifts, turns, lays back down, and lands. While it is off the
+// desk it leaves the slime alone (no outline food).
 function flip(s) {
   if (!s.backEl) return;
   s.flipTo = s.flipTo ? 0 : 1;
@@ -871,7 +940,7 @@ function stepCards(dt) {
   const maxTilt = (T.tilt * Math.PI) / 180;
   for (const s of sources) {
     if (view.phone && s.nav) continue; // hidden on phones, parked off the desk
-    if (!s.dragging) {
+    if (!s.dragging && !s.flying) {
       const f = Math.exp(-dt * 7);
       s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= f; s.vy *= f;
       const mx = s.w * 0.25, my = s.h * 0.25;
@@ -890,18 +959,85 @@ function stepCards(dt) {
     if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / T.flipS);
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip > 0.6); // the real links become clickable as the back faces up
-      if (s.flip === s.flipTo) { s.landT = 0; s.puffPending = true; s.squash = 1; s.squashV = 0; placeDom(s); } // laid down
+      if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
     }
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
-    if (s.puffPending && (s.landT += dt) >= T.puffAt) { s.puffPending = false; s.puffArm = true; } // puff, then outline food returns
+    if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
     if (s.squash) { // landing settle: a small damped squash
       s.squashV += (-260 * s.squash - 16 * s.squashV) * dt; s.squash += s.squashV * dt;
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
     s.burst *= Math.exp(-dt * 7);
-    if (s.released && s.lift < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; s.burst = 1; }
+    if (s.released && s.lift < 0.04 && Math.hypot(s.vx, s.vy) < 60) { s.released = false; land(s, s.dropS); } // touched down
   }
+}
+
+// ---------- landing ----------
+// The one thing that happens whenever a card comes down onto the desk: the next sim step sends the agents under and just
+// around it out through its edge with a burst of speed (scaled by strength), the ink there gets a pulse of excitation,
+// the card settles with a small squash, and agents held for it (a page whose cards fly in) leave from its edge.
+function land(s, strength) {
+  const k = clamp(strength, 0.1, 1.5);
+  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: Math.min(1, k), squashV: 0 });
+  if (s.rel < 0) s.rel = 0;
+}
+
+// Fly-in: a page's cards arrive one after another, slightly turned and a little above the desk, decelerating into their
+// places with a small overshoot, and each lands. Before they leave their places the page's ink is cleared and each agent
+// is held for the nearest of them, so the network grows out of the cards as they land. The first visit brings each card
+// from its nearest screen edge; a page change brings them all from the side the camera pans toward (from: 0, 1 right,
+// -1 left), the farthest first so no card crosses one that has already landed.
+const FLY_LIFT = 0.45, INTRO_DELAY = 0.3, PAN_LEAD = 0.2; // lift while flying; s before the first card (intro, page change)
+const flights = { on: false, t: 0 };
+const easeOutQuart = (u) => 1 - (1 - u) ** 4;
+const easeOutBack = (u) => 1 + 2.2 * (u - 1) ** 3 + 1.2 * (u - 1) ** 2; // a degree or so past its angle, then back
+const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+function flyIn(from, delay) {
+  endFlights();
+  const x0 = view.phone ? 0 : page * view.w, y0 = view.phone ? scrollY : 0;
+  const cards = sources.filter((s) => (view.phone || s.region === page) && !(view.phone && s.nav) && !s.dragging
+    && s.y - s.h / 2 < y0 + view.h && s.y + s.h / 2 > y0) // only the cards you can see
+    .sort(from ? (a, b) => from * (a.x - b.x) : (a, b) => a.order - b.order);
+  if (!cards.length) return;
+  for (const s of cards) s.rel = -1;
+  holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
+  for (const [i, s] of cards.entries()) {
+    const lx = s.x - x0, ly = s.y - y0, off = Math.hypot(s.w, s.h) / 2 + 70; // fully off screen, shadow included
+    const edges = [[lx, -1, 0], [view.w - lx, 1, 0], [ly, 0, -1], [view.h - ly, 0, 1]];
+    const [d, ex, ey] = from ? edges[from > 0 ? 1 : 0] : edges.reduce((a, b) => (b[0] < a[0] ? b : a));
+    const turn = (hash01(s.id) < 0.5 ? -1 : 1) * (6 + 6 * hash01(s.id + 7));
+    s.fly = { at: delay + i * T.landStagger, x: s.x, y: s.y, r: s.rot, dx: ex * (d + off), dy: ey * (d + off), dr: turn };
+    Object.assign(s, { flying: true, z: ++topZ, vx: 0, vy: 0, released: false }); // in the air: above the cards that already landed
+  }
+  Object.assign(flights, { on: true, t: 0 });
+  stepFlights(0);
+}
+function stepFlights(dt) {
+  if (!flights.on) return;
+  flights.t += dt;
+  let busy = false;
+  for (const s of sources) {
+    const k = s.fly;
+    if (!k) continue;
+    const u = clamp((flights.t - k.at) / T.landFly), m = 1 - easeOutQuart(u);
+    s.x = k.x + k.dx * m; s.y = k.y + k.dy * m; s.rot = k.r + k.dr * (1 - easeOutBack(u));
+    s.flyLift = FLY_LIFT * (1 - u) ** 2;
+    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flyLift: 0, flying: false, fly: null }); land(s, 1); }
+    else busy = true;
+    placeDom(s);
+  }
+  flights.on = busy;
+}
+// Puts every card still in the air straight into its place (a new layout, or the page changed again mid-flight).
+function endFlights() {
+  for (const s of sources) {
+    const k = s.fly;
+    if (!k) continue;
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flyLift: 0, flying: false, fly: null, rel: 1e3 });
+    placeDom(s);
+  }
+  flights.on = false;
 }
 
 // ---------- media: crossfading playlists ----------
@@ -1243,7 +1379,7 @@ function createSim(g, page) {
     const x = Math.random() * W, y = Math.random() * H;
     let best = 0, bd = Infinity;
     for (const c of mine) { const d = Math.hypot(x - (c.x - origin) * dpr, y - c.y * dpr); if (d < bd) { bd = d; best = c.id; } }
-    init.set([x, y, Math.random() * 6.2832, best * 2], i * 4);
+    init.set([x, y, Math.random() * 6.2832, best * 8], i * 4);
   }
   const agents = device.createBuffer({ size: init.byteLength, usage: SB.STORAGE | SB.COPY_DST });
   device.queue.writeBuffer(agents, 0, init);
@@ -1363,7 +1499,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   // Flip: lift in the first ~22%, turn over in the middle, lay back down in the last ~22% (same path in reverse).
   const fa = Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56)), fc = Math.cos(fa);
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
-  const lift = Math.max(s.lift, 0.9 * up);
+  const lift = Math.max(s.lift, 0.9 * up, s.flyLift);
   const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
@@ -1374,10 +1510,10 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
   const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * (f - zh), f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * (f - zh), -mu[2], -mv[2], f - zh]);
   const hw = (faceW(s) * dpr) / 2, hh = (faceH(s) * dpr) / 2;
-  U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], 0, inv[6], inv[7], inv[8], 0,
+  U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
-    ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.puffArm ? 1 : 0, Math.abs(fe),
-    ...(s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.puffPending ? 1 : 0,
+    ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
+    ...(s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0])], o);
@@ -1395,7 +1531,7 @@ const clock = { t: 0, frame: 0 };
 const NAME_ABS = absorbance(NAME_INK);
 // The page change in progress: the outgoing page is a frozen image whose desk origin is frozenX (CSS px).
 const trans = { on: false, frozenX: 0, fade: 0 };
-function writeUniforms(g, sm = sim) {
+function writeUniforms(g, sm = sim, hold = false) {
   const s = sm, d = s.dpr, dev = shared.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
@@ -1414,22 +1550,22 @@ function writeUniforms(g, sm = sim) {
     // While any card is flipping, the background snaps back toward sharp; afterwards it follows the hover again. Same smoothing.
     const flipping = sources.some((o) => o.flip !== o.flipTo);
     focus += ((hovered && !hovered.dragging && !flipping ? 1 : 0) - focus) * (1 - Math.exp(-dt / Math.max(0.01, T.focusS / 3))); }
-  U.set([s.W, s.H, activeAgents(s), d,
+  U.set([s.W, s.H, hold ? s.n : activeAgents(s), d,
     T.speed / 60 * d, T.deposit * Q.depMul, T.decay, T.diffuse,
     T.sd * d, T.sa, T.turn, 0,
     T.respawn, T.edge, sources.length, clock.frame,
     (cursor.x - s.origin) * d, cursor.y * d, cursor.amt, 0.94, 0.6, 0.4, st.gain, st.gamma,
     ...absorbance(hexRGB(st.ink)), s.W / shared.CW, ...NAME_ABS, Math.max(1, Math.round(1 / T.share)),
     vs ? vs.id : -1, videoMix, vs?.player.fading ? clamp(vs.player.fade) : 0, cam.x * dev,
-    EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.puffR * d,
-    T.puff, T.puffDecay, T.hoverE, T.cursorE,
+    EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
+    T.landBurst, T.landDecay, T.hoverE, T.cursorE,
     st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, 0, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
-    T.shadowSoft, T.shadow, 0, 0,
+    T.shadowSoft, T.shadow, T.landRelease, 0,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     s.origin * dev, trans.on ? 1 : trans.fade > 0 ? 2 + trans.fade : 0, trans.frozenX * dev, shared.CW,
-    st.stain, st.bleed * d, 0, 0,
+    st.stain, st.bleed * d, hold ? 1 : 0, 0,
     T.pDesat, T.pWarm, T.pBlack, T.pDuo,
     T.pGrain, T.pMatte, 0, 0,
     ...order, ...Array(MAX - order.length).fill(0), ...vu], 0);
@@ -1439,11 +1575,11 @@ function writeUniforms(g, sm = sim) {
 
 // ---------- frame ----------
 
-function encodeStep(enc, only = 'ead', ts = null, sm = sim) {
+function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents(sm)) {
   const s = sm, p = s.parity;
   const pass = enc.beginComputePass(ts ? { timestampWrites: { querySet: gpu.ts.set, beginningOfPassWriteIndex: 0 } } : undefined);
   if (only.includes('e')) { pass.setPipeline(gpu.ePipe); pass.setBindGroup(0, s.eBG[p]); pass.dispatchWorkgroups(Math.ceil(s.EW / 8), Math.ceil(s.EH / 8)); }
-  if (only.includes('a')) { pass.setPipeline(gpu.agentPipe); pass.setBindGroup(0, s.agentBG[p]); pass.dispatchWorkgroups(Math.ceil(activeAgents(s) / 64)); }
+  if (only.includes('a')) { pass.setPipeline(gpu.agentPipe); pass.setBindGroup(0, s.agentBG[p]); pass.dispatchWorkgroups(Math.ceil(count / 64)); }
   if (only.includes('d')) { pass.setPipeline(gpu.diffusePipe); pass.setBindGroup(0, s.diffuseBG[p]); pass.dispatchWorkgroups(Math.ceil(s.W / 16), Math.ceil(s.H / 16)); }
   pass.end();
   s.parity = 1 - p;
@@ -1520,6 +1656,7 @@ function frame(now) {
   const dt = last ? Math.min(0.05, (now - last) / 1000) : STEP;
   if (last) { stats.intervals.push(now - last); if (stats.intervals.length > 240) stats.intervals.shift(); }
   last = now;
+  stepFlights(dt);
   syncHover();
   stepCards(dt);
   stepCam(dt);
@@ -1539,23 +1676,12 @@ function frame(now) {
     encodeStep(enc, 'ead', steps === 1 ? ts : null);
     gpu.device.queue.submit([enc.finish()]);
     for (const s of sources) {
-      if (s.puffArm && qs.has('mlog')) console.log('[flip] puff', s.key, 'at flip', s.flip);
-      s.puffArm = false; // a landing puffs the agents on exactly one step
+      if (s.landK && qs.has('mlog')) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
+      s.landK = false; // a landing bursts the agents on exactly one step
     }
   }
   if (steps === 2) acc = Math.min(acc, STEP);
-  // Once the landing page has settled, warm the other page in the background (a couple of steps a frame, one time only),
-  // so it arrives formed and the pan has nothing to catch up on. After that the inactive page costs nothing.
-  const other = sims.length > 1 ? sims[1 - page] : null;
-  if (other && other.warm > 0 && !trans.on && clock.t > 5) {
-    const n = Math.min(other.warm, 2);
-    other.warm -= n;
-    const enc = gpu.device.createCommandEncoder();
-    for (let k = 0; k < n; k++) { writeUniforms(gpu, other); encodeStep(enc, 'ead', null, other); }
-    gpu.device.queue.submit([enc.finish()]);
-    writeUniforms(gpu); // back to the active page's uniforms for the render below
-  }
-  if (sim.warm > 0) { // a page seen for the first time: catch up a burst of steps, spread over the transition's frames
+  if (sim.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
     const n = Math.min(sim.warm, 25);
     sim.warm -= n;
     writeUniforms(gpu);
@@ -1630,10 +1756,12 @@ async function rebuild(first) {
   gp.setPipeline(gpu.grainPipe);
   gp.setBindGroup(0, gpu.device.createBindGroup({ layout: gpu.grainPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: gpu.uniform } }] }));
   gp.draw(3); gp.end(); gpu.device.queue.submit([ge.finish()]);
-  // The page you land on forms in front of you; a page you have not visited yet is warmed up when you go there.
+  // The page you land on forms in front of you (or grows out of its cards, with the fly-in); a page you go to later
+  // grows out of its cards as they fly in.
   if (!first || reduced) { clock.t = 4.5; sim.t = 4.5; }
   for (const sm of sims) if (sm !== sim) sm.warm = WARM_STEPS;
 }
+const introOn = () => !!T.intro && !reduced;
 
 // Rebuild the sim (new agent count or viewport) without reloading the page.
 async function reseed() {
@@ -1757,7 +1885,9 @@ function tweakPanel() {
     sync();
     if (gpu && before !== RESEED.map((k) => T[k]).join()) reseed();
   };
-  bar.append(copy, reset);
+  const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
+  replay.onclick = () => flyIn(0, INTRO_DELAY); // starts over from bare paper
+  bar.append(copy, reset, replay);
   panel.append(bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
   const perf = panel.querySelector('.tweak-perf');
@@ -1798,12 +1928,14 @@ async function main() {
   await Promise.all(sources.map((s) => s.img?.decode().catch(() => {})));
   mark('images');
   // The desk fades in once, from bare paper: straight to the live field when WebGPU is quick, else the DOM still first.
+  body.classList.toggle('intro', introOn()); // with the fly-in, the startup still is bare paper: the cards arrive with it
   const showStill = setTimeout(() => body.classList.add('ready'), 250);
   gpu = await initGpu();
   if (dead) { gpu?.device.destroy(); return; }
   mark('pipelines');
-  if (!gpu) { clearTimeout(showStill); body.classList.add('nogpu', 'ready'); layout(); return; }
+  if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); layout(); return; }
   await rebuild(true);
+  if (introOn()) flyIn(0, INTRO_DELAY);
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
   writeUniforms(gpu);
   const enc0 = gpu.device.createCommandEncoder();
@@ -1918,7 +2050,7 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, trans: () => ({ ...trans, camT: cam.t }), sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
+window.__j = { Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, trans: () => ({ ...trans, camT: cam.t }), sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), flyIn, flights, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {

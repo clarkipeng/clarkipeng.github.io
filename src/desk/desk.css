@@ -18,6 +18,8 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 /* The desk fades in from bare paper once it is ready, so startup shows no unstyled text, fallback fonts, or pops. */
 #desk #page, #desk #field { transition: opacity .6s ease-out; }
 #desk:not(.ready) :is(#page, #field) { opacity: 0; }
+/* The first visit starts from bare paper; its cards fly in. Opacity, not visibility: hidden text has no innerText to measure. */
+#desk.intro:not(.gpu) .sources { opacity: 0; pointer-events: none; }
 #desk .hit, #desk .hit > * { transition: opacity .3s, background-color .3s, box-shadow .3s, color .3s; } /* DOM still to live field */
 
 #desk .name { position: absolute; margin: 0; font: 800 64px/1 Inter, sans-serif; font-optical-sizing: auto; letter-spacing: -0.03em; color: #1e2228; white-space: nowrap; }
