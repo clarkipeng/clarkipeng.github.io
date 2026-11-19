@@ -56,7 +56,7 @@ export const navigation = [
 export const aboutParagraphs = [
   'At Catapult (YC S26), I built the platform behind its 30 multiplayer browser games and the first version of Music Arena, where AI models make music in FL Studio and people vote. Before that, I worked at Camfer on text-to-CAD models, LLM post-training and mid-training, and CAD tools.',
   'My research is on evaluating and training generative models. I co-first-authored VideoPhy-2, a benchmark for physics in generated videos, contributed to DialectGen, and train mixture-of-experts models for cross-lingual alignment at UCLA NLP.',
-  'Outside of that, I co-run ACM AI at UCLA, compete on Kaggle (top 1%), and build graphics and simulation projects.',
+  'Outside of that, I co-run ACM AI at UCLA and build graphics and simulation projects.',
 ];
 
 
