@@ -1203,11 +1203,19 @@ for (const s of sources) {
       const k = 1 - Math.exp(-dt / 0.05);
       s.vx = lerp(s.vx, (nx - s.x) / dt, k); s.vy = lerp(s.vy, (ny - s.y) / dt, k);
       s.x = nx; s.y = ny; lt = now;
+      // Over its page's deck, it turns face down to the deck back (it would go back on the pile), and turns up again
+      // once it is dragged away; it counts as over once well inside, and as away only once clearly out, so it never
+      // flickers at the edge. The pile lifts a little to take it.
+      const deck = pageDeck(s.region), x = deskX(m), y = deskY(m);
+      s.over = !!deck && !s.flip && !s.flipTo && !flights.on && !turn.on && overDeck(deck, x, y, (s.over ? 28 : -10) * view.k);
+      for (const o of sources) if (o === deck || (o.region === s.region && o.fly?.at === Infinity)) o.welcome = s.over;
     };
     const up = (ev) => {
       hit.removeEventListener('pointermove', move);
-      const deck = press.moved && pageDeck(s.region);
-      if (deck && overDeck(deck, deskX(ev), deskY(ev)) && !flights.on) { // dropped on its deck: back on the pile
+      const deck = press.moved && pageDeck(s.region), over = s.over && !flights.on;
+      for (const o of sources) o.welcome = false;
+      s.over = false;
+      if (deck && over) { // let go over its deck: face down, it slides onto the pile
         Object.assign(s, { dragging: false, suppressClick: true }); s.el.classList.remove('dragging');
         collect(s, deck, 0); Object.assign(flights, { on: true, t: 0 }); stepFlights(0); return;
       }
@@ -1263,7 +1271,8 @@ function stepCards(dt) {
         if (s.y < my || s.y > view.docH - my) { s.y = clamp(s.y, my, view.docH - my); s.vy *= -0.4; }
       }
     }
-    const liftT = s.dragging ? 1 : s.keyHeld ? 0.3 : s.hoverOn ? 0.1 : 0;
+    const liftT = s.dragging ? 1 : s.welcome ? 0.35 : s.keyHeld ? 0.3 : s.hoverOn ? 0.1 : 0;
+    if (s.over || s.down) s.down = clamp((s.down || 0) + (s.over ? dt : -dt) / MOTION.respond); // face down over the deck
     s.liftV += (170 * (liftT - s.lift) - 17 * s.liftV) * dt; s.lift = Math.max(0, s.lift + s.liftV * dt);
     let tx = 0, ty = 0;
     if (s.dragging) { tx = s.vx * 0.00045; ty = s.vy * 0.00045; const m = Math.hypot(tx, ty); if (m > maxTilt) { tx *= maxTilt / m; ty *= maxTilt / m; } }
@@ -1518,7 +1527,7 @@ function stepFlights(dt) {
     const [wx, wy, wr] = waitPose(k, flights.t), u0 = clamp((flights.t - k.at) / DRAW.dur), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
     if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
     Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
-      turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
+      turn: (1 - (k.down || 0)) * smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
     if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); } // back on the pile, no burst
     else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
     else busy = true;
@@ -1586,14 +1595,15 @@ function gather(cards, deck) {
 }
 function collect(s, deck, at) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true,
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true, down: s.down || 0, // down: already face down
+
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
-  Object.assign(s, { flying: true, turn: 1, flip: 0, flipTo: 0, drawScale: 1, morph: 1, dw: deck.w, dh: deck.h });
+  Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0, drawScale: 1, morph: 1, dw: deck.w, dh: deck.h });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Is a desk point over a page's deck (the part that shows)?
-function overDeck(deck, x, y) {
-  const r = obb(deck), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]);
+// Is a desk point over a page's deck (grown by pad px)?
+function overDeck(deck, x, y, pad = 0) {
+  const r = obb(deck), ex = reach(r, [1, 0]) + pad, ey = reach(r, [0, 1]) + pad;
   return Math.abs(x - deck.x) < ex && Math.abs(y - deck.y) < ey;
 }
 // The best free spot for a card on its page: a grid search for the least overlap with the other cards (24 px apart),
@@ -2272,14 +2282,15 @@ function mildInk(hex, baseHex, mix = 1) {
 }
 function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
   // Flip: lift in the first ~22%, turn over in the middle, lay back down in the last ~22% (same path in reverse).
-  const fa = s.turn != null ? Math.PI * (1 - easeFlip(s.turn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56)), fc = Math.cos(fa); // a drawn card turns on its own clock
+  const tn = s.turn ?? (s.down > 0 ? 1 - s.down : null); // turned face down by its own clock: a draw, or over a deck
+  const fa = tn != null ? Math.PI * (1 - easeFlip(tn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56)), fc = Math.cos(fa); // a drawn card turns on its own clock
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
   const lift = Math.max(s.lift, 0.9 * up, s.flyLift);
   const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0)) * (s.drawScale ?? 1);
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
   const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1);
-  if (s.flip > 0 || s.turn != null) mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe));
+  if (s.flip > 0 || tn != null) mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe));
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
@@ -2289,7 +2300,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
-    ...(s.fly && shared.deckUV ? shared.deckUV : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
+    ...((s.fly || s.down > 0) && shared.deckUV ? shared.deckUV : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
