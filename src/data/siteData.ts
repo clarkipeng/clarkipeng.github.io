@@ -88,6 +88,17 @@ export const portfolioProjects = [
     ],
   },
   {
+    id: 7,
+    title: 'Sine Oculus',
+    description: 'A 72-hour game jam game played in the dark: tapping your stick sends out sound that draws the room.',
+    images: ['/desk-media/sine-poster.jpg'],
+    tags: ['Unity', 'Shaders', 'Game jam'],
+    year: '2025',
+    links: [
+      { label: 'Itch.io', href: 'https://lanzalot.itch.io/sine-oculus' },
+    ],
+  },
+  {
     id: 4,
     title: 'Event Detection via PDF Regression',
     description: 'A smoother way to find clean event boundaries in noisy time-series data.',
