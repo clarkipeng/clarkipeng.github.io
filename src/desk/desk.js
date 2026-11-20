@@ -559,7 +559,7 @@ fn pageSd(p: vec2f) -> f32 { let h = 0.5 * g.pg.xy; let q = abs(p - h) - h; retu
 // Under a folded corner: the edges of the pages below, a hairline step each, a touch darker the deeper (w: how much).
 fn stacked(p: vec2f, w: f32) -> f32 {
   let u = 1.6 * g.v.w; // a sheet's step
-  let e = min(p.x, g.pg.y - p.y);
+  let e = min(g.pg.x - p.x, g.pg.y - p.y);
   if (w < 0.001 || e > 4.0 * u) { return 1.0; }
   var f = 1.0;
   for (var j = 1; j <= 3; j++) {
@@ -579,14 +579,14 @@ fn rollLight(dir: vec2f, th: f32, back: bool) -> f32 {
   let nh = n.x * dot(H.xy, dir) + n.y * H.z;
   return 1.0 + 0.55 * (nl - L.z) + 0.07 * pow(max(nh, 0.0), 60.0) - 0.07 * pow(H.z, 60.0);
 }
-// One sheet rolling up off the page from its bottom-left corner, like a notebook page: it wraps around a cylinder of
+// One sheet rolling up off the page from its bottom-right corner, like a notebook page: it wraps around a cylinder of
 // radius R whose foot (the fold) lies d from the corner along dir, and lies flipped over beyond it, back side up. top is
 // the sheet's front at p (from the frozen frame when turning, sampled where the paper came from); below is what it
 // uncovers. The back is the paper's back, with the label written near the corner. Device px; antialiased edges.
 fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec4f) -> vec3f {
   let dir = cu.xy; let d = cu.z; let R = max(cu.w, 0.5);
   if (d <= 0.0) { return top; }
-  let C = vec2f(0.0, g.pg.y); let N = vec2f(-dir.y, dir.x);
+  let C = g.pg.xy; let N = vec2f(-dir.y, dir.x);
   let x = dot(p - C, dir); let y = dot(p - C, N);
   if (x > max(2.0 * d - PI * R, d) + 6.0 + 2.0 * R) { return top; } // past the flap and its shadow: untouched
   // What it uncovers, in the roll's shadow where the page still rolls up at this point of the fold.
@@ -934,11 +934,11 @@ function placeDoor() {
   const m = 3, Lr = (2 * DOOR.d - Math.PI * DOOR.R + 10) * k * Math.SQRT2; // the ring hugs the corner at rest
   const svg = doorEl.querySelector('svg'), set = (sel, d) => svg.querySelector(sel).setAttribute('d', d);
   for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(a, v);
-  set('.hit', `M0 0V${S}H${S}Z`); set('.ring', `M${m} ${S - Lr}V${S - m}H${Lr}Z`);
-  set('.sliver', `M0 ${S - c}V${S}H${c}Z`); set('.flap', `M0 ${S - c}L${c} ${S}V${S - c}Z`);
-  const t = svg.querySelector('text'), cx = (2 * c) / 3, cy = S - (2 * c) / 3;
+  set('.hit', `M${S} 0V${S}H0Z`); set('.ring', `M${S - m} ${S - Lr}V${S - m}H${S - Lr}Z`);
+  set('.sliver', `M${S} ${S - c}V${S}H${S - c}Z`); set('.flap', `M${S} ${S - c}L${S - c} ${S}V${S - c}Z`);
+  const t = svg.querySelector('text'), cx = S - (2 * c) / 3, cy = S - (2 * c) / 3;
   Object.assign(t.style, { fontSize: 19 * k + 'px' });
-  for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(45 ${cx} ${cy})`]]) t.setAttribute(a, v);
+  for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(-45 ${cx} ${cy})`]]) t.setAttribute(a, v);
 }
 function placeDom(s) {
   const r = s.rot + (s.sway * 180) / Math.PI, sc = (1 + 0.035 * s.lift) * (s.drawScale ?? 1), w = s.w, h = s.h;
@@ -989,7 +989,7 @@ function holdPage(sm) {
 }
 
 // ---------- the page corner and the page turn ----------
-// Each page's bottom-left corner is folded back a little, like a notebook page: under it a sliver of the next page and the
+// Each page's bottom-right corner (where a notebook page turns) is folded back a little, like a notebook page: under it a sliver of the next page and the
 // edges of the pages below, and on the fold, in pen, the other page's name. Hovering lifts it a little more, leaning
 // toward the pointer. Click (or Enter) turns the page: this page's cards gather into its pile, then the whole page (its
 // last frame, frozen) rolls away from the corner and off the screen, over the other page, live underneath, which then
@@ -998,13 +998,13 @@ function holdPage(sm) {
 const DOOR = { d: 70, R: 3.5, lift: 10, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the fold's distance from the corner and the roll's radius at rest, the hover lift; how far the fold leans toward the pointer; the roll's radius late in a turn
 const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null, press: null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
 const turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
-const dirOf = (a) => [Math.cos(a), -Math.sin(a)];
+const dirOf = (a) => [-Math.cos(a), -Math.sin(a)]; // from the bottom-right corner, up and left
 const rollR = (d) => view.k * clamp(DOOR.R + 0.06 * (d / view.k - DOOR.d), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
 const span = (a) => view.w * Math.cos(a) + view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
 const farD = (a) => span(a) + (Math.PI / 2) * DOOR.rMax * view.k + 8; // the fold's distance once the page is all off screen
 const restD = (hover) => view.k * (DOOR.d + (hover ? DOOR.lift : 0));
 // The fold leans a little toward the pointer, between 25 and 65 degrees.
-const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(x, 1)) - Math.PI / 4), 0.44, 1.13);
+const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
 function stepDoor(dt) {
   if (!turn.on) door.amt = Math.min(1, door.amt + dt / 0.5); // a page's corner folds back once it is shown
   const e = 1 - Math.exp(-dt / 0.12);
@@ -1063,7 +1063,7 @@ function clipLinks() {
   const st = linksEl.style;
   if (!turn.on || view.phone || (turn.from && turn.to)) { st.clipPath = st.translate = ''; return; }
   const out = turn.from === 0, [dx, dy] = dirOf(turn.a), R = rollR(turn.d), { left: L, top: Tp, width: w, height: h } = turn.links;
-  const edge = out ? 2 * turn.d - Math.PI * R : turn.d - R, side = (u, v) => (out ? 1 : -1) * (dx * (L + u) + dy * (Tp + v - view.h) - edge);
+  const edge = out ? 2 * turn.d - Math.PI * R : turn.d - R, side = (u, v) => (out ? 1 : -1) * (dx * (L + u - view.w) + dy * (Tp + v - view.h) - edge);
   const poly = [], box = [[0, 0], [w, 0], [w, h], [0, h]];
   box.forEach((p, i) => { // the box cut by the edge's line (Sutherland-Hodgman, one plane)
     const q = box[(i + 1) % 4], a = side(...p), b = side(...q);
@@ -1368,6 +1368,8 @@ function keepOut(x0) {
   const p = 10 * view.k, out = [nameEl, taglineEl].map((el) => ({ l: el.offsetLeft, t: el.offsetTop, r: el.offsetLeft + el.offsetWidth, b: el.offsetTop + el.offsetHeight }));
   const lb = linksEl.getBoundingClientRect();
   out.push({ l: x0 + lb.left, t: lb.top, r: x0 + lb.right, b: lb.bottom });
+  const c = (2 * DOOR.d - Math.PI * DOOR.R) * view.k; // the page corner, about to its fold's tip
+  out.push({ l: x0 + view.w - c, t: view.h - c, r: x0 + view.w, b: view.h });
   return out.map((b) => ({ l: b.l - p, t: b.t - p, r: b.r + p, b: b.b + p }));
 }
 // A shoved card's spot, moved fully on screen (unless it already hung off) and then out of the text the shortest way.
@@ -1543,7 +1545,7 @@ function endFlights(all = false) { // all: piles too (a new layout)
 }
 // Each page's deck peeks in at its right edge.
 function placeDecks() {
-  for (const s of sources) if (s.kind === 'deck' && !view.phone) Object.assign(s, { x: (s.region + 1) * view.w - 0.45 * s.w + s.w / 2, y: 0.42 * view.h, rot: -2, home: -2 });
+  for (const s of sources) if (s.kind === 'deck' && !view.phone) Object.assign(s, { x: (s.region + 1) * view.w - 0.45 * s.w + s.w / 2, y: 0.36 * view.h, rot: -2, home: -2 }); // above the page corner
 }
 // The page deck: holds a page's cards that are not on the desk, as a squared pile on it. Click draws the top card (to its
 // slot, or the best free spot), an empty deck just nudges; double-click gathers every card on the page back onto it,

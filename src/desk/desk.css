@@ -61,7 +61,7 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk .deck .hit { background: var(--paper); cursor: pointer; }
 /* The page corner, the way to the other page: WebGPU draws the fold; this is its hit area and focus ring, and without
    WebGPU a flat drawing of the fold (desk.js placeDoor). */
-#desk .door { position: fixed; left: 0; bottom: 0; z-index: 3; padding: 0; border: 0; background: none; pointer-events: none; outline: none; }
+#desk .door { position: fixed; right: 0; bottom: 0; z-index: 3; padding: 0; border: 0; background: none; pointer-events: none; outline: none; }
 #desk .door svg { display: block; overflow: visible; }
 #desk .door .hit { fill: transparent; pointer-events: visiblePainted; cursor: pointer; touch-action: none; }
 #desk .door .ring { fill: none; }
