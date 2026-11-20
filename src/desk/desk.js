@@ -89,7 +89,7 @@ const GROUPS = {
     ['landR', 29, 0, 60, 1, 'burst reach px'],
     ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
     ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
-    ['drawStagger', 0.07, 0, 0.3, 0.01, 'draw stagger s (cards come off a deck)'],
+    ['drawStagger', 0.14, 0, 0.4, 0.01, 'draw stagger s (cards dealt off a deck)'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
     ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
     ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
@@ -127,7 +127,6 @@ const GROUPS = {
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
-    ['sound', 1, 0, 1, 1, 'card sound when you draw (remembered this session)'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -856,7 +855,7 @@ function layout() {
 }
 
 function placeDom(s) {
-  const r = s.rot + (s.sway * 180) / Math.PI, sc = 1 + 0.035 * s.lift, w = s.w, h = s.h;
+  const r = s.rot + (s.sway * 180) / Math.PI, sc = (1 + 0.035 * s.lift) * (s.drawScale ?? 1), w = s.w, h = s.h;
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(s.x - w / 2).toFixed(2)}px, ${(s.y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${sc.toFixed(4)})`;
   s.el.style.zIndex = s.z;
@@ -912,7 +911,7 @@ function switchPage(region, instant) {
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
   page = region; sim = sims[page];
-  if (!instant) drawFrom(region, { delay: T.panS * 0.7, sound: takeGesture() }); // as the camera settles
+  if (!instant) drawFrom(region, { delay: T.panS * 0.7 }); // as the camera settles
   tweakSync?.();
 }
 // Clear a page's ink and hold its agents, each for the nearest card about to land (cards with rel < 0): one sim step.
@@ -934,12 +933,9 @@ function stepCam(dt) {
 }
 function placePage() { pageEl.style.transform = view.phone ? '' : `translate3d(${(-cam.x).toFixed(2)}px, 0, 0)`; }
 addEventListener('hashchange', () => panTo(regionFromHash()));
-// A page change a click or key started may play the card sound (the browser's own back button may not).
-let gesture = false, pendingNav = null; // at most one move waits for the current one
-const takeGesture = () => { const g = gesture; gesture = false; return g; };
+let pendingNav = null; // at most one move waits for the current one
 function navigate(s) {
   if (cam.t < 1 || flights.on) { pendingNav = s; return; } // one move at a time; the last click waits its turn
-  gesture = true;
   if (s.nav === 'research') { history.pushState({ fromMain: true }, '', '#research'); panTo(1); }
   else if (history.state?.fromMain) history.back(); // returns to the main desk and keeps the history tidy
   else { history.pushState(null, '', location.pathname + location.search); panTo(0); }
@@ -1060,8 +1056,8 @@ function stepCards(dt) {
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
-    if (s.flip !== s.flipTo && !s.dealWait) { // a card waiting on a deal stack stays face down
-      s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (s.flipDur || T.flipS * MOTION.exit)); // closing is quicker
+    if (s.flip !== s.flipTo) {
+      s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip > 0.6); // the real links become clickable as the back faces up
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
@@ -1126,7 +1122,6 @@ function land(s, strength) {
   // The squash starts as a push (velocity), not a jump: it dips to about min(1, k) within ~75 ms and springs back.
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: s.squash || 0, squashV: (s.squashV || 0) + 29 * Math.min(1, k) });
   if (s.rel < 0) s.rel = 0;
-  if (s.dealSound) { s.dealSound = false; sfx.thump(); }
   if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; shove(s); } // a drawn card that had to land on something
   saveDesk(); // something just settled
 }
@@ -1286,32 +1281,56 @@ function restoreDesk() {
 }
 
 // ---------- drawing ----------
-// The one way cards enter a page: each is drawn off the top of a deck (the page's navigation deck, or its overflow deck
-// for one more card). It starts just past the deck's edge, face down, and slides to its spot while the flip turns it face
-// up (over `settle`); the flip lays it down at its angle and lands it. A page change draws as the camera settles, with
-// the card sound when a click or key started it; the first visit and a deep link draw silently.
-const INTRO_DELAY = 0.3; // s before the first card of the first visit
+// The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down under its
+// navigation card at deck size; the deck fans toward the page, and they are dealt one after another, each traveling to
+// its spot on an ease-out while it grows to its own size and turns face up (from 10% to 51% of the way), landing with
+// the burst at contact. The navigation card is the last one left. The first visit, a deep link, and page changes (as
+// the camera settles) all draw this way.
+const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
+const INTRO_DELAY = 0.3; // s before the first visit's deck fans
 const flights = { on: false, t: 0 };
 const easeOutQuart = (u) => 1 - (1 - u) ** 4;
 const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-function drawFrom(region, { delay = 0, sound = false } = {}) {
+function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const sx = (t) => ((ax * t + bx) * t + cx) * t, sy = (t) => ((ay * t + by) * t + cy) * t, dx = (t) => (3 * ax * t + 2 * bx) * t + cx;
+  return (x) => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let t = x;
+    for (let i = 0; i < 8; i++) { const err = sx(t) - x, d = dx(t); if (Math.abs(err) < 1e-6 || Math.abs(d) < 1e-6) break; t -= err / d; }
+    if (!(t >= 0 && t <= 1) || Math.abs(sx(t) - x) > 1e-4) { let lo = 0, hi = 1; t = x; for (let i = 0; i < 40; i++) { if (sx(t) < x) lo = t; else hi = t; t = (lo + hi) / 2; } }
+    return sy(t);
+  };
+}
+const drawEase = cubicBezier(0.25, 1, 0.5, 1);
+function drawFrom(region, { delay = 0 } = {}) {
   endFlights();
   const deck = sources.find((s) => s.nav && s.region === region);
   const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   for (const s of cards) s.rel = -1;
   holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
-  cards.forEach((s, i) => deal(s, deck, delay + i * T.drawStagger, sound));
+  cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay }));
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
 }
-// One card onto its way from a deck to where it is now (its slot or saved spot).
-function deal(s, deck, at, sound) {
-  const out = { left: [-1, 0], right: [1, 0], bottom: [0, 1] }[deck.edge] || [0, 0], r = obb(s);
-  const sx = deck.x + out[0] * (reach(r, [1, 0]) + 8), sy = deck.y + out[1] * (reach(r, [0, 1]) + 8);
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, sx, sy, sound };
-  Object.assign(s, { flying: true, x: sx, y: sy, rot: deck.rot, flip: 1, flipTo: 0, dealWait: true, flipDur: MOTION.settle, vx: 0, vy: 0, released: false, shove: null, kb: null });
+// One card onto its way out of a deck to where it is now (its slot or saved spot): it waits in the deck (fanned, as card
+// k of n, when fan is given), then is dealt at `at`.
+function deal(s, deck, at, fan = null) {
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan, s0: deck.w / s.w };
+  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.s0, vx: 0, vy: 0, released: false, shove: null, kb: null,
+    z: deck.z - 1 - (fan ? fan.n - fan.k : 0) }); // under the navigation card, the first to go on top
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
+}
+// Where a waiting card sits: in the deck, or fanned toward the page around the deck's outer edge (top card furthest in).
+function waitPose(k, t) {
+  const d = k.deck;
+  if (!k.fan) return [d.x, d.y, d.rot];
+  const out = d.edge === 'left' ? -1 : d.edge === 'right' ? 1 : 0, a = 1 - (1 - clamp((t - k.fan.at) / DRAW.fan)) ** 3;
+  const { k: j, n } = k.fan, deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
+  const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the deck's center
+  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * a * 30 * (n - j) / n, d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th), d.rot + deg];
 }
 function stepFlights(dt) {
   if (!flights.on) return;
@@ -1320,13 +1339,11 @@ function stepFlights(dt) {
   for (const s of sources) {
     const k = s.fly;
     if (!k) continue;
-    if (s.dealWait && flights.t >= k.at) { // off the top of the deck
-      Object.assign(s, { dealWait: false, rotFrom: s.rot, rotTo: k.r, z: ++topZ, dealSound: k.sound });
-      if (k.sound) sfx.flick();
-    }
-    const e = easeOutQuart(clamp((flights.t - k.at) / MOTION.settle));
-    s.x = k.sx + (k.x - k.sx) * e; s.y = k.sy + (k.y - k.sy) * e;
-    if (e >= 1 && s.flip === 0) Object.assign(s, { x: k.x, y: k.y, flying: false, fly: null, flipDur: null });
+    const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(u);
+    if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.s0 + (1 - k.s0) * e,
+      turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.33 * Math.sin(Math.PI * u) });
+    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, flyLift: 0 }); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
   }
@@ -1339,7 +1356,7 @@ function endFlights() {
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k) continue;
-    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, dealWait: false, flipDur: null, dealSound: false });
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, drawScale: 1, flyLift: 0 });
     placeDom(s);
   }
   flights.on = false;
@@ -1359,8 +1376,8 @@ function placeDecks() {
     if (s.more) s.el.hidden = s.gone = !sources.some((o) => o.region === s.region && o.inDeck);
   }
 }
-// The overflow deck: a click or key draws its next card into the best free spot, with the card sound (and a shove if it
-// had to land on something); once it is empty it slides away.
+// The overflow deck: a click or key deals its next card into the best free spot (with a shove if it had to land on
+// something); once it is empty it slides away.
 function drawMore(deck) {
   if (flights.on || view.phone || deck.shove) return;
   const s = sources.filter((o) => o.region === deck.region && o.inDeck).sort((a, b) => a.order - b.order)[0];
@@ -1375,7 +1392,7 @@ function drawMore(deck) {
     if (document.activeElement === deck.hit) s.hit.focus();
   }
   if (!gpu || reduced) { endFlights(); placeDom(s); if (empty) { Object.assign(deck, { gone: true, shove: null }); deck.el.hidden = true; } if (gpu) drawStill(); return; }
-  deal(s, deck, 0, true);
+  deal(s, deck, 0);
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
 }
@@ -1398,47 +1415,6 @@ function freeSlot(s) {
   }
   return [best[1], best[2], r];
 }
-
-// ---------- sound ----------
-// One synthesized card sound: a short band-passed noise flick as a card leaves the deck and a soft low thump as it lands,
-// each with a little random pitch and gain. Only after a click or key (the intro and deep links are silent), never with
-// reduced motion, and the panel's toggle is remembered for the session.
-try { if (sessionStorage.getItem('desk-sound') === '0') T.sound = 0; } catch { /* storage off */ }
-const sfx = (() => {
-  let ac = null, noise = null;
-  const ready = () => {
-    if (!T.sound || reduced) return null;
-    try { ac ||= new AudioContext(); } catch { return null; }
-    if (ac.state === 'suspended') ac.resume();
-    if (!noise) {
-      noise = ac.createBuffer(1, Math.round(ac.sampleRate * 0.07), ac.sampleRate);
-      const d = noise.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    }
-    return ac;
-  };
-  const jit = () => 1 + (Math.random() - 0.5) * 0.16; // within 8%
-  const env = (a, g, t, peak, len) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + len); g.connect(a.destination); };
-  return {
-    // Making the audio context costs ~75 ms, so it is made while the desk loads (before its first frame); it stays
-    // suspended until a click or key resumes it.
-    warm() { if (!ac && T.sound && !reduced && window.AudioContext) { try { ac = new AudioContext(); } catch { /* no audio */ } } },
-    flick() {
-      const a = ready();
-      if (!a) return;
-      const t = a.currentTime, n = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-      n.buffer = noise; f.type = 'bandpass'; f.frequency.value = 3000 * jit(); f.Q.value = 1.1;
-      n.connect(f).connect(g); env(a, g, t, 0.035 * jit(), 0.06); n.start(t); n.stop(t + 0.07);
-    },
-    thump() {
-      const a = ready();
-      if (!a) return;
-      const t = a.currentTime, o = a.createOscillator(), g = a.createGain(), hz = 120 * jit();
-      o.frequency.setValueAtTime(hz, t); o.frequency.exponentialRampToValueAtTime(hz * 0.6, t + 0.09);
-      o.connect(g); env(a, g, t, 0.05 * jit(), 0.1); o.start(t); o.stop(t + 0.11);
-    },
-  };
-})();
 
 // ---------- media: crossfading playlists ----------
 
@@ -1611,12 +1587,10 @@ function coverRect(ia, ma, [z, px, py]) {
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
-// A deck from above: the top card's back in the desk's own paper, a few card edges stacked under it, a pen border, and its
-// handwritten label running along the part that shows (every deck the same way, like a spine).
+// A deck's top card: its back in the desk's own paper, a pen border, and its handwritten label running along the part
+// that shows (every deck the same way, like a spine).
 function paintDeck(x, s, S, cw, ch) {
   x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
-  x.strokeStyle = '#1d1d1b1c'; x.lineWidth = S;
-  for (let i = 1; i <= 3; i++) { const d = (2 * i + 0.5) * S; x.strokeRect(d, d, cw - 2 * d, ch - 2 * d); } // the cards under it
   x.strokeStyle = TOK.inkLine; x.lineWidth = 1.2 * S; x.strokeRect(14 * S, 14 * S, cw - 28 * S, ch - 28 * S);
   const label = s.label;
   if (!label) return;
@@ -2047,14 +2021,14 @@ function mildInk(hex, baseHex, mix = 1) {
 }
 function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
   // Flip: lift in the first ~22%, turn over in the middle, lay back down in the last ~22% (same path in reverse).
-  const fa = Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56)), fc = Math.cos(fa);
+  const fa = s.turn != null ? Math.PI * (1 - easeFlip(s.turn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56)), fc = Math.cos(fa); // a drawn card turns on its own clock
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
   const lift = Math.max(s.lift, 0.9 * up, s.flyLift);
-  const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
+  const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0)) * (s.drawScale ?? 1);
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
   const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1);
-  if (s.flip > 0) mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe));
+  if (s.flip > 0 || s.turn != null) mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe));
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
@@ -2333,7 +2307,6 @@ function tweakPanel() {
   let reseedTimer = 0;
   const set = (k, v) => {
     T[k] = v;
-    if (k === 'sound') { try { sessionStorage.setItem('desk-sound', String(v)); } catch { /* storage off */ } }
     if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
     if (k === 'look') {
       const before = RESEED.map((r) => T[r]).join();
@@ -2477,7 +2450,6 @@ async function main() {
   for (const s of sources) if (!s.still && clipLists[s.key]?.poster) s.img.src = '/desk-media/' + clipLists[s.key].poster; // an explicit still wins
   layout(); // the startup still uses the final layout right away
   panTo(regionFromHash(), true);
-  sfx.warm();
   const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
   await Promise.race([fontsReady, new Promise((r) => setTimeout(r, 3000))]);
   mark('fonts');
@@ -2515,7 +2487,7 @@ async function main() {
     return;
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
-  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + MOTION.settle + 8 * T.drawStagger : 0.3) * 1000); // after the intro
+  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
