@@ -790,7 +790,7 @@ function wrapLines(text, maxW, font) {
 }
 
 function layout() {
-  endFlights(); // a new layout puts every card in its slot
+  endFlights(true); // a new layout puts every card in its slot (piles are made again below)
   const vw = document.documentElement.clientWidth, vh = innerHeight;
   const phone = vw < PHONE;
   body.classList.toggle('phone', phone);
@@ -807,6 +807,7 @@ function layout() {
     }
     restoreDesk(); // where they were left last time, if still valid
     placeDecks();
+    for (const r of [0, 1]) if (r !== page) pileUp(r); // a page not dealt yet waits on the seam card
   } else {
     const pad = 22;
     view.labelY = 0;
@@ -1316,7 +1317,10 @@ function drawFrom(region, { delay = 0 } = {}) {
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   dealt.add(region);
   for (const s of cards) s.rel = -1;
-  holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
+  const was = cards.map((s) => [s.x, s.y]);
+  for (const s of cards) if (s.fly) Object.assign(s, { x: s.fly.x, y: s.fly.y }); // piled cards count at their own spots
+  holdPage(sim); // so each agent waits for the card that will land nearest it
+  cards.forEach((s, i) => { [s.x, s.y] = was[i]; });
   cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay, region }));
   topZ += cards.length; // the stack sits above everything, the first to be dealt on top
   Object.assign(flights, { on: true, t: 0 });
@@ -1325,23 +1329,35 @@ function drawFrom(region, { delay = 0 } = {}) {
 // One card onto its way out of a deck to where it is now (its slot or saved spot): it waits in the deck (fanned, as card
 // k of n, when fan is given), then is dealt at `at`.
 function deal(s, deck, at, fan = null) {
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan };
-  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: fan ? 0.05 : 1, morph: 0, dw: deck.w, dh: deck.h, vx: 0, vy: 0, released: false, shove: null, kb: null,
+  const piled = s.fly?.at === Infinity, to = piled ? s.fly : { x: s.x, y: s.y, r: s.rot };
+  s.fly = { at, x: to.x, y: to.y, r: to.r, deck, fan, grow: !!fan && !piled,
+    jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
+  s.el.classList.add('flying'); // clicks go through to the deck
+  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.grow ? 0.05 : 1, morph: 0, dw: deck.w, dh: deck.h, vx: 0, vy: 0, released: false, shove: null, kb: null,
     z: fan ? topZ + fan.n - fan.k : ++topZ }); // on top of the navigation card
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Where a waiting card sits: stacked by the seam card toward its page, overlapping its inner edge so the card's label
-// always shows (each card a little in and up from the one below), then fanned toward the page around the stack's outer
-// edge, opening from the top card down (the top card swings furthest in).
+// Where a waiting card sits: squared on the seam card like a real pile (a pixel or two and a degree or two off, below the
+// card's label strip, so the label always shows), then fanned toward its page around the pile's outer edge, top card first.
+const LABEL_STRIP = 34; // CSS px of the seam card left showing above a pile, where its labels are written
 function waitPose(k, t) {
   const d = k.deck;
   if (!k.fan) return [d.x, d.y, d.rot];
-  const out = d.seam ? (k.fan.region ? -1 : 1) : 0, { k: j, n } = k.fan, h = 1.2 * (n - j); // out: toward the other page
+  const out = d.seam ? (k.fan.region ? -1 : 1) : 0, { k: j, n } = k.fan, [jx, jy, jr] = k.jit; // out: toward the other page
   const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
   const deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
-  const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the deck's center
-  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * (h + a * 30 * (n - j) / n + 0.85 * d.w), // beside the label
-    d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) - h, d.rot + deg];
+  const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the pile's center
+  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * a * 30 * (n - j) / n + jx,
+    d.y + LABEL_STRIP * view.k + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + deg + jr];
+}
+// A page not dealt yet keeps its cards face down on the seam card until you go there.
+function pileUp(region) {
+  const deck = sources.find((s) => s.seam);
+  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck).sort((a, b) => a.order - b.order);
+  if (view.phone || !gpu || reduced || !deck || !cards.length || dealt.has(region)) return;
+  cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length, at: Infinity, region }));
+  topZ += cards.length;
+  for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
 }
 function stepFlights(dt) {
   if (!flights.on) return;
@@ -1349,13 +1365,13 @@ function stepFlights(dt) {
   let busy = false;
   for (const s of sources) {
     const k = s.fly;
-    if (!k) continue;
+    if (!k || k.at === Infinity) continue; // a pile at rest
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
     const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(clamp((u - 0.08) / 0.92));
     if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
-    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.fan ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
       turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
-    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0 }); land(s, 1); } // contact
+    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0 }); s.el.classList.remove('flying'); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
   }
@@ -1363,11 +1379,12 @@ function stepFlights(dt) {
   if (!busy && pendingNav) { const n = pendingNav; pendingNav = null; navigate(n); }
 }
 // Puts every card still in the air straight into its place (a new layout, or the page changed again mid-draw).
-function endFlights() {
+function endFlights(all = false) { // all: piles too (a new layout)
   for (const s of sources) {
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
-    if (!k) continue;
+    if (!k || (k.at === Infinity && !all)) continue;
+    s.el.classList.remove('flying');
     Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, drawScale: 1, morph: null, flyLift: 0 });
     placeDom(s);
   }
@@ -1618,13 +1635,17 @@ function paintDeckBack(x, S, cw, ch) {
   x.restore(); x.globalAlpha = 1;
   x.strokeStyle = TOK.inkLine; x.lineWidth = S; x.strokeRect(inset + 0.5 * S, inset + 0.5 * S, cw - 2 * inset - S, ch - 2 * inset - S);
 }
-// A deck's top card: the deck back and its handwritten label running up it like a spine (the seam card has one on each
-// half: the side you see names where it goes).
+// A deck's top card: the deck back and its handwritten label across its top strip (the seam card has one on each half:
+// the side you see names where it goes).
 function paintDeck(x, s, S, cw, ch) {
   paintDeckBack(x, S, cw, ch);
   const labels = s.seam ? [[s.label, 0.25], [s.label2, 0.75]] : s.label ? [[s.label, 0.5]] : []; // the seam card: one per half
-  x.font = font(500, TOK.fsHand * S, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
-  for (const [t, f] of labels) { x.save(); x.translate(f * cw, ch * 0.5); x.rotate(-Math.PI / 2); x.fillText(t, 0, 0); x.restore(); }
+  x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
+  for (const [t, f] of labels) { // across the top strip a pile leaves showing, as large as fits its half
+    let px = TOK.fsHand;
+    do x.font = font(500, px * S, 'Caveat'); while (px-- > 14 && x.measureText(t).width > (s.seam ? 0.5 : 1) * cw - 26 * S);
+    x.fillText(t, f * cw, (LABEL_STRIP * view.k * S) / 2 + 3 * S);
+  }
 }
 function drawCard(s, S) {
   const cw = Math.ceil(s.w * S), ch = Math.ceil(s.h * S);
@@ -2093,7 +2114,7 @@ function writeUniforms(g, sm = sim, hold = false) {
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
-    if ((!view.phone && x.region !== s.page && !x.seam) || x.inDeck || x.gone || (capturing && x.seam)) return false;
+    if ((!view.phone && x.region !== s.page && !x.seam && !x.fly?.deck.seam) || x.inDeck || x.gone || (capturing && (x.seam || x.fly))) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
@@ -2498,6 +2519,7 @@ async function main() {
   await rebuild(true);
   if (introOn()) drawFrom(page, { delay: INTRO_DELAY }); // the first visit (or a deep link) draws from that page's deck, silently
   else dealt.add(page); // no intro: this page is simply there
+  pileUp(1 - page); // the other page waits on the seam card
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
   writeUniforms(gpu);
   const enc0 = gpu.device.createCommandEncoder();

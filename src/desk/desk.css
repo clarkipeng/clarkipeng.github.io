@@ -60,7 +60,8 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk.phone .deck { display: none; }
 /* A deck without WebGPU: the paper card back with its label (the GPU draws the stacked edges and pen border). */
 #desk .deck .hit { display: grid; place-items: center; background: var(--paper); font: 500 23px/1 Caveat, cursive; color: var(--text-2); cursor: pointer; }
-#desk .deck .hit { grid-template-columns: 1fr 1fr; } #desk .deck .hit span { writing-mode: sideways-lr; } /* a label up each half */
+#desk .deck .hit { grid-template-columns: 1fr 1fr; align-items: start; padding-top: 6px; } /* a label across the top of each half */
+#desk .src.flying { pointer-events: none; } /* cards in a pile or in the air: clicks go through to the deck */
 #desk:not(.gpu) .deck[inert] { visibility: hidden; } /* the other page's deck reaches across the page edge */
 /* The back's links: the drawn text is the link; the DOM link is its hit area, with an ink wash on hover and the deep-ink focus ring. */
 #desk .back a { position: absolute; pointer-events: auto; color: transparent; text-decoration: none; border-radius: 2px; outline-offset: 1px; transition: background-color var(--t-quick) var(--ease-out); }
