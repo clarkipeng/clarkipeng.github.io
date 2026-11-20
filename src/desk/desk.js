@@ -889,6 +889,10 @@ function layout() {
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
     placeDecks();
+    for (const s of sources) if (!s.slot && s.kind !== 'deck') { // a card without a slot waits on its deck...
+      if (!dealing) { const [x, y, r] = freeSlot(s); s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r }; Object.assign(s, { x, y, rot: r, home: r, inDeck: false }); } // ...unless decks cannot deal: then it lies on the desk
+      else { const d = pageDeck(s.region); Object.assign(s, { x: d.x, y: d.y, rot: d.rot }); }
+    }
     for (const r of [0, 1]) pileUp(r); // each deck holds its page's cards that are not on the desk
   } else {
     const pad = 22;
@@ -2089,6 +2093,7 @@ function paintDomBack(s) {
 // ---------- GPU ----------
 
 let gpu = null, sim = null, tweakSync = null;
+let dealing = !reduced; // decks deal cards (no deals with reduced motion or without WebGPU)
 
 // ---------- auto quality ----------
 // Clark's settings are the reference look at the reference desk (1440x900 CSS px): the agent count scales with the
@@ -2789,7 +2794,7 @@ async function main() {
   gpu = await initGpu();
   if (dead) { gpu?.device.destroy(); return; }
   mark('pipelines');
-  if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); layout(); return; }
+  if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); dealing = false; layout(); return; }
   await rebuild(true);
   if (introOn()) drawFrom(page, { delay: INTRO_DELAY }); // the first visit (or a deep link) draws from that page's deck, silently
   pileUp(0); pileUp(1); // each deck holds its page's cards that are not on the desk
