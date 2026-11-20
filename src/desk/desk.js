@@ -1555,7 +1555,7 @@ function pileUp(region) {
   for (const s of cards) { s.inDeck = true; s.pileZ ||= -s.order; } // never dealt: the first in order on top
   cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length, at: Infinity, region }));
   topZ += cards.length;
-  for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
+  for (const s of cards) { Object.assign(s.fly, { grow: false }); s.drawScale = 1; [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); } // already on the pile: nothing grows in
 }
 function stepFlights(dt) {
   if (!flights.on) return;
