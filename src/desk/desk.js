@@ -14,7 +14,7 @@ const ac = new AbortController(), signal = ac.signal;
 const addEventListener = (type, fn, opts) => window.addEventListener(type, fn, { ...opts, signal });
 let dead = false;
 
-const MAX = 16;
+const MAX = 32; // cards and decks the uniforms hold (room for overflow projects)
 const REF_W = 1440, REF_H = 900, PHONE = 700;
 const STEP = 1 / 60;
 const PAPER = [0xf3, 0xf1, 0xea];
@@ -31,7 +31,7 @@ const HAND = font(500, TOK.fsHand, 'Caveat');
 // Motion: a few durations and two curves. Things the user triggers respond in `respond`; cards that come down onto the
 // desk take `settle`; moves across the desk take `travel`. Arrivals decelerate (ease-out quart); turns and pans ease in
 // and out; physical motion (lift, tilt, squash) is springs. Exits run at `exit` times their entrance.
-const MOTION = { quick: 0.15, respond: 0.4, settle: 0.7, travel: 0.9, exit: 0.7 };
+const MOTION = { quick: 0.15, respond: 0.3, settle: 0.55, travel: 1, exit: 0.7 };
 const IMPRINT_S = 1; // a lifted card's imprint fades over this long (s)
 const NAME_INK = [30, 34, 40];
 const qs = new URLSearchParams(location.search);
@@ -76,7 +76,7 @@ const GROUPS = {
     ['shadow', 1.35, 0, 5, 0.05, 'shadow strength'],
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
-    ['flipS', MOTION.settle, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
+    ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
     ['backs', 'pen', 0, 0, 0, 'back style (quiet, index, pen)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
@@ -84,13 +84,12 @@ const GROUPS = {
   // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
   // of speed, and releases any agents waiting for it (a page's network grows out of its cards when they fly in).
   Landing: [
-    ['intro', 1, 0, 1, 1, 'fly-in on first visit (?intro=0 skips)'],
+    ['intro', 1, 0, 1, 1, 'draw the cards on first visit (?intro=0 skips)'],
     ['landBurst', 1.8, 0, 6, 0.05, 'burst strength (speed x)'],
     ['landR', 29, 0, 60, 1, 'burst reach px'],
     ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
     ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
-    ['landFly', MOTION.travel, 0.3, 2.5, 0.05, 'fly duration s'],
-    ['landStagger', 0.1, 0, 0.3, 0.01, 'stagger s'],
+    ['drawStagger', 0.07, 0, 0.3, 0.01, 'draw stagger s (cards come off a deck)'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
     ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
     ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
@@ -117,10 +116,9 @@ const GROUPS = {
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
   Camera: [
-    ['panS', 1, 0.2, 2.5, 0.05, 'pan duration s'],
+    ['panS', MOTION.travel, 0.2, 2.5, 0.05, 'pan duration s'],
     ['panEase', 'glide', 0, 0, 0, 'pan easing'],
     ['parallax', 0.06, 0, 0.3, 0.01, 'outgoing page parallax (x screen)'],
-    ['cardsAhead', 0.22, 0, 0.6, 0.01, 'incoming cards ride ahead (x screen)'],
   ],
   // Desk: what the desk does with cards you move.
   Desk: [
@@ -129,6 +127,7 @@ const GROUPS = {
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
+    ['sound', 1, 0, 1, 1, 'card sound when you draw (remembered this session)'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -699,13 +698,20 @@ const regionLabel = root.querySelector('.region-label');
 const pageEl = root.querySelector('#page');
 const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
+// A page with more cards than hand-placed slots gets an overflow deck; cards without a data-slot wait in it.
+{
+  const list = pageEl.querySelector('.sources');
+  for (const region of ['main', 'research']) if (list.querySelector(`.src[data-region="${region}"]:not([data-slot]):not(.deck)`)) {
+    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="more-${region}" data-region="${region}" data-edge="bottom" data-slot="0,0,150,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Draw another project"></div></li>`);
+  }
+}
 const sources = [...root.querySelectorAll('.src')].map((el, id) => {
   const d = el.dataset;
-  const [sx, sy, sw, sr] = d.slot.split(',').map(Number);
+  const [sx, sy, sw, sr] = (d.slot || `0,0,${d.w || 260},0`).split(',').map(Number); // no slot: an overflow card
   const backEl = el.querySelector('.back');
   return {
     id, el, hit: el.querySelector('.hit'), img: el.querySelector('img'), key: d.key,
-    kind: ['note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo',
+    kind: ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo',
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM. Nav notes pan instead of flipping.
     backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent) : null,
     region: d.region === 'research' ? 1 : 0, nav: d.nav, hueHex: d.hue || '888888', // the card's own hue (spectrum style)
@@ -713,7 +719,8 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
-    slot: { x: sx, y: sy, w: sw, r: sr }, order: +d.order, aspect: +(d.aspect || 1), videoSrc: d.video,
+    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, edge: d.edge, label: d.label, more: el.classList.contains('more'),
+    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: +(d.aspect || 1), videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
@@ -727,6 +734,7 @@ let nameBox = null; // CSS px: { x, baseline, size }
 
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 function cardBox(s, w) {
+  if (s.kind === 'deck') return { w, h: Math.round(w * 1.4), media: null }; // a face-down card back
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
     return { w, h: 28 + lines.length * 26.5, media: null, lines };
@@ -793,24 +801,26 @@ function layout() {
     nameBox = { x: 54 * k, baseline: 46 * k + 60 * k * 0.8, size: 60 * k };
     view.worldW = 2 * vw; // one continuous desk: main region, then research to the right
     for (const s of sources) {
-      Object.assign(s, fitCard(s, Math.round(s.slot.w * k)));
-      s.x = (s.region + s.slot.x / REF_W) * vw; s.y = (s.slot.y / REF_H) * vh; s.rot = s.home = s.slot.r;
+      Object.assign(s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k)));
+      if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } else s.x = -1e5; // overflow cards wait in their deck
     }
     restoreDesk(); // where they were left last time, if still valid
+    placeDecks();
   } else {
     const pad = 22;
     view.labelY = 0;
     nameBox = { x: pad, baseline: 30 + 44 * 0.8, size: 44 };
     let y = 0;
     view.worldW = vw;
-    for (const s of sources) if (s.nav) Object.assign(s, fitCard(s, 150)); // phones scroll to research; nav notes stay hidden
-    const order = [...sources].filter((s) => !s.nav).sort((a, b) => a.order - b.order);
+    for (const s of sources) if (s.kind === 'deck') Object.assign(s, fitCard(s, 150)); // phones scroll to research: no decks
+    placeDecks();
+    const order = [...sources].filter((s) => s.kind !== 'deck').sort((a, b) => a.order - b.order);
     for (const [i, s] of order.entries()) {
       if (s.region && !view.labelY) { view.labelY = y + 10; y += 56; } // research becomes a section further down
       const full = Math.min(vw - 56, 380);
       const w = Math.round(s.kind === 'polaroid' ? full * 0.56 : s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
       Object.assign(s, fitCard(s, w, full));
-      s.rot = s.home = s.slot.r * 0.7;
+      s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       s.py = y + s.h / 2; y += s.h + 30;
     }
@@ -891,19 +901,18 @@ function drawStill() {
 // Freeze the outgoing page's current frame; it slides out as an image while the incoming page's own sim runs. The
 // incoming page starts from bare paper and its cards fly in from the side the camera pans toward.
 function switchPage(region, instant) {
-  const from = Math.sign(region - page);
   if (!instant) {
     writeUniforms(gpu);
     const enc = gpu.device.createCommandEncoder();
     encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
     gpu.device.queue.submit([enc.finish()]);
     shared.fz = 1 - shared.fz;
-    trans.on = true; trans.frozenX = trans.frozen0 = page * view.w; trans.dir = from;
+    trans.on = true; trans.frozenX = trans.frozen0 = page * view.w; trans.dir = Math.sign(region - page);
   }
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
   page = region; sim = sims[page];
-  if (!instant) flyIn(from, PAN_LEAD);
+  if (!instant) drawFrom(region, { delay: T.panS * 0.7, sound: takeGesture() }); // as the camera settles
   tweakSync?.();
 }
 // Clear a page's ink and hold its agents, each for the nearest card about to land (cards with rel < 0): one sim step.
@@ -925,7 +934,12 @@ function stepCam(dt) {
 }
 function placePage() { pageEl.style.transform = view.phone ? '' : `translate3d(${(-cam.x).toFixed(2)}px, 0, 0)`; }
 addEventListener('hashchange', () => panTo(regionFromHash()));
+// A page change a click or key started may play the card sound (the browser's own back button may not).
+let gesture = false, pendingNav = null; // at most one move waits for the current one
+const takeGesture = () => { const g = gesture; gesture = false; return g; };
 function navigate(s) {
+  if (cam.t < 1 || flights.on) { pendingNav = s; return; } // one move at a time; the last click waits its turn
+  gesture = true;
   if (s.nav === 'research') { history.pushState({ fromMain: true }, '', '#research'); panTo(1); }
   else if (history.state?.fromMain) history.back(); // returns to the main desk and keeps the history tidy
   else { history.pushState(null, '', location.pathname + location.search); panTo(0); }
@@ -946,7 +960,7 @@ document.documentElement.addEventListener('pointerleave', () => (mouse = null), 
 function syncHover() {
   if (view.phone || probeKey || sources.some((o) => o.dragging)) return;
   const el = mouse && document.elementFromPoint(mouse.x, mouse.y)?.closest('.src');
-  const over = el && sources.find((o) => o.el === el && !o.nav);
+  const over = el && sources.find((o) => o.el === el);
   for (const s of sources) setHover(s, s === over);
 }
 
@@ -963,14 +977,14 @@ for (const s of sources) {
     e.preventDefault();
     if (s.suppressClick) { s.suppressClick = false; return; }
     if (s.flying) return;
-    s.nav ? navigate(s) : flip(s);
+    s.more ? drawMore(s) : s.nav ? navigate(s) : flip(s);
   });
   hit.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.nav ? navigate(s) : flip(s); }
-    else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging) { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
+    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? drawMore(s) : s.nav ? navigate(s) : flip(s); }
+    else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
   });
   hit.addEventListener('pointerdown', (e) => {
-    if (view.phone || !gpu || reduced || e.button !== 0 || s.flying) return; // reduced motion: cards stay put (a click still flips)
+    if (view.phone || !gpu || reduced || e.button !== 0 || s.flying || s.kind === 'deck') return; // decks stay at their edge // reduced motion: cards stay put (a click still flips)
     const press = { x: deskX(e), y: deskY(e), ox: s.x - deskX(e), oy: s.y - deskY(e), moved: false };
     hit.setPointerCapture(e.pointerId);
     let lt = performance.now();
@@ -1027,7 +1041,7 @@ function stepCards(dt) {
     if (view.phone && s.nav) continue; // hidden on phones, parked off the desk
     if (s.shove) stepShove(s, dt);
     else if (s.kb) stepKey(s, dt); // s.kb: where the keys are taking it
-    else if (!s.dragging && !s.flying) {
+    else if (!s.dragging && !s.flying && s.kind !== 'deck') { // decks stay at their edge
       const f = Math.exp(-dt * 7);
       s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= f; s.vy *= f;
       const mx = s.w * 0.25, my = s.h * 0.25;
@@ -1046,8 +1060,8 @@ function stepCards(dt) {
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
-    if (s.flip !== s.flipTo) {
-      s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
+    if (s.flip !== s.flipTo && !s.dealWait) { // a card waiting on a deal stack stays face down
+      s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (s.flipDur || T.flipS * MOTION.exit)); // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip > 0.6); // the real links become clickable as the back faces up
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
@@ -1112,6 +1126,8 @@ function land(s, strength) {
   // The squash starts as a push (velocity), not a jump: it dips to about min(1, k) within ~75 ms and springs back.
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: s.squash || 0, squashV: (s.squashV || 0) + 29 * Math.min(1, k) });
   if (s.rel < 0) s.rel = 0;
+  if (s.dealSound) { s.dealSound = false; sfx.thump(); }
+  if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; shove(s); } // a drawn card that had to land on something
   saveDesk(); // something just settled
 }
 
@@ -1163,7 +1179,7 @@ function shove(p) {
   const x0 = p.region * view.w, pad = 6 * view.k, boxes = keepOut(x0);
   const m = T.shove * (1 + 0.8 * clamp(p.dropS - 0.25)); // dropS - 0.25 is the release speed over landThrow
   const at = (s) => (s.shove ? [s.shove.tx, s.shove.ty] : [s.x, s.y]);
-  const others = sources.filter((s) => s !== p && s.region === p.region && !s.dragging && !s.flying);
+  const others = sources.filter((s) => s !== p && s.region === p.region && !s.dragging && !s.flying && s.kind !== 'deck' && !s.inDeck);
   const pos = new Map([[p, [p.x + p.vx / 7, p.y + p.vy / 7]]]), depth = new Map([[p, 0]]); // p's resting spot
   let front = [p];
   for (let it = 0; it < 5 && front.length; it++) { // chains: whoever moved this pass pushes on the next
@@ -1188,7 +1204,7 @@ function shove(p) {
     const dist = Math.hypot(tx - b.x, ty - b.y);
     if (b === p || dist < 0.5) continue;
     if (reduced) { Object.assign(b, { x: tx, y: ty }); placeDom(b); continue; } // no motion: it is just out of the way
-    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: MOTION.respond * (0.75 + 0.75 * clamp(dist / (250 * view.k))) };
+    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: MOTION.settle * (0.8 + 0.4 * clamp(dist / (250 * view.k))) };
     b.vx = b.vy = 0;
   }
 }
@@ -1199,6 +1215,7 @@ function stepShove(s, dt) {
   const e = easeOutQuart(clamp(v.t / v.dur));
   s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
   if (v.tr !== undefined) s.rot = v.fr + (v.tr - v.fr) * e; // tidy turns it home too
+  if (v.t >= v.dur && v.leave) { Object.assign(s, { shove: null, gone: true }); s.el.hidden = true; return; } // an emptied deck
   if (v.t >= v.dur) { s.shove = null; land(s, clamp(0.15 + v.dist / (300 * view.k), 0.1, 0.7)); placeDom(s); }
 }
 
@@ -1211,7 +1228,7 @@ function tidy() {
   if (view.phone) return;
   forgetDesk();
   let i = 0;
-  for (const s of sources.filter((o) => o.region === page && !o.dragging && !o.flying)) {
+  for (const s of sources.filter((o) => o.region === page && !o.dragging && !o.flying && o.kind !== 'deck' && !o.overflow)) { // drawn overflow cards stay
     const [tx, ty, tr] = homeOf(s), dist = Math.hypot(tx - s.x, ty - s.y);
     if (dist < 0.5 && Math.abs(tr - s.rot) < 0.05) continue;
     Object.assign(s, { vx: 0, vy: 0, released: false, kb: null });
@@ -1235,14 +1252,15 @@ const layoutSig = () => sources.map((s) => s.key + ':' + s.el.dataset.slot).join
 const sizeClass = () => (view.w >= 1100 ? 'l' : 'm') + (view.w / view.h > 1.45 ? 'w' : 'n');
 function saveDesk() {
   if (!T.remember || view.phone) return;
-  const cards = {};
+  const cards = {}, drawn = {};
   for (const s of sources) {
-    if (s.flying || s.dragging) continue;
+    if (s.overflow && !s.inDeck) drawn[s.key] = [s.slot.x, s.slot.y, s.slot.r].map((n) => +n.toFixed(3));
+    if (s.flying || s.dragging || s.kind === 'deck' || s.inDeck) continue;
     const [hx, hy, hr] = homeOf(s), v = s.shove, x = v ? v.tx : s.x, y = v ? v.ty : s.y;
     const r = v?.tr ?? (s.flip !== s.flipTo ? s.rotTo : s.rot);
     if (Math.hypot(x - hx, y - hy) > 0.5 || Math.abs(r - hr) > 0.05) cards[s.key] = [(x - s.region * view.w) / view.w, y / view.h, r].map((n) => +n.toFixed(4));
   }
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ sig: layoutSig(), size: sizeClass(), cards })); } catch { /* storage off */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ sig: layoutSig(), size: sizeClass(), cards, drawn })); } catch { /* storage off */ }
 }
 function forgetDesk() { try { localStorage.removeItem(SAVE_KEY); } catch { /* storage off */ } }
 function restoreDesk() {
@@ -1251,6 +1269,12 @@ function restoreDesk() {
   try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { /* storage off or bad data */ }
   if (!d) return;
   if (d.sig !== layoutSig() || d.size !== sizeClass()) { forgetDesk(); return; }
+  for (const [key, sl] of Object.entries(d.drawn || {})) { // overflow cards drawn before, at their generated slots
+    const s = sources.find((o) => o.key === key && o.overflow);
+    if (!s || !Array.isArray(sl) || sl.length !== 3 || !sl.every(Number.isFinite)) continue;
+    Object.assign(s, { slot: { x: sl[0], y: sl[1], w: s.baseW, r: sl[2] }, inDeck: false });
+    [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot;
+  }
   for (const s of sources) {
     const c = d.cards?.[s.key];
     if (!Array.isArray(c) || c.length !== 3 || !c.every(Number.isFinite)) continue;
@@ -1261,38 +1285,33 @@ function restoreDesk() {
   }
 }
 
-// Fly-in: a page's cards arrive one after another, slightly turned and a little above the desk, decelerating into their
-// places with a small overshoot, and each lands. Before they leave their places the page's ink is cleared and each agent
-// is held for the nearest of them, so the network grows out of the cards as they land. The first visit brings each card
-// from its nearest screen edge; a page change brings them all from the side the camera pans toward (from: 0, 1 right,
-// -1 left), the farthest first so no card crosses one that has already landed.
-const FLY_LIFT = 0.45, INTRO_DELAY = 0.3, PAN_LEAD = 0.2; // lift while flying; s before the first card (intro, page change)
+// ---------- drawing ----------
+// The one way cards enter a page: each is drawn off the top of a deck (the page's navigation deck, or its overflow deck
+// for one more card). It starts just past the deck's edge, face down, and slides to its spot while the flip turns it face
+// up (over `settle`); the flip lays it down at its angle and lands it. A page change draws as the camera settles, with
+// the card sound when a click or key started it; the first visit and a deep link draw silently.
+const INTRO_DELAY = 0.3; // s before the first card of the first visit
 const flights = { on: false, t: 0 };
 const easeOutQuart = (u) => 1 - (1 - u) ** 4;
-const easeOutBack = (u) => 1 + 2.2 * (u - 1) ** 3 + 1.2 * (u - 1) ** 2; // a degree or so past its angle, then back
 const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-function flyIn(from, delay) {
+function drawFrom(region, { delay = 0, sound = false } = {}) {
   endFlights();
-  const x0 = view.phone ? 0 : page * view.w, y0 = view.phone ? scrollY : 0;
-  const cards = sources.filter((s) => (view.phone || s.region === page) && !(view.phone && s.nav) && !s.dragging
-    && s.y - s.h / 2 < y0 + view.h && s.y + s.h / 2 > y0) // only the cards you can see
-    .sort(from ? (a, b) => from * (a.x - b.x) : (a, b) => a.order - b.order);
-  if (!cards.length) return;
+  const deck = sources.find((s) => s.nav && s.region === region);
+  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck && !s.dragging).sort((a, b) => a.order - b.order);
+  if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   for (const s of cards) s.rel = -1;
   holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
-  for (const [i, s] of cards.entries()) {
-    const lx = s.x - x0, ly = s.y - y0, off = Math.hypot(s.w, s.h) / 2 + 70; // fully off screen, shadow included
-    const edges = [[lx, -1, 0], [view.w - lx, 1, 0], [ly, 0, -1], [view.h - ly, 0, 1]];
-    const [d, ex, ey] = from ? edges[from > 0 ? 1 : 0] : edges.reduce((a, b) => (b[0] < a[0] ? b : a));
-    const turn = (hash01(s.id) < 0.5 ? -1 : 1) * (6 + 6 * hash01(s.id + 7));
-    // A page change: on the camera's clock and curve, each card rides in a little ahead of the desk and settles onto it as
-    // the camera arrives, landing one after another from just before the camera stops. The first visit: from the edge.
-    s.fly = from ? { at: 0, dur: Math.max(0.2, T.panS - 0.12 + i * 0.04), ease: glide, x: s.x, y: s.y, r: s.rot, dx: from * T.cardsAhead * view.w, dy: 0, dr: turn * 0.4 }
-      : { at: delay + i * T.landStagger, x: s.x, y: s.y, r: s.rot, dx: ex * (d + off), dy: ey * (d + off), dr: turn };
-    Object.assign(s, { flying: true, z: ++topZ, vx: 0, vy: 0, released: false }); // in the air: above the cards that already landed
-  }
+  cards.forEach((s, i) => deal(s, deck, delay + i * T.drawStagger, sound));
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
+}
+// One card onto its way from a deck to where it is now (its slot or saved spot).
+function deal(s, deck, at, sound) {
+  const out = { left: [-1, 0], right: [1, 0], bottom: [0, 1] }[deck.edge] || [0, 0], r = obb(s);
+  const sx = deck.x + out[0] * (reach(r, [1, 0]) + 8), sy = deck.y + out[1] * (reach(r, [0, 1]) + 8);
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, sx, sy, sound };
+  Object.assign(s, { flying: true, x: sx, y: sy, rot: deck.rot, flip: 1, flipTo: 0, dealWait: true, flipDur: MOTION.settle, vx: 0, vy: 0, released: false, shove: null, kb: null });
+  s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
 function stepFlights(dt) {
   if (!flights.on) return;
@@ -1301,26 +1320,125 @@ function stepFlights(dt) {
   for (const s of sources) {
     const k = s.fly;
     if (!k) continue;
-    const u = clamp((flights.t - k.at) / (k.dur ?? T.landFly)), m = 1 - (k.ease ?? easeOutQuart)(u);
-    s.x = k.x + k.dx * m; s.y = k.y + k.dy * m; s.rot = k.r + k.dr * (k.ease ? m : 1 - easeOutBack(u));
-    s.flyLift = FLY_LIFT * (1 - u) ** 2;
-    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flyLift: 0, flying: false, fly: null }); land(s, 1); }
+    if (s.dealWait && flights.t >= k.at) { // off the top of the deck
+      Object.assign(s, { dealWait: false, rotFrom: s.rot, rotTo: k.r, z: ++topZ, dealSound: k.sound });
+      if (k.sound) sfx.flick();
+    }
+    const e = easeOutQuart(clamp((flights.t - k.at) / MOTION.settle));
+    s.x = k.sx + (k.x - k.sx) * e; s.y = k.sy + (k.y - k.sy) * e;
+    if (e >= 1 && s.flip === 0) Object.assign(s, { x: k.x, y: k.y, flying: false, fly: null, flipDur: null });
     else busy = true;
     placeDom(s);
   }
   flights.on = busy;
+  if (!busy && pendingNav) { const n = pendingNav; pendingNav = null; navigate(n); }
 }
-// Puts every card still in the air straight into its place (a new layout, or the page changed again mid-flight).
+// Puts every card still in the air straight into its place (a new layout, or the page changed again mid-draw).
 function endFlights() {
   for (const s of sources) {
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k) continue;
-    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flyLift: 0, flying: false, fly: null, rel: 1e3 });
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, dealWait: false, flipDur: null, dealSound: false });
     placeDom(s);
   }
   flights.on = false;
 }
+// Decks sit at their page's edge with 45% showing: a navigation deck on the side toward its page, in the lower third;
+// an overflow deck at the bottom, toward the corner away from the navigation deck, only while it holds cards.
+function placeDecks() {
+  for (const s of sources) {
+    if (s.overflow) s.el.hidden = !view.phone && s.inDeck;
+    if (s.kind !== 'deck' || view.phone) continue;
+    const x0 = s.region * view.w, show = 0.45;
+    if (s.edge === 'bottom') {
+      const left = sources.find((o) => o.nav && o.region === s.region)?.edge !== 'left';
+      Object.assign(s, { x: x0 + (left ? 0.12 : 0.88) * view.w, y: view.h + s.h / 2 - show * s.h, rot: left ? 2 : -2 });
+    } else Object.assign(s, { x: s.edge === 'left' ? x0 + show * s.w - s.w / 2 : x0 + view.w - show * s.w + s.w / 2, y: 0.8 * view.h, rot: s.slot.r });
+    s.home = s.rot;
+    if (s.more) s.el.hidden = s.gone = !sources.some((o) => o.region === s.region && o.inDeck);
+  }
+}
+// The overflow deck: a click or key draws its next card into the best free spot, with the card sound (and a shove if it
+// had to land on something); once it is empty it slides away.
+function drawMore(deck) {
+  if (flights.on || view.phone || deck.shove) return;
+  const s = sources.filter((o) => o.region === deck.region && o.inDeck).sort((a, b) => a.order - b.order)[0];
+  if (!s) return;
+  const [x, y, r] = freeSlot(s);
+  s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
+  Object.assign(s, { inDeck: false, x, y, rot: r, home: r, shoveOnLand: true });
+  s.el.hidden = false;
+  const empty = !sources.some((o) => o.region === deck.region && o.inDeck);
+  if (empty) { // it slides off the bottom and is gone; focus moves to the card it gave
+    deck.shove = { fx: deck.x, fy: deck.y, tx: deck.x, ty: view.h + deck.h, dist: 0, t: 0.15, dur: MOTION.settle, leave: true };
+    if (document.activeElement === deck.hit) s.hit.focus();
+  }
+  if (!gpu || reduced) { endFlights(); placeDom(s); if (empty) { Object.assign(deck, { gone: true, shove: null }); deck.el.hidden = true; } if (gpu) drawStill(); return; }
+  deal(s, deck, 0, true);
+  Object.assign(flights, { on: true, t: 0 });
+  stepFlights(0);
+}
+// The best free spot for a card on its page: a grid search for the least overlap with the other cards (24 px apart),
+// the name, tagline, links, and decks, inside a 32 px margin, then nearest the middle; its angle is a flip's Gaussian.
+function freeSlot(s) {
+  const x0 = s.region * view.w, gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  const r = clamp(gauss * T.flipJitter, -T.maxAngle, T.maxAngle), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
+  const pad = 24 * view.k, m = 32 * view.k, step = 16;
+  const boxes = keepOut(x0).concat(sources.filter((o) => o !== s && o.region === s.region && !o.inDeck && !o.gone).map((o) => {
+    const q = obb(o), qx = reach(q, [1, 0]) + pad, qy = reach(q, [0, 1]) + pad;
+    return { l: o.x - qx, r: o.x + qx, t: o.y - qy, b: o.y + qy };
+  }));
+  let best = [Infinity, x0 + view.w / 2, view.h / 2];
+  for (let y = m + ey; y <= view.h - m - ey; y += step) for (let x = x0 + m + ex; x <= x0 + view.w - m - ex; x += step) {
+    let over = 0;
+    for (const q of boxes) over += Math.max(0, Math.min(x + ex, q.r) - Math.max(x - ex, q.l)) * Math.max(0, Math.min(y + ey, q.b) - Math.max(y - ey, q.t));
+    const score = over * 1e3 + Math.hypot(x - x0 - view.w / 2, y - view.h / 2);
+    if (score < best[0]) best = [score, x, y];
+  }
+  return [best[1], best[2], r];
+}
+
+// ---------- sound ----------
+// One synthesized card sound: a short band-passed noise flick as a card leaves the deck and a soft low thump as it lands,
+// each with a little random pitch and gain. Only after a click or key (the intro and deep links are silent), never with
+// reduced motion, and the panel's toggle is remembered for the session.
+try { if (sessionStorage.getItem('desk-sound') === '0') T.sound = 0; } catch { /* storage off */ }
+const sfx = (() => {
+  let ac = null, noise = null;
+  const ready = () => {
+    if (!T.sound || reduced) return null;
+    try { ac ||= new AudioContext(); } catch { return null; }
+    if (ac.state === 'suspended') ac.resume();
+    if (!noise) {
+      noise = ac.createBuffer(1, Math.round(ac.sampleRate * 0.07), ac.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    return ac;
+  };
+  const jit = () => 1 + (Math.random() - 0.5) * 0.16; // within 8%
+  const env = (a, g, t, peak, len) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + len); g.connect(a.destination); };
+  return {
+    // Making the audio context costs ~75 ms, so it is made while the desk loads (before its first frame); it stays
+    // suspended until a click or key resumes it.
+    warm() { if (!ac && T.sound && !reduced && window.AudioContext) { try { ac = new AudioContext(); } catch { /* no audio */ } } },
+    flick() {
+      const a = ready();
+      if (!a) return;
+      const t = a.currentTime, n = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+      n.buffer = noise; f.type = 'bandpass'; f.frequency.value = 3000 * jit(); f.Q.value = 1.1;
+      n.connect(f).connect(g); env(a, g, t, 0.035 * jit(), 0.06); n.start(t); n.stop(t + 0.07);
+    },
+    thump() {
+      const a = ready();
+      if (!a) return;
+      const t = a.currentTime, o = a.createOscillator(), g = a.createGain(), hz = 120 * jit();
+      o.frequency.setValueAtTime(hz, t); o.frequency.exponentialRampToValueAtTime(hz * 0.6, t + 0.09);
+      o.connect(g); env(a, g, t, 0.05 * jit(), 0.1); o.start(t); o.stop(t + 0.11);
+    },
+  };
+})();
 
 // ---------- media: crossfading playlists ----------
 
@@ -1493,11 +1611,28 @@ function coverRect(ia, ma, [z, px, py]) {
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
+// A deck from above: the top card's back in the desk's own paper, a few card edges stacked under it, a pen border, and its
+// handwritten label running along the part that shows (every deck the same way, like a spine).
+function paintDeck(x, s, S, cw, ch) {
+  x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
+  x.strokeStyle = '#1d1d1b1c'; x.lineWidth = S;
+  for (let i = 1; i <= 3; i++) { const d = (2 * i + 0.5) * S; x.strokeRect(d, d, cw - 2 * d, ch - 2 * d); } // the cards under it
+  x.strokeStyle = TOK.inkLine; x.lineWidth = 1.2 * S; x.strokeRect(14 * S, 14 * S, cw - 28 * S, ch - 28 * S);
+  const label = s.label;
+  if (!label) return;
+  const show = 0.45, vis = s.edge === 'left' ? [1 - show, 1] : s.edge === 'right' ? [0, show] : [0, 1];
+  const cx = ((vis[0] + vis[1]) / 2) * cw;
+  x.font = font(500, TOK.fsHand * S, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.save(); x.translate(cx, ch * 0.5);
+  x.rotate(-Math.PI / 2);
+  x.fillText(label, 0, 0); x.restore();
+}
 function drawCard(s, S) {
   const cw = Math.ceil(s.w * S), ch = Math.ceil(s.h * S);
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
   x.fillStyle = s.kind === 'note' ? TOK.note : TOK.stock;
   x.fillRect(0, 0, cw, ch);
+  if (s.kind === 'deck') paintDeck(x, s, S, cw, ch);
   if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, 22 * S); // the sticky strip is a touch darker
   let mediaPx = null;
   if (s.media) {
@@ -1530,7 +1665,7 @@ function drawCard(s, S) {
   } else if (s.kind === 'polaroid') {
     x.font = font(500); x.fillStyle = TOK.body; x.textAlign = 'center';
     x.fillText(s.el.querySelector('.hand').textContent, s.w / 2, s.media.y + s.media.h + 23);
-  } else {
+  } else if (s.kind === 'note') {
     x.font = HAND; x.fillStyle = TOK.text2;
     s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
   }
@@ -1873,7 +2008,7 @@ async function buildAtlas(g) {
 
 // ---------- uniforms ----------
 
-// Uniform layout: 18 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (12 vec4 each).
+// Uniform layout: 20 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
 const G_HEAD = 20, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 13;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
@@ -1952,7 +2087,7 @@ function writeUniforms(g, sm = sim, hold = false) {
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
-    if (!view.phone && x.region !== s.page) return false;
+    if ((!view.phone && x.region !== s.page) || x.inDeck || x.gone) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
@@ -2198,6 +2333,7 @@ function tweakPanel() {
   let reseedTimer = 0;
   const set = (k, v) => {
     T[k] = v;
+    if (k === 'sound') { try { sessionStorage.setItem('desk-sound', String(v)); } catch { /* storage off */ } }
     if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
     if (k === 'look') {
       const before = RESEED.map((r) => T[r]).join();
@@ -2304,7 +2440,7 @@ function tweakPanel() {
     if (gpu && before !== RESEED.map((k) => T[k]).join()) reseed();
   };
   const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
-  replay.onclick = () => flyIn(0, INTRO_DELAY); // starts over from bare paper
+  replay.onclick = () => drawFrom(page, { delay: INTRO_DELAY }); // starts over from bare paper
   const tidyB = Object.assign(document.createElement('button'), { textContent: 'tidy' });
   tidyB.onclick = () => tidy();
   bar.append(copy, reset, replay, tidyB);
@@ -2341,6 +2477,7 @@ async function main() {
   for (const s of sources) if (!s.still && clipLists[s.key]?.poster) s.img.src = '/desk-media/' + clipLists[s.key].poster; // an explicit still wins
   layout(); // the startup still uses the final layout right away
   panTo(regionFromHash(), true);
+  sfx.warm();
   const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
   await Promise.race([fontsReady, new Promise((r) => setTimeout(r, 3000))]);
   mark('fonts');
@@ -2355,7 +2492,7 @@ async function main() {
   mark('pipelines');
   if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); layout(); return; }
   await rebuild(true);
-  if (introOn()) flyIn(0, INTRO_DELAY);
+  if (introOn()) drawFrom(page, { delay: INTRO_DELAY }); // the first visit (or a deep link) draws from that page's deck, silently
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
   writeUniforms(gpu);
   const enc0 = gpu.device.createCommandEncoder();
@@ -2378,7 +2515,7 @@ async function main() {
     return;
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
-  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + T.landFly + 8 * T.landStagger : 0.3) * 1000); // after the intro
+  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + MOTION.settle + 8 * T.drawStagger : 0.3) * 1000); // after the intro
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
@@ -2471,7 +2608,7 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, trans: () => ({ ...trans, camT: cam.t }), sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), flyIn, flights, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
+window.__j = { Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, trans: () => ({ ...trans, camT: cam.t }), sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {
