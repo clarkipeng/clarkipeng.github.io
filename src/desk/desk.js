@@ -118,7 +118,6 @@ const GROUPS = {
   Camera: [
     ['panS', MOTION.travel, 0.2, 2.5, 0.05, 'pan duration s'],
     ['panEase', 'glide', 0, 0, 0, 'pan easing'],
-    ['parallax', 0.06, 0, 0.3, 0.01, 'outgoing page parallax (x screen)'],
   ],
   // Desk: what the desk does with cards you move.
   Desk: [
@@ -548,13 +547,15 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let wd = fp.xy + vec2f(g.v.w, 0.0); // device px on the desk, after the camera pan
   let pd = wd - vec2f(g.pg.x, 0.0);   // device px on the active page
   // During a page change the outgoing page slides out as the frozen image of its last frame.
+  // It stays where it was on the desk, slime and cards; live cards (the seam deck, the incoming stack) still draw over it
+  // below. Its last few percent toward the incoming page fade into paper, easing in as the move starts, so nothing pops.
+  var frozenCol = vec3f(-1.0);
   if (g.pg.y > 0.5 && g.pg.y < 1.5 && (pd.x < 0.0 || pd.x >= g.pg.w)) {
-    // It fades into bare paper over its last eighth toward the incoming page, so no hard edge meets the live page; where
-    // it runs ahead of the camera (parallax) the gap is paper too.
     let fx = wd.x - g.pg.z;
     let edge = select(fx, g.pg.w - fx, g.pg.z < g.pg.x);
-    let fr = textureLoad(frozen, clamp(vec2i(vec2f(fx, wd.y)), vec2i(0), vec2i(textureDimensions(frozen)) - 1), 0);
-    return mix(vec4f(pow(g.bg.rgb, vec3f(1.0 / 2.2)), 1.0), fr, smoothstep(0.0, 0.125 * g.pg.w, edge));
+    let fr = textureLoad(frozen, clamp(vec2i(vec2f(fx, wd.y)), vec2i(0), vec2i(textureDimensions(frozen)) - 1), 0).rgb;
+    let feather = max(1.0, 0.04 * g.pg.w * (g.pg.y - 1.0) / 0.4);
+    frozenCol = pow(mix(pow(g.bg.rgb, vec3f(1.0 / 2.2)), fr, smoothstep(0.0, feather, edge)), vec3f(2.2));
   }
   let p = pd * q;          // everything below is in sim px, except the crisp masks and edge coverage
   let s = g.a.w;           // sim px per CSS px
@@ -618,6 +619,7 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
     col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
   }
 
+  if (frozenCol.x >= 0.0) { col = frozenCol; }
   for (var j = 0u; j < u32(g.z.w); j++) { // on-screen cards only, bottom to top
     let k = u32(g.ord[j / 4u][j % 4u]);
     let c = g.cards[k];
@@ -718,7 +720,7 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
-    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, edge: d.edge, label: d.label, more: el.classList.contains('more'),
+    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, edge: d.edge, label: d.label, label2: d.label2, seam: el.classList.contains('seam'), more: el.classList.contains('more'),
     overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: +(d.aspect || 1), videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
@@ -878,7 +880,10 @@ const regionFromHash = () => (location.hash === '#research' ? 1 : 0);
 const WARM_STEPS = 150; // with reduced motion, a page you have not seen yet is formed before it is drawn
 let page = 0;
 // Tab stays on the page you see: the other page's cards are inert (focusing one would scroll the desk sideways).
-const setInert = (region) => { for (const s of sources) s.el.inert = !view.phone && s.region !== region; };
+const setInert = (region) => {
+  for (const s of sources) s.el.inert = !view.phone && s.region !== region && !s.seam;
+  for (const s of sources) if (s.seam) s.hit.setAttribute('aria-label', region ? 'Back to the desk' : 'Go to research');
+};
 function panTo(region, instant = false) {
   const to = view.phone ? 0 : region * view.w;
   if (gpu && sims.length > 1 && region !== page) switchPage(region, instant || reduced);
@@ -901,12 +906,12 @@ function drawStill() {
 // incoming page starts from bare paper and its cards fly in from the side the camera pans toward.
 function switchPage(region, instant) {
   if (!instant) {
-    writeUniforms(gpu);
+    capturing = true; writeUniforms(gpu); capturing = false; // the seam deck is drawn live, not baked in
     const enc = gpu.device.createCommandEncoder();
     encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
     gpu.device.queue.submit([enc.finish()]);
     shared.fz = 1 - shared.fz;
-    trans.on = true; trans.frozenX = trans.frozen0 = page * view.w; trans.dir = Math.sign(region - page);
+    trans.on = true; trans.frozenX = page * view.w;
   }
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
@@ -927,7 +932,6 @@ function stepCam(dt) {
   cam.t = Math.min(1, cam.t + dt / T.panS);
   const e = EASES[T.panEase](cam.t);
   cam.x = lerp(cam.from, cam.to, e);
-  if (trans.on) trans.frozenX = trans.frozen0 - trans.dir * T.parallax * view.w * e; // the outgoing page leaves a little faster
   if (cam.t >= 1) trans.on = false;
   placePage();
 }
@@ -936,7 +940,7 @@ addEventListener('hashchange', () => panTo(regionFromHash()));
 let pendingNav = null; // at most one move waits for the current one
 function navigate(s) {
   if (cam.t < 1 || flights.on) { pendingNav = s; return; } // one move at a time; the last click waits its turn
-  if (s.nav === 'research') { history.pushState({ fromMain: true }, '', '#research'); panTo(1); }
+  if (s.seam ? page === 0 : s.nav === 'research') { history.pushState({ fromMain: true }, '', '#research'); panTo(1); }
   else if (history.state?.fromMain) history.back(); // returns to the main desk and keeps the history tidy
   else { history.pushState(null, '', location.pathname + location.search); panTo(0); }
 }
@@ -1306,12 +1310,12 @@ function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x 
 const drawEase = cubicBezier(0.25, 1, 0.5, 1);
 function drawFrom(region, { delay = 0 } = {}) {
   endFlights();
-  const deck = sources.find((s) => s.nav && s.region === region);
+  const deck = sources.find((s) => s.nav && (s.seam || s.region === region));
   const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   for (const s of cards) s.rel = -1;
   holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
-  cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay }));
+  cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay, region }));
   topZ += cards.length; // the stack sits above everything, the first to be dealt on top
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
@@ -1329,7 +1333,7 @@ function deal(s, deck, at, fan = null) {
 function waitPose(k, t) {
   const d = k.deck;
   if (!k.fan) return [d.x, d.y, d.rot];
-  const out = d.edge === 'left' ? -1 : d.edge === 'right' ? 1 : 0, { k: j, n } = k.fan, h = 1.2 * (n - j);
+  const out = d.seam ? (k.fan.region ? -1 : 1) : 0, { k: j, n } = k.fan, h = 1.2 * (n - j); // out: toward the other page
   const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
   const deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
   const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the deck's center
@@ -1346,7 +1350,7 @@ function stepFlights(dt) {
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
     const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(clamp((u - 0.08) / 0.92));
     if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
-    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.s0 + (1 - k.s0) * e,
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: (k.fan ? k.s0 * Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : k.s0) + (1 - k.s0) * e, // the stack grows onto the deck, nothing pops
       turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
     if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, flyLift: 0 }); land(s, 1); } // contact
     else busy = true;
@@ -1366,17 +1370,14 @@ function endFlights() {
   }
   flights.on = false;
 }
-// Decks sit at their page's edge with 45% showing: a navigation deck on the side toward its page, in the lower third;
-// an overflow deck at the bottom, toward the corner away from the navigation deck, only while it holds cards.
+// The navigation deck sits on the seam between the pages, half on each, low; an overflow deck sits at the bottom of its
+// page, away from the seam, only while it holds cards.
 function placeDecks() {
   for (const s of sources) {
     if (s.overflow) s.el.hidden = !view.phone && s.inDeck;
     if (s.kind !== 'deck' || view.phone) continue;
-    const x0 = s.region * view.w, show = 0.45;
-    if (s.edge === 'bottom') {
-      const left = sources.find((o) => o.nav && o.region === s.region)?.edge !== 'left';
-      Object.assign(s, { x: x0 + (left ? 0.12 : 0.88) * view.w, y: view.h + s.h / 2 - show * s.h, rot: left ? 2 : -2 });
-    } else Object.assign(s, { x: s.edge === 'left' ? x0 + show * s.w - s.w / 2 : x0 + view.w - show * s.w + s.w / 2, y: 0.8 * view.h, rot: s.slot.r });
+    if (s.seam) Object.assign(s, { x: view.w, y: 0.8 * view.h, rot: 0 });
+    else Object.assign(s, { x: (s.region + (s.region ? 0.88 : 0.12)) * view.w, y: view.h + s.h / 2 - 0.45 * s.h, rot: s.region ? -2 : 2 });
     s.home = s.rot;
     if (s.more) s.el.hidden = s.gone = !sources.some((o) => o.region === s.region && o.inDeck);
   }
@@ -1592,19 +1593,14 @@ function coverRect(ia, ma, [z, px, py]) {
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
-// A deck's top card: its back in the desk's own paper, a pen border, and its handwritten label running along the part
-// that shows (every deck the same way, like a spine).
+// A deck's top card: its back in the desk's own paper, a pen border, and its handwritten label running up it like a
+// spine (the seam card has one on each half: the side you see names where it goes).
 function paintDeck(x, s, S, cw, ch) {
   x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
   x.strokeStyle = TOK.inkLine; x.lineWidth = 1.2 * S; x.strokeRect(14 * S, 14 * S, cw - 28 * S, ch - 28 * S);
-  const label = s.label;
-  if (!label) return;
-  const show = 0.45, vis = s.edge === 'left' ? [1 - show, 1] : s.edge === 'right' ? [0, show] : [0, 1];
-  const cx = ((vis[0] + vis[1]) / 2) * cw;
+  const labels = s.seam ? [[s.label, 0.25], [s.label2, 0.75]] : s.label ? [[s.label, 0.5]] : []; // the seam card: one per half
   x.font = font(500, TOK.fsHand * S, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.save(); x.translate(cx, ch * 0.5);
-  x.rotate(-Math.PI / 2);
-  x.fillText(label, 0, 0); x.restore();
+  for (const [t, f] of labels) { x.save(); x.translate(f * cw, ch * 0.5); x.rotate(-Math.PI / 2); x.fillText(t, 0, 0); x.restore(); }
 }
 function drawCard(s, S) {
   const cw = Math.ceil(s.w * S), ch = Math.ceil(s.h * S);
@@ -2060,13 +2056,14 @@ function inkOn(s, tint, base, hueMix = 1) {
 const clock = { t: 0, frame: 0 };
 const NAME_ABS = absorbance(NAME_INK);
 // The page change in progress: the outgoing page is a frozen image whose desk origin is frozenX (CSS px).
-const trans = { on: false, frozenX: 0, frozen0: 0, dir: 0, fade: 0 };
+let capturing = false;
+const trans = { on: false, frozenX: 0, fade: 0 };
 function writeUniforms(g, sm = sim, hold = false) {
   const s = sm, d = s.dpr, dev = shared.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
-    if ((!view.phone && x.region !== s.page) || x.inDeck || x.gone) return false;
+    if ((!view.phone && x.region !== s.page && !x.seam) || x.inDeck || x.gone || (capturing && x.seam)) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
@@ -2095,7 +2092,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     T.shadowSoft, T.shadow, T.landRelease, 0,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
-    s.origin * dev, trans.on ? 1 : trans.fade > 0 ? 2 + trans.fade : 0, trans.frozenX * dev, shared.CW,
+    s.origin * dev, trans.on ? 1 + 0.4 * smooth(cam.t / 0.3) : trans.fade > 0 ? 2 + trans.fade : 0, trans.frozenX * dev, shared.CW,
     st.stain, st.bleed * d, hold ? 1 : 0, 0,
     T.pDesat, T.pWarm, T.pBlack, T.pDuo,
     T.pGrain, T.pMatte, 0, 0,
