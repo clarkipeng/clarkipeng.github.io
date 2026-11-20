@@ -1325,8 +1325,8 @@ function drawFrom(region, { delay = 0 } = {}) {
 // One card onto its way out of a deck to where it is now (its slot or saved spot): it waits in the deck (fanned, as card
 // k of n, when fan is given), then is dealt at `at`.
 function deal(s, deck, at, fan = null) {
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan, s0: deck.w / s.w };
-  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.s0, vx: 0, vy: 0, released: false, shove: null, kb: null,
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan };
+  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: fan ? 0.05 : 1, morph: 0, dw: deck.w, dh: deck.h, vx: 0, vy: 0, released: false, shove: null, kb: null,
     z: fan ? topZ + fan.n - fan.k : ++topZ }); // on top of the navigation card
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
@@ -1353,9 +1353,9 @@ function stepFlights(dt) {
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
     const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(clamp((u - 0.08) / 0.92));
     if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
-    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: (k.fan ? k.s0 * Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : k.s0) + (1 - k.s0) * e, // the stack grows onto the deck, nothing pops
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.fan ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
       turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
-    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, flyLift: 0 }); land(s, 1); } // contact
+    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0 }); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
   }
@@ -1368,7 +1368,7 @@ function endFlights() {
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k) continue;
-    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, drawScale: 1, flyLift: 0 });
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, drawScale: 1, morph: null, flyLift: 0 });
     placeDom(s);
   }
   flights.on = false;
@@ -1596,11 +1596,32 @@ function coverRect(ia, ma, [z, px, py]) {
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
-// A deck's top card: its back in the desk's own paper, a pen border, and its handwritten label running up it like a
-// spine (the seam card has one on each half: the side you see names where it goes).
+// The deck back: one design for every card while it is in a deck and for the seam card. Card stock, a fine inset ink
+// frame, and a faint network of slime veins in the olive ink (seeded, so it is the same on every card).
+function paintDeckBack(x, S, cw, ch) {
+  x.fillStyle = TOK.stock; x.fillRect(0, 0, cw, ch);
+  const inset = 10 * S;
+  x.save(); x.beginPath(); x.rect(inset, inset, cw - 2 * inset, ch - 2 * inset); x.clip();
+  let seed = 7;
+  const rnd = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const pts = Array.from({ length: 16 }, () => [inset + rnd() * (cw - 2 * inset), inset + rnd() * (ch - 2 * inset)]);
+  x.strokeStyle = TOK.ink; x.lineCap = 'round'; x.globalAlpha = 0.45;
+  for (const [i, p] of pts.entries()) { // each node to its two nearest, a gently bent vein, thinner the longer it runs
+    const near = pts.map((q, j) => [Math.hypot(q[0] - p[0], q[1] - p[1]), j]).filter(([, j]) => j > i).sort((a, b) => a[0] - b[0]).slice(0, 2);
+    for (const [d, j] of near) {
+      const q = pts[j], bend = (rnd() - 0.5) * 0.4 * d;
+      x.lineWidth = Math.max(0.6, 2.2 - d / (40 * S)) * S;
+      x.beginPath(); x.moveTo(p[0], p[1]);
+      x.quadraticCurveTo((p[0] + q[0]) / 2 - ((q[1] - p[1]) / d) * bend, (p[1] + q[1]) / 2 + ((q[0] - p[0]) / d) * bend, q[0], q[1]); x.stroke();
+    }
+  }
+  x.restore(); x.globalAlpha = 1;
+  x.strokeStyle = TOK.inkLine; x.lineWidth = S; x.strokeRect(inset + 0.5 * S, inset + 0.5 * S, cw - 2 * inset - S, ch - 2 * inset - S);
+}
+// A deck's top card: the deck back and its handwritten label running up it like a spine (the seam card has one on each
+// half: the side you see names where it goes).
 function paintDeck(x, s, S, cw, ch) {
-  x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
-  x.strokeStyle = TOK.inkLine; x.lineWidth = 1.2 * S; x.strokeRect(14 * S, 14 * S, cw - 28 * S, ch - 28 * S);
+  paintDeckBack(x, S, cw, ch);
   const labels = s.seam ? [[s.label, 0.25], [s.label2, 0.75]] : s.label ? [[s.label, 0.5]] : []; // the seam card: one per half
   x.font = font(500, TOK.fsHand * S, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   for (const [t, f] of labels) { x.save(); x.translate(f * cw, ch * 0.5); x.rotate(-Math.PI / 2); x.fillText(t, 0, 0); x.restore(); }
@@ -1959,10 +1980,12 @@ async function buildAtlas(g) {
   const drawn = [];
   for (const src of sources) drawn.push(drawCard(src, S));
   const backs = sources.filter((src) => src.backEl).map((src) => ({ src, ...drawBack(src, S) }));
+  const nav = sources.find((o) => o.nav), dc = new OffscreenCanvas(Math.ceil(nav.w * S), Math.ceil(nav.h * S));
+  paintDeckBack(dc.getContext('2d'), S, dc.width, dc.height); // what every card in a deck shows
   // Shelf-pack the cards into one atlas.
   const AW = Math.min(4096, g.device.limits.maxTextureDimension2D);
   let x = 0, y = 0, rowH = 0;
-  const places = [...drawn, ...backs].map(({ canvas: c }) => {
+  const places = [...drawn, ...backs, { canvas: dc }].map(({ canvas: c }) => {
     if (x + c.width > AW) { x = 0; y += rowH + 2; rowH = 0; }
     const p = { x, y }; x += c.width + 2; rowH = Math.max(rowH, c.height); return p;
   });
@@ -1981,6 +2004,9 @@ async function buildAtlas(g) {
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, links);
   });
+  const pd = places[places.length - 1];
+  g.device.queue.copyExternalImageToTexture({ source: dc }, { texture: atlas, origin: pd }, [dc.width, dc.height]);
+  shared.deckUV = [pd.x / AW, pd.y / AH, (pd.x + dc.width) / AW, (pd.y + dc.height) / AH];
   shared.atlas = atlas;
 }
 
@@ -2037,11 +2063,12 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
   const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * (f - zh), f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * (f - zh), -mu[2], -mv[2], f - zh]);
-  const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2;
+  const mw = s.morph != null ? lerp(s.dw, s.w, s.morph) : s.w, mh = s.morph != null ? lerp(s.dh, s.h, s.morph) : s.h; // a card in a deck has the deck card's shape
+  const hw = (mw * dpr) / 2, hh = (mh * dpr) / 2;
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
-    ...(s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
+    ...(s.fly && shared.deckUV ? shared.deckUV : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
