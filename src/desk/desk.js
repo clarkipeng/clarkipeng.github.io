@@ -115,7 +115,11 @@ const GROUPS = {
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
-  'Page turn': [
+  // Notebook: each page's folded corner, the way to the other page, and the page turn.
+  Notebook: [
+    ['cornerSize', 70, 40, 120, 1, 'corner size px'],
+    ['cornerLabel', 19, 12, 30, 0.5, 'corner label px'],
+    ['cornerLift', 10, 0, 40, 1, 'hover lift px'],
     ['turnS', 0.9, 0.3, 2.5, 0.05, 'page turn s'],
     ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
   ],
@@ -930,14 +934,14 @@ function layout() {
 // The corner's DOM: its hit area and focus ring (a triangle over the fold, hovered or not), and without WebGPU the fold
 // itself, drawn flat: the sliver underneath, the flap, and the label on it.
 function placeDoor() {
-  const k = view.k, c = DOOR.d * k * Math.SQRT2, S = Math.ceil((2 * (DOOR.d + DOOR.lift) - Math.PI * DOOR.R + 14) * k * Math.SQRT2);
-  const m = 3, Lr = (2 * DOOR.d - Math.PI * DOOR.R + 10) * k * Math.SQRT2; // the ring hugs the corner at rest
+  const k = view.k, c = T.cornerSize * k * Math.SQRT2, S = Math.ceil((2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R + 14) * k * Math.SQRT2);
+  const m = 3, Lr = (2 * T.cornerSize - Math.PI * DOOR.R + 10) * k * Math.SQRT2; // the ring hugs the corner at rest
   const svg = doorEl.querySelector('svg'), set = (sel, d) => svg.querySelector(sel).setAttribute('d', d);
   for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(a, v);
   set('.hit', `M${S} 0V${S}H0Z`); set('.ring', `M${S - m} ${S - Lr}V${S - m}H${S - Lr}Z`);
   set('.sliver', `M${S} ${S - c}V${S}H${S - c}Z`); set('.flap', `M${S} ${S - c}L${S - c} ${S}V${S - c}Z`);
   const t = svg.querySelector('text'), cx = S - (2 * c) / 3, cy = S - (2 * c) / 3;
-  Object.assign(t.style, { fontSize: 19 * k + 'px' });
+  Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
   for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(-45 ${cx} ${cy})`]]) t.setAttribute(a, v);
 }
 function placeDom(s) {
@@ -995,14 +999,14 @@ function holdPage(sm) {
 // last frame, frozen) rolls away from the corner and off the screen, over the other page, live underneath, which then
 // deals its cards to their homes. Dragging the corner turns it by hand: let go past halfway and it completes, else it
 // falls back.
-const DOOR = { d: 70, R: 3.5, lift: 10, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the fold's distance from the corner and the roll's radius at rest, the hover lift; how far the fold leans toward the pointer; the roll's radius late in a turn
+const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are T.cornerSize and T.cornerLift)
 const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null, press: null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
 const turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
 const dirOf = (a) => [-Math.cos(a), -Math.sin(a)]; // from the bottom-right corner, up and left
-const rollR = (d) => view.k * clamp(DOOR.R + 0.06 * (d / view.k - DOOR.d), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
+const rollR = (d) => view.k * clamp(DOOR.R + 0.06 * (d / view.k - T.cornerSize), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
 const span = (a) => view.w * Math.cos(a) + view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
 const farD = (a) => span(a) + (Math.PI / 2) * DOOR.rMax * view.k + 8; // the fold's distance once the page is all off screen
-const restD = (hover) => view.k * (DOOR.d + (hover ? DOOR.lift : 0));
+const restD = (hover) => view.k * (T.cornerSize + (hover ? T.cornerLift : 0));
 // The fold leans a little toward the pointer, between 25 and 65 degrees.
 const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
 function stepDoor(dt) {
@@ -1400,7 +1404,7 @@ function keepOut(x0) {
   const p = 10 * view.k, out = [nameEl, taglineEl].map((el) => ({ l: el.offsetLeft, t: el.offsetTop, r: el.offsetLeft + el.offsetWidth, b: el.offsetTop + el.offsetHeight }));
   const lb = linksEl.getBoundingClientRect();
   out.push({ l: x0 + lb.left, t: lb.top, r: x0 + lb.right, b: lb.bottom });
-  const c = (2 * DOOR.d - Math.PI * DOOR.R) * view.k; // the page corner, about to its fold's tip
+  const c = (2 * T.cornerSize - Math.PI * DOOR.R) * view.k; // the page corner, about to its fold's tip
   out.push({ l: x0 + view.w - c, t: view.h - c, r: x0 + view.w, b: view.h });
   return out.map((b) => ({ l: b.l - p, t: b.t - p, r: b.r + p, b: b.b + p }));
 }
@@ -2239,7 +2243,7 @@ async function buildAtlas(g) {
   const deck = pageDeck(0), dc = new OffscreenCanvas(Math.ceil(deck.w * S), Math.ceil(deck.h * S));
   paintDeckBack(dc.getContext('2d'), S, dc.width, dc.height); // what every card in a deck shows
   // The corners' labels, in pen (transparent around the ink): one canvas size for both, the longer word's.
-  const lf = font(500, 19 * view.k * S, 'Caveat'), mc = measure();
+  const lf = font(500, T.cornerLabel * view.k * S, 'Caveat'), mc = measure();
   mc.font = lf;
   const lw = Math.ceil(Math.max(...NAMES.map((t) => mc.measureText(t).width)) + 6 * S), lh = Math.ceil(24 * view.k * S);
   const labels = NAMES.map((t) => {
@@ -2401,7 +2405,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     ...(turn.on && !capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
     ...(capturing || view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
-    (view.k * (DOOR.d - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
+    (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
     ...order, ...Array(MAX - order.length).fill(0), ...vu], 0);
   for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, s.origin, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1);
@@ -2626,8 +2630,9 @@ function tweakPanel() {
       applyLook(v); sync();
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
-    // a back style can change card sizes, so it rebuilds the desk too
-    if ((RESEED.includes(k) || k === 'backs') && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
+    // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
+    if ((RESEED.includes(k) || k === 'backs' || k === 'cornerLabel') && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
     const group = Object.assign(document.createElement('details'), { open: name === 'Agents' || name === 'Card outlines' });
