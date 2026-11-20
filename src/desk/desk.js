@@ -89,7 +89,7 @@ const GROUPS = {
     ['landR', 29, 0, 60, 1, 'burst reach px'],
     ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
     ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
-    ['drawStagger', 0.14, 0, 0.4, 0.01, 'draw stagger s (cards dealt off a deck)'],
+    ['drawStagger', 0.1, 0, 0.4, 0.01, 'draw stagger s (cards dealt off a deck)'],
     ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
     ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
     ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
@@ -1011,13 +1011,14 @@ function stepDoor(dt) {
   door.d += (restD(door.hover) * smooth(door.amt) - door.d) * e;
   door.a += ((door.hover && door.at ? leanTo(door.at.x, door.at.y) : Math.PI / 4) - door.a) * e;
 }
+const DEAL_AT = 0.35; // the deal starts this far into the turn, once the roll has uncovered the deck
 const busy = () => turn.on || flights.on || !!door.press;
 const turns = () => !!gpu && !reduced && !view.phone && sims.length > 1; // phones, reduced motion, and no WebGPU just show the other page
 // The page you see, frozen as it was last drawn, but without its corner: the turn draws that, from the same fold.
-function freeze() {
-  capturing = true; writeUniforms(gpu); capturing = false;
+function freeze(sm = sim) {
+  capturing = true; writeUniforms(gpu, sm); capturing = false;
   const enc = gpu.device.createCommandEncoder();
-  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
+  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView(), null, sm);
   gpu.device.queue.submit([enc.finish()]);
   shared.fz = 1 - shared.fz;
 }
@@ -1037,7 +1038,7 @@ function startTurn(to, mode) {
   const r = linksEl.getBoundingClientRect(); // where the links show on the main page
   turn.links = { left: r.left + (to ? view.w : 0), top: r.top, width: r.width, height: r.height };
   Object.assign(door, { amt: 0, d: 0, a: Math.PI / 4 }); // the new page's corner lies flat until the turn is over
-  drawFrom(to, { delay: mode === 'drag' ? Infinity : 0.8 * T.turnS });
+  drawFrom(to, { delay: mode === 'drag' ? Infinity : DEAL_AT * T.turnS });
 }
 function stepTurn(dt) {
   if (!turn.on) return;
@@ -1101,7 +1102,7 @@ const letGo = () => {
   if (2 * turn.target - Math.PI * rollR(turn.target) > span(turn.a) / 2) { // the corner is past halfway: complete the turn
     const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
     Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
-    drawFrom(turn.to, { delay: 0.8 * dur });
+    drawFrom(turn.to, { delay: DEAL_AT * dur });
     dest = turn.to; record(turn.to);
   } else Object.assign(turn, { mode: 'back', t: 0, d0: turn.d, d1: restD(hitEl.matches(':hover')), dur: 0.4 });
 };
@@ -1134,8 +1135,8 @@ function go(region) {
   if (!turns()) { jump(region); return; }
   const out = sources.filter((s) => s.region === page && s.kind !== 'deck' && !s.inDeck && !s.dragging);
   if (!out.length) { startTurn(region, 'auto'); return; }
-  gather(out, pageDeck(page));
-  flights.then = () => startTurn(region, 'auto');
+  // The turn starts while the last cards are still landing (the page keeps drawing them as it turns).
+  Object.assign(flights, { thenAt: gather(out, pageDeck(page)) + 0.5 * GATHER.dur, then: () => startTurn(region, 'auto') });
 }
 function next() {
   if (busy() || pendingNav == null) return;
@@ -1217,7 +1218,7 @@ for (const s of sources) {
       s.over = false;
       if (deck && over) { // let go over its deck: face down, it slides onto the pile
         Object.assign(s, { dragging: false, suppressClick: true }); s.el.classList.remove('dragging');
-        collect(s, deck, 0); Object.assign(flights, { on: true, t: 0 }); stepFlights(0); return;
+        collect(s, deck, now()); flights.on = true; stepFlights(0); return;
       }
       if (press.moved) {
         s.suppressClick = true; s.dragging = false; s.released = true; s.el.classList.remove('dragging');
@@ -1450,8 +1451,12 @@ const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H
 // off the pile, then travels home on an ease-out while it grows to its own size and turns face up (from 10% to 51% of
 // the way), landing with the burst at contact. The first visit, a deep link, and every page turn deal this way.
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
+const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.3; // s before the first visit's deck fans
-const flights = { on: false, t: 0, then: null }; // then: what follows once every card is down (a gather before a page turn)
+// One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
+// follows at thenAt (or once every card is down): the page turn after a gather.
+const flights = { on: false, t: 0, then: null, thenAt: Infinity };
+const now = () => (flights.on ? flights.t : (flights.t = 0));
 const easeOutQuart = (u) => 1 - (1 - u) ** 4;
 const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
@@ -1470,7 +1475,7 @@ const drawEase = cubicBezier(0.25, 1, 0.5, 1);
 // Deal a page's featured cards (the ones with a home slot) from its pile to their homes, the pile fanning at `delay` (s;
 // Infinity: they wait on the pile, already held for, until dealt again with a real delay).
 function drawFrom(region, { delay = 0 } = {}) {
-  endFlights();
+  endFlights(false, region);
   const deck = pageDeck(region);
   const cards = sources.filter((s) => s.region === region && s.featured && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
@@ -1478,15 +1483,16 @@ function drawFrom(region, { delay = 0 } = {}) {
   for (const s of cards) { Object.assign(s, { rel: -1, inDeck: false }); [s.x, s.y] = homeOf(s); } // each counts at its home
   holdPage(sim); // so each agent waits for the card that will land nearest it
   cards.forEach((s, i) => { [s.x, s.y] = was[i]; });
-  cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay, region }, homeOf(s)));
+  const t0 = now() + delay;
+  cards.forEach((s, k) => deal(s, deck, t0 + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: t0, region }, homeOf(s)));
   topZ += cards.length; // the stack sits above everything, the first to be dealt on top
-  Object.assign(flights, { on: true, t: 0 });
+  flights.on = true;
   stepFlights(0);
 }
 // One card onto its way out of a deck to `to` (its home, or where it is now): it waits in the deck (fanned, as card k of
 // n, when fan is given), then is dealt at `at`.
 function deal(s, deck, at, fan = null, [x, y, r] = [s.x, s.y, s.rot]) {
-  s.fly = { at, x, y, r, deck, fan, grow: !!fan && s.fly?.at !== Infinity, // a card not on the pile yet grows in there
+  s.fly = { at, x, y, r, deck, fan, t0: flights.t, grow: !!fan && s.fly?.at !== Infinity, // a card not on the pile yet grows in there
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   s.el.classList.add('flying'); // clicks go through to the deck
   Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.grow ? 0.05 : 1, morph: 0, dw: deck.w, dh: deck.h, vx: 0, vy: 0, released: false, shove: null, kb: null,
@@ -1524,9 +1530,9 @@ function stepFlights(dt) {
     const k = s.fly;
     if (!k || k.at === Infinity) continue; // a pile at rest
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
-    const [wx, wy, wr] = waitPose(k, flights.t), u0 = clamp((flights.t - k.at) / DRAW.dur), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
+    const [wx, wy, wr] = waitPose(k, flights.t), u0 = clamp((flights.t - k.at) / (k.dur || DRAW.dur)), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
     if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
-    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp((flights.t - k.t0) / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
       turn: (1 - (k.down || 0)) * smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
     if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); } // back on the pile, no burst
     else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
@@ -1534,22 +1540,24 @@ function stepFlights(dt) {
     placeDom(s);
   }
   flights.on = busy;
-  if (busy) return;
   const then = flights.then;
-  flights.then = null;
-  if (then) then(); else next();
+  if (then && (!busy || flights.t >= flights.thenAt)) { flights.then = null; then(); }
+  else if (!busy) next();
 }
-// Puts every card still in the air straight into its place (a new layout, or the page changed again mid-draw).
-function endFlights(all = false) { // all: piles too (a new layout)
+// Puts every card still in the air (on one page, if given) straight into its place (a new layout, or a page dealt again
+// mid-draw); a card on its way back lands on its pile.
+function endFlights(all = false, region = null) { // all: piles too (a new layout)
   for (const s of sources) {
+    if (region != null && s.region !== region) continue;
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k || (k.at === Infinity && !all)) continue;
+    if (k.back && !all) { k.at = Infinity; Object.assign(s, { turn: 0, morph: 1, flyLift: 0 }); [s.x, s.y, s.rot] = waitPose(k, 0); placeDom(s); continue; }
     s.el.classList.remove('flying');
     Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, drawScale: 1, morph: null, flyLift: 0 });
     placeDom(s);
   }
-  flights.on = false;
+  flights.on = sources.some((s) => s.fly && s.fly.at !== Infinity);
   if (all) flights.then = null;
 }
 // Each page's deck peeks in at its right edge.
@@ -1576,9 +1584,9 @@ function drawMore(deck, all = false) {
     const [x, y, r] = s.slot ? homeOf(s) : freeSlot(s);
     if (!s.slot) s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
     s.inDeck = false; s.shoveOnLand = !all;
-    deal(s, deck, i * T.drawStagger, { k: i, n: take.length, at: 0, region: deck.region }, [x, y, r]);
+    deal(s, deck, now() + i * T.drawStagger, { k: i, n: take.length, at: now(), region: deck.region }, [x, y, r]);
   });
-  Object.assign(flights, { on: true, t: 0 });
+  flights.on = true;
   stepFlights(0);
 }
 function deckDouble(deck) {
@@ -1587,16 +1595,17 @@ function deckDouble(deck) {
 }
 // Gather: the deal played backward, last dealt first: each card lifts, turns face down, and travels back onto the pile;
 // no burst on the way back.
+// Returns when the last card starts back.
 function gather(cards, deck) {
-  if (flights.on) return;
-  cards.sort((a, b) => (b.dealtAt || -b.order) - (a.dealtAt || -a.order)).forEach((s, i) => collect(s, deck, i * T.drawStagger));
-  Object.assign(flights, { on: true, t: 0 });
+  if (flights.on) return 0;
+  cards.sort((a, b) => (b.dealtAt || -b.order) - (a.dealtAt || -a.order)).forEach((s, i) => collect(s, deck, now() + i * GATHER.stagger));
+  flights.on = true;
   stepFlights(0);
+  return (cards.length - 1) * GATHER.stagger;
 }
-function collect(s, deck, at) {
+function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true, down: s.down || 0, // down: already face down
-
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true, down: s.down || 0, dur, // down: already face down
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0, drawScale: 1, morph: 1, dw: deck.w, dh: deck.h });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
@@ -2381,8 +2390,7 @@ function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents
   s.parity = 1 - p;
   s.t += STEP;
 }
-function encodeRender(enc, target, ts = null) {
-  const s = sim;
+function encodeRender(enc, target, ts = null, s = sim) {
   let pipe = gpu.renderPipe, bg = gpu.device.createBindGroup({ layout: gpu.renderPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s) });
   if (videoSrc && videoMix > 0) {
     try {
@@ -2487,7 +2495,10 @@ function frame(now) {
     gpu.device.queue.submit([enc.finish()]);
   }
   if (trans.fade > 0) trans.fade = Math.max(0, trans.fade - dt / 0.8); // crossfade from the frame before a resolution change
-  if (!steps) writeUniforms(gpu);
+  // The page turning away keeps drawing its last gathered cards until they are down on its pile.
+  const landing = turn.on && sources.some((s) => s.region === turn.from && s.fly && s.fly.at !== Infinity);
+  if (landing) freeze(sims[turn.from]);
+  if (!steps || landing) writeUniforms(gpu);
   const enc = gpu.device.createCommandEncoder();
   const timed = ts && steps ? ts : null;
   encodeRender(enc, gpu.ctx.getCurrentTexture().createView(), timed);
