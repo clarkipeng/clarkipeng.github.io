@@ -935,10 +935,11 @@ function layout() {
 // itself, drawn flat: the sliver underneath, the flap, and the label on it.
 function placeDoor() {
   const k = view.k, c = T.cornerSize * k * Math.SQRT2, S = Math.ceil((2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R + 14) * k * Math.SQRT2);
-  const m = 3, Lr = (2 * T.cornerSize - Math.PI * DOOR.R + 10) * k * Math.SQRT2; // the ring hugs the corner at rest
+  // The focus ring traces the folded corner at rest, 3 px out: the flap's edges out to its tip, and the page's edges.
+  const m = 3, tip = S - ((2 * T.cornerSize - Math.PI * DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
   const svg = doorEl.querySelector('svg'), set = (sel, d) => svg.querySelector(sel).setAttribute('d', d);
   for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(a, v);
-  set('.hit', `M${S} 0V${S}H0Z`); set('.ring', `M${S - m} ${S - Lr}V${S - m}H${S - Lr}Z`);
+  set('.hit', `M${S} 0V${S}H0Z`); set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
   set('.sliver', `M${S} ${S - c}V${S}H${S - c}Z`); set('.flap', `M${S} ${S - c}L${S - c} ${S}V${S - c}Z`);
   const t = svg.querySelector('text'), cx = S - (2 * c) / 3, cy = S - (2 * c) / 3;
   Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
