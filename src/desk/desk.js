@@ -916,7 +916,7 @@ function switchPage(region, instant) {
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
   page = region; sim = sims[page];
-  if (!instant) drawFrom(region, { delay: T.panS * 0.7 }); // as the camera settles
+  if (!instant && !dealt.has(region)) drawFrom(region, { delay: T.panS * 0.7 }); // a page's first visit: dealt as the camera settles; after that it is just there
   tweakSync?.();
 }
 // Clear a page's ink and hold its agents, each for the nearest card about to land (cards with rel < 0): one sim step.
@@ -1293,6 +1293,7 @@ function restoreDesk() {
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
 const INTRO_DELAY = 0.3; // s before the first visit's deck fans
 const flights = { on: false, t: 0 };
+const dealt = new Set(); // pages dealt this visit to the site: coming back finds them as they were left
 const easeOutQuart = (u) => 1 - (1 - u) ** 4;
 const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
@@ -1313,6 +1314,7 @@ function drawFrom(region, { delay = 0 } = {}) {
   const deck = sources.find((s) => s.nav && (s.seam || s.region === region));
   const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
+  dealt.add(region);
   for (const s of cards) s.rel = -1;
   holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
   cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay, region }));
@@ -2467,6 +2469,7 @@ async function main() {
   if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); layout(); return; }
   await rebuild(true);
   if (introOn()) drawFrom(page, { delay: INTRO_DELAY }); // the first visit (or a deep link) draws from that page's deck, silently
+  else dealt.add(page); // no intro: this page is simply there
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
   writeUniforms(gpu);
   const enc0 = gpu.device.createCommandEncoder();
