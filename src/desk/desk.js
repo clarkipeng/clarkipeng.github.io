@@ -16,6 +16,7 @@ let dead = false;
 
 const MAX = 32; // cards and decks the uniforms hold (room for overflow projects)
 const REF_W = 1440, REF_H = 900, PHONE = 700;
+const POSTCARD = 3 / 2; // every project card is a landscape postcard: its picture is 3:2, so a 1200x800 clip fills it
 const STEP = 1 / 60;
 const PAPER = [0xf3, 0xf1, 0xea];
 // Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
@@ -786,9 +787,9 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
   const d = el.dataset;
   const [sx, sy, sw, sr] = (d.slot || `0,0,${d.w || 260},0`).split(',').map(Number); // no slot: an overflow card
   const backEl = el.querySelector('.back');
+  const kind = ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo';
   return {
-    id, el, hit: el.querySelector('.hit'), img: el.querySelector('img'), key: d.key,
-    kind: ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo',
+    id, el, hit: el.querySelector('.hit'), img: el.querySelector('img'), key: d.key, kind,
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
     backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent) : null,
     region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'), hueHex: d.hue || '888888', // the card's own hue (spectrum style)
@@ -797,7 +798,7 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, more: el.classList.contains('more'),
-    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: +(d.aspect || 1), videoSrc: d.video,
+    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
@@ -834,12 +835,17 @@ function cardBox(s, w) {
   return { w, h: 6 + mh + (oneLine ? 32 : 31 + titleLines.length * 18), media: { x: 6, y: 6, w: mw, h: mh }, title, titleLines, sub, oneLine };
 }
 // One size for both faces, like a real card: the front's own size when the back's copy fits on it at the shared type
-// scale; otherwise the smallest card (up to maxW wide) that fits it, whose image is cropped (cover framing) to at most
-// 25% wider or taller than its own aspect. A note grows taller.
+// scale; otherwise a postcard grows as a whole (its picture stays 3:2) until the back fits, and any other card becomes
+// the smallest card (up to maxW wide) that fits it, whose image is cropped (cover framing) to at most 25% wider or
+// taller than its own aspect. A note grows taller.
 function fitCard(s, w0, maxW = Math.round(w0 * 1.5)) {
   const box = cardBox(s, w0);
   if (!s.backEl || backLayout(s, box).need <= box.h) return box;
   if (!s.media) return { ...box, h: backLayout(s, box).need };
+  if (s.kind === 'photo') {
+    for (let w = w0 + 2; w <= 2 * w0; w += 2) { const b = cardBox(s, w); if (backLayout(s, b).need <= b.h) return b; }
+    return cardBox(s, 2 * w0);
+  }
   let best = null;
   for (let w = w0; w <= maxW; w += 2) {
     const b = cardBox(s, w), chrome = b.h - b.media.h, mw = b.media.w;
