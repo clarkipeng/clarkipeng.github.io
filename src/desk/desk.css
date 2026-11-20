@@ -54,13 +54,24 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 /* Back of a flipped card: the WebGPU pass draws it; the DOM keeps the text and the real links (hit areas) in the same spots. */
 #desk .back { position: absolute; inset: 0; visibility: hidden; pointer-events: none; padding: 16px; font-size: 13px; line-height: 20px; }
 #desk .back p + p { margin-top: 8px; }
-#desk .nav .hit { cursor: pointer; }
 #desk .region-label { display: none; position: absolute; font: 600 18px Inter, sans-serif; font-optical-sizing: none; letter-spacing: -0.01em; color: #1e2228; }
 #desk.phone .region-label { display: block; }
 #desk.phone .deck { display: none; }
-/* A deck without WebGPU: the paper card back with its label (the GPU draws the stacked edges and pen border). */
-#desk .deck .hit { display: grid; place-items: center; background: var(--paper); font: 500 23px/1 Caveat, cursive; color: var(--text-2); cursor: pointer; }
-#desk .deck .hit { grid-template-columns: 1fr 1fr; align-items: start; padding-top: 6px; } /* a label across the top of each half */
+/* A deck without WebGPU: a paper card. */
+#desk .deck .hit { background: var(--paper); cursor: pointer; }
+/* The page corner, the way to the other page: WebGPU draws the fold; this is its hit area and focus ring, and without
+   WebGPU a flat drawing of the fold (desk.js placeDoor). */
+#desk .door { position: fixed; left: 0; bottom: 0; z-index: 3; padding: 0; border: 0; background: none; pointer-events: none; outline: none; }
+#desk .door svg { display: block; overflow: visible; }
+#desk .door .hit { fill: transparent; pointer-events: visiblePainted; cursor: pointer; touch-action: none; }
+#desk .door .ring { fill: none; }
+#desk .door:focus-visible .ring { stroke: var(--ink-deep); stroke-width: 2px; }
+#desk .door :is(.sliver, .flap, text) { display: none; }
+#desk.nogpu .door :is(.sliver, .flap, text) { display: inline; }
+#desk .door .sliver { fill: #e6e2d6; }
+#desk .door .flap { fill: #ece9e0; filter: drop-shadow(1px 1px 1.5px #1d1d1b2e); }
+#desk .door text { font-family: Caveat, cursive; font-weight: 500; fill: var(--text-2); text-anchor: middle; dominant-baseline: middle; }
+#desk.phone .door { display: none; }
 #desk .src.flying { pointer-events: none; } /* cards in a pile or in the air: clicks go through to the deck */
 #desk:not(.gpu) .deck[inert] { visibility: hidden; } /* the other page's deck reaches across the page edge */
 /* The back's links: the drawn text is the link; the DOM link is its hit area, with an ink wash on hover and the deep-ink focus ring. */
@@ -74,7 +85,7 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 
 #desk.gpu .hit { background: none; color: transparent; }
 #desk.gpu .hit > * { opacity: 0; }
-#desk.gpu .name { clip-path: inset(50%); }
+#desk.gpu :is(.name, .tagline) { clip-path: inset(50%); } /* drawn by the GPU, which turns them with the page */
 /* Before WebGPU is up (and without it) the DOM draws the same desk: the startup still and the fallback. */
 #desk:not(.gpu) .hit { box-shadow: 0 .6px 1.5px #1d1d1b1f, 1.25px 5px 16px #1d1d1b15; } /* the GPU shadow: light from the upper left */
 

@@ -115,13 +115,12 @@ const GROUPS = {
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
-  Camera: [
-    ['panS', MOTION.travel, 0.2, 2.5, 0.05, 'pan duration s'],
-    ['panEase', 'glide', 0, 0, 0, 'pan easing'],
+  'Page turn': [
+    ['turnS', 0.9, 0.3, 2.5, 0.05, 'page turn s'],
+    ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
   ],
   // Desk: what the desk does with cards you move.
   Desk: [
-    ['remember', 1, 0, 1, 1, 'remember where cards were left'],
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
@@ -130,7 +129,7 @@ const GROUPS = {
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
 // four corners | center: one blob under the card | ring2: max plus a second ridge farther out
 const EDGE_MODES = ['none', 'max', 'plus', 'corners', 'center', 'ring2'];
-// glide: one camera move whose speed rises gently (as u^1.5) and settles long and soft (as (1 - u)^3): the integral of
+// glide: one page turn whose speed rises gently (as u^1.5) and settles long and soft (as (1 - u)^3): the integral of
 // that speed profile, tabulated. No linear stretch, no corner.
 const glide = (() => {
   const N = 512, acc = [0];
@@ -158,7 +157,7 @@ const LOOKS = {
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
     main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
 };
-const CHOICES = { backs: ['quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, panEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
+const CHOICES = { backs: ['quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 const T = { ...DEFAULTS };
@@ -239,7 +238,7 @@ struct G {
   f: vec4f,   // E attraction, E speed-up, ink gain, ink gamma
   n: vec4f,   // ink absorbance rgb (paper style), sim px per device px
   k: vec4f,   // name ink absorbance rgb, 1 in how many agents feel the edge food
-  v: vec4f,   // video card, video mix, crossfade to the next clip, camera x on the desk (device px)
+  v: vec4f,   // video card, video mix, crossfade to the next clip, device px per CSS px at the reference size (dev * k)
   x: vec4f,   // edge mode, ridge distance, ridge width, landing burst reach (sim px)
   y: vec4f,   // landing burst speed-up, burst decay, hover excitation, cursor excitation
   z: vec4f,   // ink softness (texels), ink grain, unused, on-screen card count
@@ -247,10 +246,15 @@ struct G {
   u: vec4f,   // shadow softness, shadow strength, release window (s), unused
   st: vec4f,  // style (0 paper, 1 spectrum, 2 j), glow, halo, page clock (s)
   bg: vec4f,  // page background, linear rgb
-  pg: vec4f,  // page origin on the desk (device px), transition (1 slide, 2 + a: crossfade by a), frozen page origin (device px), canvas width (device px)
+  pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
   jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px); hold (1: clear the ink, hold the agents), unused
   pr: vec4f,  // prints: desaturate, white balance to paper, black lift, duotone at rest
   pq: vec4f,  // prints: paper grain, matte edge (CSS px), unused, unused
+  cu: vec4f,  // page turn: the outgoing page's roll (direction from the corner xy, fold distance, roll radius; device px)
+  dr: vec4f,  // the page corner of the page you see, the same way
+  lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
+  la: vec4f,  // the corner label's atlas rect
+  lt: vec4f,  // the turning page's label's atlas rect
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
@@ -541,26 +545,92 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   return 1.0 - smoothstep(-b, b, boxSd(l, c.geo.xy, c.geo.z) * c.misc.x);
 }
 
+// Bare paper in the paper style: its grain (gr) and the vignette (vq).
+fn bare(gr: vec2f, vq: vec2f) -> vec3f {
+  return g.bg.rgb * (1.0 + ((gr.x - 0.5) * 0.06 + (gr.y - 0.5) * 0.045) * g.z.y / 0.16) * (1.0 - 0.04 * dot(vq, vq));
+}
+// Ink mixed the way the browser draws text (in sRGB), so text drawn here matches the DOM's.
+fn inked(col: vec3f, ink: vec3f, a: f32) -> vec3f { return pow(mix(pow(col, vec3f(1.0 / 2.2)), ink, a), vec3f(2.2)); }
+const PI = 3.14159265;
+const DARK = vec3f(0.169, 0.169, 0.157); // TOK.text2, sRGB
+fn grainAt(p: vec2f) -> vec2f { return textureLoad(paper, clamp(vec2i(p), vec2i(0), vec2i(g.pg.xy) - 1), 0).rg; }
+// Signed distance from p to the page (the screen), device px: negative inside.
+fn pageSd(p: vec2f) -> f32 { let h = 0.5 * g.pg.xy; let q = abs(p - h) - h; return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0); }
+// Under a folded corner: the edges of the pages below, a hairline step each, a touch darker the deeper (w: how much).
+fn stacked(p: vec2f, w: f32) -> f32 {
+  let u = 1.6 * g.v.w; // a sheet's step
+  let e = min(p.x, g.pg.y - p.y);
+  if (w < 0.001 || e > 4.0 * u) { return 1.0; }
+  var f = 1.0;
+  for (var j = 1; j <= 3; j++) {
+    let out = f32(4 - j) * u - e; // outside sheet j (j = 1 is the page right under this one)
+    f *= 1.0 - 0.2 * exp(-max(out, 0.0) / 0.8) * smoothstep(-0.5, 0.5, out) - 0.02 * smoothstep(-0.5, 0.5, out);
+  }
+  return mix(1.0, f, w);
+}
+// Light on the rolled paper (light from the upper left, like the cards' shadows): th is the paper's angle on the roll
+// (0: lying flat face up, PI: flipped over flat, back up). A soft highlight runs along the crease.
+fn rollLight(dir: vec2f, th: f32, back: bool) -> f32 {
+  let L = normalize(vec3f(-0.3, -0.75, 1.0));
+  let H = normalize(L + vec3f(0.0, 0.0, 1.0));
+  var n = vec2f(sin(th), cos(th)); // along the roll direction, up
+  if (back) { n = -n; }
+  let nl = n.x * dot(L.xy, dir) + n.y * L.z;
+  let nh = n.x * dot(H.xy, dir) + n.y * H.z;
+  return 1.0 + 0.55 * (nl - L.z) + 0.07 * pow(max(nh, 0.0), 60.0) - 0.07 * pow(H.z, 60.0);
+}
+// One sheet rolling up off the page from its bottom-left corner, like a notebook page: it wraps around a cylinder of
+// radius R whose foot (the fold) lies d from the corner along dir, and lies flipped over beyond it, back side up. top is
+// the sheet's front at p (from the frozen frame when turning, sampled where the paper came from); below is what it
+// uncovers. The back is the paper's back, with the label written near the corner. Device px; antialiased edges.
+fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec4f) -> vec3f {
+  let dir = cu.xy; let d = cu.z; let R = max(cu.w, 0.5);
+  if (d <= 0.0) { return top; }
+  let C = vec2f(0.0, g.pg.y); let N = vec2f(-dir.y, dir.x);
+  let x = dot(p - C, dir); let y = dot(p - C, N);
+  if (x > max(2.0 * d - PI * R, d) + 6.0 + 2.0 * R) { return top; } // past the flap and its shadow: untouched
+  // What it uncovers, in the roll's shadow where the page still rolls up at this point of the fold.
+  let rolls = clamp(0.5 - pageSd(C + d * dir + y * N) / (1.0 + R), 0.0, 1.0);
+  var c = below * (1.0 - 0.3 * rolls * exp(-max(d - R - x, 0.0) / (3.0 * g.v.w + 0.8 * R)));
+  // The front: flat past the fold, or rolling up on the near half of the cylinder.
+  var fa = 0.0; var fp = p; var fth = 0.0;
+  if (x >= d) { fa = 1.0; }
+  else if (x > d - R) { fth = asin(clamp((d - x) / R, 0.0, 1.0)); fp = C + (d - R * fth) * dir + y * N; fa = clamp(x - d + R + 0.5, 0.0, 1.0); }
+  fa *= clamp(0.5 - pageSd(fp), 0.0, 1.0);
+  // The back: the far half of the cylinder, or the flap lying flipped over past the fold.
+  var ba = 0.0; var bp = p; var bth = PI;
+  if (x >= d) { bp = C + (2.0 * d - PI * R - x) * dir + y * N; ba = 1.0; }
+  else if (x > d - R) { bth = PI - asin(clamp((d - x) / R, 0.0, 1.0)); bp = C + (d - R * bth) * dir + y * N; ba = clamp(x - d + R + 0.5, 0.0, 1.0); }
+  ba *= clamp(0.5 - pageSd(bp), 0.0, 1.0);
+  if (fa > 0.0) {
+    var fc = top;
+    if (turning && fth > 0.0) { fc = pow(textureLoad(frozen, clamp(vec2i(fp), vec2i(0), vec2i(g.pg.xy) - 1), 0).rgb, vec3f(2.2)); }
+    fc *= rollLight(dir, fth, false);
+    // The flap's soft shadow on the flat page, cast a little down and right.
+    let ps = p - vec2f(0.4, 1.0) * (1.0 + 0.6 * R); let xs = dot(ps - C, dir);
+    let sd = pageSd(C + (2.0 * d - PI * R - xs) * dir + dot(ps - C, N) * N);
+    fc *= 1.0 - 0.2 * step(d, xs) * (1.0 - smoothstep(-1.0, 2.0 + 1.2 * R, sd));
+    c = mix(c, fc, fa);
+  }
+  if (ba > 0.0) {
+    let bg2 = grainAt(bp);
+    var bc = g.bg.rgb * (1.0 + ((bg2.x - 0.5) * 0.06 + (bg2.y - 0.5) * 0.045) * g.z.y / 0.16) * 0.97 * rollLight(dir, bth, true);
+    let lx = dot(bp - C, dir); let ly = dot(bp - C, N);
+    let lu = vec2f(ly / (2.0 * g.lb.y) + 0.5, (lx - g.lb.x) / (2.0 * g.lb.z) + 0.5);
+    if (all(lu > vec2f(0.0)) && all(lu < vec2f(1.0))) { bc = inked(bc, DARK, 0.92 * textureSampleLevel(atlas, samp, mix(lab.xy, lab.zw, lu), 0.0).a); }
+    c = mix(c, bc, ba);
+  }
+  return c;
+}
+
 @fragment fn fs(@builtin(position) fp: vec4f) -> @location(0) vec4f {
   let q = g.n.w;           // sim px per device px
-  let wd = fp.xy + vec2f(g.v.w, 0.0); // device px on the desk, after the camera pan
-  let pd = wd - vec2f(g.pg.x, 0.0);   // device px on the active page
-  // During a page change the outgoing page slides out as the frozen image of its last frame.
-  // It stays where it was on the desk, slime and cards; live cards (the seam deck, the incoming stack) still draw over it
-  // below. Its last few percent toward the incoming page fade into paper, easing in as the move starts, so nothing pops.
-  var frozenCol = vec3f(-1.0);
-  if (g.pg.y > 0.5 && g.pg.y < 1.5 && (pd.x < 0.0 || pd.x >= g.pg.w)) {
-    let fx = wd.x - g.pg.z;
-    let edge = select(fx, g.pg.w - fx, g.pg.z < g.pg.x);
-    let fr = textureLoad(frozen, clamp(vec2i(vec2f(fx, wd.y)), vec2i(0), vec2i(textureDimensions(frozen)) - 1), 0).rgb;
-    let feather = max(1.0, 0.04 * g.pg.w * (g.pg.y - 1.0) / 0.4);
-    frozenCol = pow(mix(pow(g.bg.rgb, vec3f(1.0 / 2.2)), fr, smoothstep(0.0, feather, edge)), vec3f(2.2));
-  }
+  let pd = fp.xy;          // device px on the page
   let p = pd * q;          // everything below is in sim px, except the crisp masks and edge coverage
   let s = g.a.w;           // sim px per CSS px
   let ip = vec2i(pd);
   let gr = textureLoad(paper, ip, 0).rg;
-  let vq = (fp.xy / vec2f(g.pg.w, g.a.y / q) - 0.5) * vec2f(1.6, 1.2); // vignette follows the screen
+  let vq = (fp.xy / g.pg.xy - 0.5) * vec2f(1.6, 1.2); // vignette follows the screen
   let spectrum = g.st.x > 0.5 && g.st.x < 1.5;
   let jmode = g.st.x > 1.5;
   let m = textureLoad(mask, ip, 0);
@@ -595,17 +665,17 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
     col *= T;
     localInk = 1.0 - (T.r + T.g + T.b) / 3.0;
     col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
+    col = inked(col, DARK, m.g);
     conc = localInk;
   } else if (spectrum) {
     // Dark surface, glowing veins: each vein carries its card's hue, added like light, with a soft halo around it.
     let core = pow(clamp(a * g.f.z, 0.0, 1.0), g.f.w) * fadeIn;
     let haloA = pow(clamp(halo4.a * g.f.z, 0.0, 1.0), 1.5) * g.st.z * fadeIn;
     col = g.bg.rgb * (1.0 - 0.25 * dot(vq, vq)) + (t4.rgb / max(a, 1e-4) * core + halo4.rgb / max(halo4.a, 1e-4) * haloA) * g.st.y;
-    col = mix(col, vec3f(0.86), m.r); // the name, if this page has one, in light ink
+    col = mix(col, vec3f(0.86), max(m.r, m.g)); // the name and tagline, if this page has them, in light ink
     conc = core;
   } else {
-    let grainAmp = g.z.y / 0.16; // paper grain: the paper's own texture (K8's at 0.16), and how unevenly it takes ink
-    col = g.bg.rgb * (1.0 + ((gr.x - 0.5) * 0.06 + (gr.y - 0.5) * 0.045) * grainAmp) * (1.0 - 0.04 * dot(vq, vq));
+    col = bare(gr, vq); // paper grain: the paper's own texture (K8's at 0.16), and how unevenly it takes ink
     // Ink: opacity scales its strength (1 = the ink color at full density), glow darkens dense vein cores, halo bleeds a
     // soft wash of ink around the veins. Each pixel's ink color comes from the trail, so card inks mix like dye.
     let tooth = 1.0 - 0.5 * g.z.y + g.z.y * gr.y;
@@ -616,9 +686,9 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
     let inkH = select(g.n.xyz, halo4.rgb / max(halo4.a, 1e-4), halo4.a > 1e-3);
     col *= exp(-inkA * conc - inkH * concH);
     col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
+    col = inked(col, DARK, m.g); // the tagline
   }
 
-  if (frozenCol.x >= 0.0) { col = frozenCol; }
   for (var j = 0u; j < u32(g.z.w); j++) { // on-screen cards only, bottom to top
     let k = u32(g.ord[j / 4u][j % 4u]);
     let c = g.cards[k];
@@ -680,10 +750,12 @@ fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
       col = mix(col, cc, cov);
     }
   }
+  // This page's folded corner, over a sliver of the next page and the edges of the pages below.
+  col = rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la);
+  // A page turn: the page you left (its frozen last frame) rolls away over this one.
+  if (g.pg.w > 0.5) { col = rolled(pd, col * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt); }
   var outc = vec4f(pow(clamp(col, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), 1.0);
-  if (g.pg.y >= 2.0) { // crossfade from the frame before a sim resolution change
-    outc = mix(outc, textureLoad(frozen, clamp(vec2i(wd - vec2f(g.pg.z, 0.0)), vec2i(0), vec2i(textureDimensions(frozen)) - 1), 0), g.pg.y - 2.0);
-  }
+  if (g.pg.z > 0.0) { outc = mix(outc, textureLoad(frozen, ip, 0), g.pg.z); } // crossfade from the frame before a sim resolution change
   return outc;
 }`;
 
@@ -696,13 +768,14 @@ const taglineEl = root.querySelector('.tagline');
 const linksEl = root.querySelector('.links');
 const regionLabel = root.querySelector('.region-label');
 const pageEl = root.querySelector('#page');
+const doorEl = root.querySelector('.door');
 const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
 // Each page's deck; cards without a data-slot (more than the hand-placed slots) start in it.
 {
   const list = pageEl.querySelector('.sources');
   for (const region of ['main', 'research']) { // every page has a deck for its cards
-    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="deck-${region}" data-region="${region}" data-edge="right" data-slot="0,0,170,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Deck: draw a card (double-click to gather or deal)"></div></li>`);
+    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="deck-${region}" data-region="${region}" data-slot="0,0,170,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Deck: draw a card (double-click to gather or deal)"></div></li>`);
   }
 }
 const sources = [...root.querySelectorAll('.src')].map((el, id) => {
@@ -712,14 +785,14 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
   return {
     id, el, hit: el.querySelector('.hit'), img: el.querySelector('img'), key: d.key,
     kind: ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo',
-    // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM. Nav notes pan instead of flipping.
+    // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
     backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent) : null,
-    region: d.region === 'research' ? 1 : 0, nav: d.nav, hueHex: d.hue || '888888', // the card's own hue (spectrum style)
+    region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'), hueHex: d.hue || '888888', // the card's own hue (spectrum style)
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
     jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
-    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, edge: d.edge, label: d.label, label2: d.label2, seam: el.classList.contains('seam'), more: el.classList.contains('more'),
+    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, more: el.classList.contains('more'),
     overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: +(d.aspect || 1), videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
@@ -799,12 +872,10 @@ function layout() {
     const k = clamp(Math.min(vw / REF_W, vh / REF_H), 0.62, 1.35);
     view.k = k; view.docH = vh;
     nameBox = { x: 54 * k, baseline: 46 * k + 60 * k * 0.8, size: 60 * k };
-    view.worldW = 2 * vw; // one continuous desk: main region, then research to the right
     for (const s of sources) {
       Object.assign(s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k)));
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
-    restoreDesk(); // where they were left last time, if still valid
     placeDecks();
     for (const r of [0, 1]) pileUp(r); // each deck holds its page's cards that are not on the desk
   } else {
@@ -812,7 +883,6 @@ function layout() {
     view.labelY = 0;
     nameBox = { x: pad, baseline: 30 + 44 * 0.8, size: 44 };
     let y = 0;
-    view.worldW = vw;
     for (const s of sources) if (s.kind === 'deck') Object.assign(s, fitCard(s, 150)); // phones scroll to research: no decks
     placeDecks();
     const order = [...sources].filter((s) => s.kind !== 'deck').sort((a, b) => a.order - b.order);
@@ -844,7 +914,8 @@ function layout() {
     Object.assign(linksEl.style, { left: '', top: '', maxWidth: '' });
     root.querySelector('#page').style.height = '';
   }
-  cam.x = cam.to = view.phone ? 0 : regionFromHash() * view.w; cam.t = 1; placePage(); setInert(regionFromHash());
+  turn.on = false; // a turn in progress just ends
+  cam.x = view.phone ? 0 : regionFromHash() * view.w; placePage(); setInert(regionFromHash()); placeDoor();
   for (const s of sources) {
     if (s.media) {
       const [z, px, py] = s.frame, v = 1 / z;
@@ -856,6 +927,19 @@ function layout() {
   }
 }
 
+// The corner's DOM: its hit area and focus ring (a triangle over the fold, hovered or not), and without WebGPU the fold
+// itself, drawn flat: the sliver underneath, the flap, and the label on it.
+function placeDoor() {
+  const k = view.k, c = DOOR.d * k * Math.SQRT2, S = Math.ceil((2 * (DOOR.d + DOOR.lift) - Math.PI * DOOR.R + 14) * k * Math.SQRT2);
+  const m = 3, Lr = (2 * DOOR.d - Math.PI * DOOR.R + 10) * k * Math.SQRT2; // the ring hugs the corner at rest
+  const svg = doorEl.querySelector('svg'), set = (sel, d) => svg.querySelector(sel).setAttribute('d', d);
+  for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(a, v);
+  set('.hit', `M0 0V${S}H${S}Z`); set('.ring', `M${m} ${S - Lr}V${S - m}H${Lr}Z`);
+  set('.sliver', `M0 ${S - c}V${S}H${c}Z`); set('.flap', `M0 ${S - c}L${c} ${S}V${S - c}Z`);
+  const t = svg.querySelector('text'), cx = (2 * c) / 3, cy = S - (2 * c) / 3;
+  Object.assign(t.style, { fontSize: 19 * k + 'px' });
+  for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(45 ${cx} ${cy})`]]) t.setAttribute(a, v);
+}
 function placeDom(s) {
   const r = s.rot + (s.sway * 180) / Math.PI, sc = (1 + 0.035 * s.lift) * (s.drawScale ?? 1), w = s.w, h = s.h;
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
@@ -874,50 +958,26 @@ let topZ = sources.length, hovered = null;
 // Focus: the background eases from sharp to soft while a card is hovered (like depth of field), and back after.
 let focus = 0, focusAt = 0;
 
-// The camera pans across one continuous desk: x = 0 shows the main region, x = viewport width shows research.
-const cam = { x: 0, from: 0, to: 0, t: 1 };
+// One page shows at a time: the camera is at x = 0 for the main page and at the viewport width for research. A page turn
+// moves it in one jump (the turning page covers the change).
+const cam = { x: 0 };
 const regionFromHash = () => (location.hash === '#research' ? 1 : 0);
 const WARM_STEPS = 150; // with reduced motion, a page you have not seen yet is formed before it is drawn
-let page = 0;
+let page = 0, dest = 0; // the page you see, and the page you are on your way to
+const NAMES = ['research', 'desk']; // written on each page's corner: where it leads
 // Tab stays on the page you see: the other page's cards are inert (focusing one would scroll the desk sideways).
 const setInert = (region) => {
-  for (const s of sources) s.el.inert = !view.phone && s.region !== region && !s.seam;
-  for (const s of sources) if (s.seam) s.hit.setAttribute('aria-label', region ? 'Back to the desk' : 'Go to research');
+  for (const s of sources) s.el.inert = !view.phone && s.region !== region;
+  doorEl.setAttribute('aria-label', region ? 'Back to the desk' : 'Go to research');
+  doorEl.querySelector('text').textContent = NAMES[region];
 };
-function panTo(region, instant = false) {
-  const to = view.phone ? 0 : region * view.w;
-  if (gpu && sims.length > 1 && region !== page) switchPage(region, instant || reduced);
-  setInert(region);
-  if (instant || reduced) {
-    Object.assign(cam, { x: to, from: to, to, t: 1 }); trans.on = false; placePage();
-    if (reduced && gpu && sim) drawStill(); // no frame loop with reduced motion: settle this page and draw it once
-    return;
-  }
-  Object.assign(cam, { from: cam.x, to, t: 0 });
-}
+function placePage() { pageEl.style.transform = view.phone ? '' : `translate3d(${(-cam.x).toFixed(2)}px, 0, 0)`; }
 function drawStill() {
   const enc = gpu.device.createCommandEncoder();
   for (; sim.warm > 0; sim.warm--) { writeUniforms(gpu); encodeStep(enc); }
   writeUniforms(gpu);
   encodeRender(enc, gpu.ctx.getCurrentTexture().createView());
   gpu.device.queue.submit([enc.finish()]);
-}
-// Freeze the outgoing page's current frame; it slides out as an image while the incoming page's own sim runs. The
-// incoming page starts from bare paper and its cards fly in from the side the camera pans toward.
-function switchPage(region, instant) {
-  if (!instant) {
-    capturing = true; writeUniforms(gpu); capturing = false; // the seam deck is drawn live, not baked in
-    const enc = gpu.device.createCommandEncoder();
-    encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
-    gpu.device.queue.submit([enc.finish()]);
-    shared.fz = 1 - shared.fz;
-    trans.on = true; trans.frozenX = page * view.w;
-  }
-  for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
-  videoSrc = null; videoMix = 0;
-  page = region; sim = sims[page];
-  if (!instant && !dealt.has(region)) drawFrom(region, { delay: T.panS * 0.7 }); // a page's first visit: dealt as the camera settles; after that it is just there
-  tweakSync?.();
 }
 // Clear a page's ink and hold its agents, each for the nearest card about to land (cards with rel < 0): one sim step.
 function holdPage(sm) {
@@ -927,22 +987,168 @@ function holdPage(sm) {
   gpu.device.queue.submit([enc.finish()]);
   sm.t = Math.max(sm.t, 4.5); sm.warm = 0; // nothing to fade in or catch up: the ink shows from its first deposit
 }
-function stepCam(dt) {
-  if (cam.t >= 1) return;
-  cam.t = Math.min(1, cam.t + dt / T.panS);
-  const e = EASES[T.panEase](cam.t);
-  cam.x = lerp(cam.from, cam.to, e);
-  if (cam.t >= 1) trans.on = false;
-  placePage();
+
+// ---------- the page corner and the page turn ----------
+// Each page's bottom-left corner is folded back a little, like a notebook page: under it a sliver of the next page and the
+// edges of the pages below, and on the fold, in pen, the other page's name. Hovering lifts it a little more, leaning
+// toward the pointer. Click (or Enter) turns the page: this page's cards gather into its pile, then the whole page (its
+// last frame, frozen) rolls away from the corner and off the screen, over the other page, live underneath, which then
+// deals its cards to their homes. Dragging the corner turns it by hand: let go past halfway and it completes, else it
+// falls back.
+const DOOR = { d: 70, R: 3.5, lift: 10, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the fold's distance from the corner and the roll's radius at rest, the hover lift; how far the fold leans toward the pointer; the roll's radius late in a turn
+const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null, press: null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
+const turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
+const dirOf = (a) => [Math.cos(a), -Math.sin(a)];
+const rollR = (d) => view.k * clamp(DOOR.R + 0.06 * (d / view.k - DOOR.d), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
+const span = (a) => view.w * Math.cos(a) + view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
+const farD = (a) => span(a) + (Math.PI / 2) * DOOR.rMax * view.k + 8; // the fold's distance once the page is all off screen
+const restD = (hover) => view.k * (DOOR.d + (hover ? DOOR.lift : 0));
+// The fold leans a little toward the pointer, between 25 and 65 degrees.
+const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(x, 1)) - Math.PI / 4), 0.44, 1.13);
+function stepDoor(dt) {
+  if (!turn.on) door.amt = Math.min(1, door.amt + dt / 0.5); // a page's corner folds back once it is shown
+  const e = 1 - Math.exp(-dt / 0.12);
+  door.d += (restD(door.hover) * smooth(door.amt) - door.d) * e;
+  door.a += ((door.hover && door.at ? leanTo(door.at.x, door.at.y) : Math.PI / 4) - door.a) * e;
 }
-function placePage() { pageEl.style.transform = view.phone ? '' : `translate3d(${(-cam.x).toFixed(2)}px, 0, 0)`; }
-addEventListener('hashchange', () => panTo(regionFromHash()));
-let pendingNav = null; // at most one move waits for the current one
-function navigate(s) {
-  if (cam.t < 1 || flights.on) { pendingNav = s; return; } // one move at a time; the last click waits its turn
-  if (s.seam ? page === 0 : s.nav === 'research') { history.pushState({ fromMain: true }, '', '#research'); panTo(1); }
-  else if (history.state?.fromMain) history.back(); // returns to the main desk and keeps the history tidy
-  else { history.pushState(null, '', location.pathname + location.search); panTo(0); }
+const busy = () => turn.on || flights.on || !!door.press;
+const turns = () => !!gpu && !reduced && !view.phone && sims.length > 1; // phones, reduced motion, and no WebGPU just show the other page
+// The page you see, frozen as it was last drawn, but without its corner: the turn draws that, from the same fold.
+function freeze() {
+  capturing = true; writeUniforms(gpu); capturing = false;
+  const enc = gpu.device.createCommandEncoder();
+  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
+  gpu.device.queue.submit([enc.finish()]);
+  shared.fz = 1 - shared.fz;
+}
+function show(region) {
+  for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
+  videoSrc = null; videoMix = 0;
+  page = region; if (gpu) sim = sims[page];
+  cam.x = view.phone ? 0 : region * view.w; placePage(); setInert(region);
+  tweakSync?.();
+}
+// The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
+// cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).
+function startTurn(to, mode) {
+  freeze();
+  Object.assign(turn, { on: true, mode, from: page, to, t: 0, dur: T.turnS, d0: door.d, d: door.d, start: door.d, target: door.d, a: door.a, d1: farD(door.a) });
+  show(to);
+  const r = linksEl.getBoundingClientRect(); // where the links show on the main page
+  turn.links = { left: r.left + (to ? view.w : 0), top: r.top, width: r.width, height: r.height };
+  Object.assign(door, { amt: 0, d: 0, a: Math.PI / 4 }); // the new page's corner lies flat until the turn is over
+  drawFrom(to, { delay: mode === 'drag' ? Infinity : 0.8 * T.turnS });
+}
+function stepTurn(dt) {
+  if (!turn.on) return;
+  if (turn.mode === 'drag') turn.d += (turn.target - turn.d) * (1 - Math.exp(-dt / 0.03));
+  else {
+    turn.t = Math.min(1, turn.t + dt / turn.dur);
+    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase](turn.t) : 1 - (1 - turn.t) ** 3);
+  }
+  clipLinks();
+  if (turn.mode === 'drag' || turn.t < 1) return;
+  turn.on = false;
+  clipLinks();
+  if (turn.mode === 'back') { // fell back: the page you were on comes back to life as it was
+    for (const s of sources) if (s.region === turn.to && s.rel < 0) s.rel = 1e3; // the other page's held agents let go
+    show(turn.from);
+    Object.assign(door, { amt: 1, d: turn.d, a: turn.a });
+  } else pileUp(turn.from); // a page turned by hand leaves its cards on its pile
+  next();
+}
+// The links (DOM, on the main page) turn with it: while a turn shows the main page they stay put on screen, clipped to
+// where it shows: ahead of the flap as it leaves, behind the roll as it comes back.
+function clipLinks() {
+  const st = linksEl.style;
+  if (!turn.on || view.phone || (turn.from && turn.to)) { st.clipPath = st.translate = ''; return; }
+  const out = turn.from === 0, [dx, dy] = dirOf(turn.a), R = rollR(turn.d), { left: L, top: Tp, width: w, height: h } = turn.links;
+  const edge = out ? 2 * turn.d - Math.PI * R : turn.d - R, side = (u, v) => (out ? 1 : -1) * (dx * (L + u) + dy * (Tp + v - view.h) - edge);
+  const poly = [], box = [[0, 0], [w, 0], [w, h], [0, h]];
+  box.forEach((p, i) => { // the box cut by the edge's line (Sutherland-Hodgman, one plane)
+    const q = box[(i + 1) % 4], a = side(...p), b = side(...q);
+    if (a >= 0) poly.push(p);
+    if ((a >= 0) !== (b >= 0)) { const t = a / (a - b); poly.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
+  });
+  st.translate = out ? `${view.w}px 0` : '';
+  st.clipPath = `polygon(${(poly.length ? poly : [[0, 0], [0, 0], [0, 0]]).map(([u, v]) => `${u.toFixed(1)}px ${v.toFixed(1)}px`).join(', ')})`;
+}
+// The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
+const hitEl = doorEl.querySelector('.hit');
+hitEl.addEventListener('pointerenter', () => (door.hover = true));
+hitEl.addEventListener('pointerleave', () => (door.hover = false));
+hitEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !turns() || busy() || sources.some((s) => s.dragging)) return;
+  door.press = { x: e.clientX, y: e.clientY, d: door.d, moved: false };
+  hitEl.setPointerCapture(e.pointerId);
+});
+hitEl.addEventListener('pointermove', (e) => {
+  const pr = door.press;
+  if (!pr) return;
+  if (!pr.moved) {
+    if (Math.hypot(e.clientX - pr.x, e.clientY - pr.y) < 4) return;
+    pr.moved = true; startTurn(1 - page, 'drag');
+  }
+  turn.a = leanTo(e.clientX, e.clientY);
+  const [dx, dy] = dirOf(turn.a);
+  turn.target = clamp(pr.d + ((e.clientX - pr.x) * dx + (e.clientY - pr.y) * dy) / 2, 0, farD(turn.a));
+});
+const letGo = () => {
+  const pr = door.press;
+  door.press = null;
+  if (!pr?.moved) return;
+  doorEl.dataset.dragged = '1'; // the click that follows is not a turn
+  if (2 * turn.target - Math.PI * rollR(turn.target) > span(turn.a) / 2) { // the corner is past halfway: complete the turn
+    const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
+    Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
+    drawFrom(turn.to, { delay: 0.8 * dur });
+    dest = turn.to; record(turn.to);
+  } else Object.assign(turn, { mode: 'back', t: 0, d0: turn.d, d1: restD(hitEl.matches(':hover')), dur: 0.4 });
+};
+hitEl.addEventListener('pointerup', letGo);
+hitEl.addEventListener('pointercancel', letGo);
+doorEl.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (doorEl.dataset.dragged) { delete doorEl.dataset.dragged; return; }
+  navigate(1 - dest);
+});
+// The address follows the page: research is #research, and going back to the desk pops it (the back button turns back).
+function record(to) {
+  if (to === 1) history.pushState({ fromMain: true }, '', '#research');
+  else if (history.state?.fromMain) history.back();
+  else history.pushState(null, '', location.pathname + location.search);
+}
+function navigate(to) {
+  const popped = to === 0 && history.state?.fromMain; // the hashchange it fires turns the page
+  record(to);
+  if (!popped) go(to);
+}
+addEventListener('hashchange', () => go(regionFromHash()));
+// Every page change: gather this page's cards, turn the page, deal the other's. One change at a time; the last asked for
+// waits its turn.
+let pendingNav = null;
+function go(region) {
+  dest = region;
+  if (busy()) { pendingNav = region; return; }
+  if (region === page) return;
+  if (!turns()) { jump(region); return; }
+  const out = sources.filter((s) => s.region === page && s.kind !== 'deck' && !s.inDeck && !s.dragging);
+  if (!out.length) { startTurn(region, 'auto'); return; }
+  gather(out, pageDeck(page));
+  flights.then = () => startTurn(region, 'auto');
+}
+function next() {
+  if (busy() || pendingNav == null) return;
+  const n = pendingNav;
+  pendingNav = null;
+  go(n);
+}
+// Without the turn the other page is just there, and the cards of the page you leave go home.
+function jump(region) {
+  if (view.phone) return;
+  for (const s of sources) if (s.region === page && s.slot && !s.inDeck) { [s.x, s.y, s.rot] = homeOf(s); placeDom(s); }
+  show(region);
+  if (reduced && gpu && sim) drawStill(); // no frame loop with reduced motion: settle this page and draw it once
 }
 // Pointer position on the desk (CSS px), accounting for the camera on desktop and the scroll on phones.
 const deskX = (e) => (view.phone ? e.pageX : e.clientX + cam.x);
@@ -954,6 +1160,7 @@ let mouse = null;
 addEventListener('pointermove', (e) => {
   cursor.x = deskX(e); cursor.y = deskY(e);
   if (e.pointerType === 'mouse') mouse = { x: e.clientX, y: e.clientY };
+  door.at = { x: e.clientX, y: e.clientY };
   if (!e.target.closest?.('.src')) cursor.amt = 1;
 }, { passive: true });
 document.documentElement.addEventListener('pointerleave', () => (mouse = null), { signal });
@@ -977,10 +1184,10 @@ for (const s of sources) {
     e.preventDefault();
     if (s.suppressClick) { s.suppressClick = false; return; }
     if (s.flying) return;
-    s.more ? deckClick(s, e) : s.nav ? navigate(s) : flip(s);
+    s.more ? deckClick(s, e) : flip(s);
   });
   hit.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : s.nav ? navigate(s) : flip(s); }
+    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : flip(s); }
     else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
   });
   hit.addEventListener('pointerdown', (e) => {
@@ -1043,7 +1250,6 @@ const hoverTau = (rising) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION
 function stepCards(dt) {
   const maxTilt = (T.tilt * Math.PI) / 180;
   for (const s of sources) {
-    if (view.phone && s.nav) continue; // hidden on phones, parked off the desk
     if (s.shove) stepShove(s, dt);
     else if (s.kb) stepKey(s, dt); // s.kb: where the keys are taking it
     else if (!s.dragging && !s.flying && s.kind !== 'deck') { // decks stay at their edge
@@ -1113,7 +1319,7 @@ function nudge(s, [dx, dy], big) {
   Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, dropS: 0.25 });
   if (s.z !== topZ) s.z = ++topZ;
   clearTimeout(s.keyTimer);
-  s.keyTimer = setTimeout(() => { s.keyHeld = false; if (reduced) { s.kb = null; shove(s); saveDesk(); drawStill(); } }, 300);
+  s.keyTimer = setTimeout(() => { s.keyHeld = false; if (reduced) { s.kb = null; shove(s); drawStill(); } }, 300);
   if (reduced) { Object.assign(s, { x: k.tx, y: k.ty }); placeDom(s); drawStill(); } else s.released = true;
 }
 function stepKey(s, dt) {
@@ -1132,7 +1338,6 @@ function land(s, strength) {
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: s.squash || 0, squashV: (s.squashV || 0) + 29 * Math.min(1, k) });
   if (s.rel < 0) s.rel = 0;
   if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; shove(s); } // a drawn card that had to land on something
-  saveDesk(); // something just settled
 }
 
 
@@ -1228,59 +1433,14 @@ function stepShove(s, dt) {
 const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H) * view.h, s.slot.r];
 
 
-// ---------- the desk remembers ----------
-// Where each card was left, and its angle, is kept in this browser as fractions of its page, and comes back on the next
-// visit (the intro flies cards to those spots). A changed layout, another size class, or a spot that would be off screen
-// falls back to the slot. Tidy forgets it.
-const SAVE_KEY = 'desk-cards-v1';
-const layoutSig = () => sources.map((s) => s.key + ':' + s.el.dataset.slot).join('|');
-const sizeClass = () => (view.w >= 1100 ? 'l' : 'm') + (view.w / view.h > 1.45 ? 'w' : 'n');
-function saveDesk() {
-  if (!T.remember || view.phone) return;
-  const cards = {}, drawn = {};
-  for (const s of sources) {
-    if (s.overflow && !s.inDeck) drawn[s.key] = [s.slot.x, s.slot.y, s.slot.r].map((n) => +n.toFixed(3));
-    if (s.flying || s.dragging || s.kind === 'deck' || s.inDeck) continue; // piles are saved as the pile list
-    const [hx, hy, hr] = homeOf(s), v = s.shove, x = v ? v.tx : s.x, y = v ? v.ty : s.y;
-    const r = v?.tr ?? (s.flip !== s.flipTo ? s.rotTo : s.rot);
-    if (Math.hypot(x - hx, y - hy) > 0.5 || Math.abs(r - hr) > 0.05) cards[s.key] = [(x - s.region * view.w) / view.w, y / view.h, r].map((n) => +n.toFixed(4));
-  }
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ sig: layoutSig(), size: sizeClass(), cards, drawn, pile: sources.filter((o) => o.inDeck).map((o) => o.key) })); } catch { /* storage off */ }
-}
-function forgetDesk() { try { localStorage.removeItem(SAVE_KEY); } catch { /* storage off */ } }
-function restoreDesk() {
-  if (!T.remember) return;
-  let d = null;
-  try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { /* storage off or bad data */ }
-  if (!d) return;
-  if (d.sig !== layoutSig() || d.size !== sizeClass()) { forgetDesk(); return; }
-  for (const s of sources) if (d.pile?.includes(s.key) && s.kind !== 'deck') s.inDeck = true; // on its deck when you left
-  for (const [key, sl] of Object.entries(d.drawn || {})) { // overflow cards drawn before, at their generated slots
-    const s = sources.find((o) => o.key === key && o.overflow);
-    if (!s || !Array.isArray(sl) || sl.length !== 3 || !sl.every(Number.isFinite)) continue;
-    Object.assign(s, { slot: { x: sl[0], y: sl[1], w: s.baseW, r: sl[2] }, inDeck: false });
-    [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot;
-  }
-  for (const s of sources) {
-    const c = d.cards?.[s.key];
-    if (!Array.isArray(c) || c.length !== 3 || !c.every(Number.isFinite)) continue;
-    const x = (s.region + c[0]) * view.w, y = c[1] * view.h, rot = clamp(c[2], -T.maxAngle, T.maxAngle);
-    const r = obb({ ...s, rot }), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), x0 = s.region * view.w;
-    if (x - ex < x0 - 1 || x + ex > x0 + view.w + 1 || y - ey < -1 || y + ey > view.h + 1) continue; // off screen: its slot
-    Object.assign(s, { x, y, rot });
-  }
-}
-
 // ---------- drawing ----------
-// The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down in a stack on
-// top of its navigation card at deck size; the deck fans toward the page from the top card down, and they are dealt top
-// first: each lifts up off the stack, then travels to its spot on an ease-out while it grows to its own size and turns
-// face up (from 10% to 51% of the way), landing with the burst at contact. The navigation card, at the bottom, is left. The first visit, a deep link, and page changes (as
-// the camera settles) all draw this way.
+// The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down in a pile on its
+// deck at deck size; the pile fans toward the page from the top card down, and they are dealt top first: each lifts up
+// off the pile, then travels home on an ease-out while it grows to its own size and turns face up (from 10% to 51% of
+// the way), landing with the burst at contact. The first visit, a deep link, and every page turn deal this way.
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
 const INTRO_DELAY = 0.3; // s before the first visit's deck fans
-const flights = { on: false, t: 0 };
-const dealt = new Set(); // pages dealt this visit to the site: coming back finds them as they were left
+const flights = { on: false, t: 0, then: null }; // then: what follows once every card is down (a gather before a page turn)
 const easeOutQuart = (u) => 1 - (1 - u) ** 4;
 const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
@@ -1296,53 +1456,51 @@ function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x 
   };
 }
 const drawEase = cubicBezier(0.25, 1, 0.5, 1);
+// Deal a page's featured cards (the ones with a home slot) from its pile to their homes, the pile fanning at `delay` (s;
+// Infinity: they wait on the pile, already held for, until dealt again with a real delay).
 function drawFrom(region, { delay = 0 } = {}) {
   endFlights();
   const deck = pageDeck(region);
-  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck && !s.dragging).sort((a, b) => a.order - b.order);
+  const cards = sources.filter((s) => s.region === region && s.featured && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
-  dealt.add(region);
-  for (const s of cards) s.rel = -1;
   const was = cards.map((s) => [s.x, s.y]);
-  for (const s of cards) if (s.fly) Object.assign(s, { x: s.fly.x, y: s.fly.y }); // piled cards count at their own spots
+  for (const s of cards) { Object.assign(s, { rel: -1, inDeck: false }); [s.x, s.y] = homeOf(s); } // each counts at its home
   holdPage(sim); // so each agent waits for the card that will land nearest it
   cards.forEach((s, i) => { [s.x, s.y] = was[i]; });
-  cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay, region }));
+  cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay, region }, homeOf(s)));
   topZ += cards.length; // the stack sits above everything, the first to be dealt on top
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
 }
-// One card onto its way out of a deck to where it is now (its slot or saved spot): it waits in the deck (fanned, as card
-// k of n, when fan is given), then is dealt at `at`.
-function deal(s, deck, at, fan = null) {
-  const piled = s.fly?.at === Infinity, to = piled ? s.fly : { x: s.x, y: s.y, r: s.rot };
-  s.fly = { at, x: to.x, y: to.y, r: to.r, deck, fan, grow: !!fan && !piled,
+// One card onto its way out of a deck to `to` (its home, or where it is now): it waits in the deck (fanned, as card k of
+// n, when fan is given), then is dealt at `at`.
+function deal(s, deck, at, fan = null, [x, y, r] = [s.x, s.y, s.rot]) {
+  s.fly = { at, x, y, r, deck, fan, grow: !!fan && s.fly?.at !== Infinity, // a card not on the pile yet grows in there
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   s.el.classList.add('flying'); // clicks go through to the deck
   Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.grow ? 0.05 : 1, morph: 0, dw: deck.w, dh: deck.h, vx: 0, vy: 0, released: false, shove: null, kb: null,
-    z: fan ? topZ + fan.n - fan.k : ++topZ }); // on top of the navigation card
+    z: fan ? topZ + fan.n - fan.k : ++topZ }); // the first to be dealt on top
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Where a waiting card sits: squared on the seam card like a real pile (a pixel or two and a degree or two off, below the
-// card's label strip, so the label always shows), then fanned toward its page around the pile's outer edge, top card first.
-const LABEL_STRIP = 34; // CSS px of the seam card left showing above a pile, where its labels are written
+// Where a waiting card sits: squared on its deck like a real pile (a pixel or two and a degree or two off), then fanned
+// toward the page around the pile's outer edge, top card first.
 function waitPose(k, t) {
   const d = k.deck;
   if (!k.fan) return [d.x, d.y, d.rot];
-  const out = d.seam ? (k.fan.region ? -1 : 1) : d.edge === 'right' ? 1 : 0, { k: j, n } = k.fan, [jx, jy, jr] = k.jit; // out: toward the other page
+  const { k: j, n } = k.fan, [jx, jy, jr] = k.jit;
   const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
-  const deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
-  const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the pile's center
-  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * a * 30 * (n - j) / n + jx,
-    d.y + (d.seam ? LABEL_STRIP * view.k : 0) + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + deg + jr];
+  const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
+  const ox = -0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the pile's center
+  return [d.x + 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - a * 30 * (n - j) / n + jx,
+    d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + deg + jr];
 }
-// A page's deck holds its cards that are not on the desk: all of them before the page is first shown, else those put
-// back or never dealt.
+// A page's deck holds its cards that are not on the desk: every card of a page you do not see (its featured cards come
+// out as you turn to it), and those put back or never dealt.
 function pileUp(region) {
-  const deck = pageDeck(region), all = !dealt.has(region) && region !== page;
-  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.fly && (all || s.inDeck)).sort((a, b) => a.order - b.order);
+  const deck = pageDeck(region);
+  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.fly && (region !== page || s.inDeck)).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
-  for (const s of cards) if (s.inDeck && !s.pileZ) s.pileZ = -s.order; // never dealt: the first in order on top
+  for (const s of cards) { s.inDeck = true; s.pileZ ||= -s.order; } // never dealt: the first in order on top
   cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length, at: Infinity, region }));
   topZ += cards.length;
   for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
@@ -1359,13 +1517,16 @@ function stepFlights(dt) {
     if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
     Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
       turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
-    if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); saveDesk(); } // back on the pile, no burst
+    if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); } // back on the pile, no burst
     else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
   }
   flights.on = busy;
-  if (!busy && pendingNav) { const n = pendingNav; pendingNav = null; navigate(n); }
+  if (busy) return;
+  const then = flights.then;
+  flights.then = null;
+  if (then) then(); else next();
 }
 // Puts every card still in the air straight into its place (a new layout, or the page changed again mid-draw).
 function endFlights(all = false) { // all: piles too (a new layout)
@@ -1378,15 +1539,11 @@ function endFlights(all = false) { // all: piles too (a new layout)
     placeDom(s);
   }
   flights.on = false;
+  if (all) flights.then = null;
 }
-// The navigation card sits on the seam between the pages, half on each, low; each page's deck peeks in at its right edge.
+// Each page's deck peeks in at its right edge.
 function placeDecks() {
-  for (const s of sources) {
-    if (s.kind !== 'deck' || view.phone) continue;
-    if (s.seam) Object.assign(s, { x: view.w, y: 0.8 * view.h, rot: 0 });
-    else Object.assign(s, { x: (s.region + 1) * view.w - 0.45 * s.w + s.w / 2, y: 0.42 * view.h, rot: -2 }); // the page deck, peeking in
-    s.home = s.rot;
-  }
+  for (const s of sources) if (s.kind === 'deck' && !view.phone) Object.assign(s, { x: (s.region + 1) * view.w - 0.45 * s.w + s.w / 2, y: 0.42 * view.h, rot: -2, home: -2 });
 }
 // The page deck: holds a page's cards that are not on the desk, as a squared pile on it. Click draws the top card (to its
 // slot, or the best free spot), an empty deck just nudges; double-click gathers every card on the page back onto it,
@@ -1628,7 +1785,7 @@ function coverRect(ia, ma, [z, px, py]) {
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
-// The deck back: one design for every card while it is in a deck and for the seam card. Card stock, a fine inset ink
+// The deck back: one design for every card while it is in a deck. Card stock, a fine inset ink
 // frame, and a faint network of slime veins in the olive ink (seeded, so it is the same on every card).
 function paintDeckBack(x, S, cw, ch) {
   x.fillStyle = TOK.stock; x.fillRect(0, 0, cw, ch);
@@ -1650,30 +1807,18 @@ function paintDeckBack(x, S, cw, ch) {
   x.restore(); x.globalAlpha = 1;
   x.strokeStyle = TOK.inkLine; x.lineWidth = S; x.strokeRect(inset + 0.5 * S, inset + 0.5 * S, cw - 2 * inset - S, ch - 2 * inset - S);
 }
-// A deck's top card: the deck back and its handwritten label across its top strip (the seam card has one on each half:
-// the side you see names where it goes).
-function paintDeck(x, s, S, cw, ch) {
-  if (s.more) { // a page deck is the place its pile sits: a faint inked outline on the paper, covered while it holds cards
-    x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
-    x.strokeStyle = TOK.inkLine; x.globalAlpha = 0.55; x.lineWidth = S; x.setLineDash([5 * S, 4 * S]);
-    x.strokeRect(6.5 * S, 6.5 * S, cw - 13 * S, ch - 13 * S); x.setLineDash([]); x.globalAlpha = 1;
-    return;
-  }
-  paintDeckBack(x, S, cw, ch);
-  const labels = s.seam ? [[s.label, 0.25], [s.label2, 0.75]] : s.label ? [[s.label, 0.5]] : []; // the seam card: one per half
-  x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
-  for (const [t, f] of labels) { // across the top strip a pile leaves showing, as large as fits its half
-    let px = TOK.fsHand;
-    do x.font = font(500, px * S, 'Caveat'); while (px-- > 14 && x.measureText(t).width > (s.seam ? 0.5 : 1) * cw - 26 * S);
-    x.fillText(t, f * cw, (LABEL_STRIP * view.k * S) / 2 + 3 * S);
-  }
+// A page deck is the place its pile sits: a faint inked outline on the paper, covered while it holds cards.
+function paintDeck(x, S, cw, ch) {
+  x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
+  x.strokeStyle = TOK.inkLine; x.globalAlpha = 0.55; x.lineWidth = S; x.setLineDash([5 * S, 4 * S]);
+  x.strokeRect(6.5 * S, 6.5 * S, cw - 13 * S, ch - 13 * S); x.setLineDash([]); x.globalAlpha = 1;
 }
 function drawCard(s, S) {
   const cw = Math.ceil(s.w * S), ch = Math.ceil(s.h * S);
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
   x.fillStyle = s.kind === 'note' ? TOK.note : TOK.stock;
   x.fillRect(0, 0, cw, ch);
-  if (s.kind === 'deck') paintDeck(x, s, S, cw, ch);
+  if (s.kind === 'deck') paintDeck(x, S, cw, ch);
   if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, 22 * S); // the sticky strip is a touch darker
   let mediaPx = null;
   if (s.media) {
@@ -1975,7 +2120,7 @@ function createSim(g, page) {
   const agents = device.createBuffer({ size: init.byteLength, usage: SB.STORAGE | SB.COPY_DST });
   device.queue.writeBuffer(agents, 0, init);
 
-  // Text mask for this page at device resolution: r = crisp signature, b = where ink thins behind text.
+  // Text mask for this page at device resolution: r = crisp signature, g = the tagline, b = where ink thins behind text.
   // Each layer paints one color channel and 'lighter' adds them, so one canvas uploads all three.
   const mask = tex(CW, CH, 'rgba8unorm', TU.TEXTURE | TU.COPY_DST | TU.RENDER);
   const mc = new OffscreenCanvas(CW, CH), mx = mc.getContext('2d');
@@ -1992,6 +2137,24 @@ function createSim(g, page) {
     drawName('#00f', 10); drawName('#00f', 10);
     // Element rects are on screen; the mask is on this page.
     const sy = view.phone ? scrollY : 0, sx = view.phone ? 0 : cam.x - origin;
+    // The tagline, drawn here (not by the DOM) so it turns with its page: the DOM's own line breaks and positions.
+    const ts = getComputedStyle(taglineEl), node = taglineEl.firstChild, range = document.createRange();
+    // At its CSS size under a scale, so the canvas picks Inter's optical size for 16px, as the DOM does.
+    mx.save(); mx.scale(dev, dev);
+    mx.filter = 'none'; mx.letterSpacing = '0px'; mx.fillStyle = '#0f0';
+    mx.font = `${ts.fontWeight} ${ts.fontSize} Inter`;
+    const ascent = mx.measureText('Hg').fontBoundingBoxAscent;
+    let line = null;
+    const flush = () => line && mx.fillText(line.t.trimEnd(), line.x + sx, line.top + sy + ascent);
+    for (let i = 0; i < node.length; i++) {
+      range.setStart(node, i); range.setEnd(node, i + 1);
+      const r = range.getClientRects()[0];
+      if (!r) continue;
+      if (!line || r.top > line.top + 2) { if (node.data[i] === ' ') continue; flush(); line = { t: '', x: r.left, top: r.top }; }
+      line.t += node.data[i];
+    }
+    flush();
+    mx.restore();
     mx.filter = `blur(${12 * dev}px)`; mx.fillStyle = '#00f';
     for (const el of [taglineEl, linksEl, regionLabel]) {
       const r = el.getBoundingClientRect();
@@ -2022,12 +2185,23 @@ async function buildAtlas(g) {
   const drawn = [];
   for (const src of sources) drawn.push(drawCard(src, S));
   const backs = sources.filter((src) => src.backEl).map((src) => ({ src, ...drawBack(src, S) }));
-  const nav = sources.find((o) => o.nav), dc = new OffscreenCanvas(Math.ceil(nav.w * S), Math.ceil(nav.h * S));
+  const deck = pageDeck(0), dc = new OffscreenCanvas(Math.ceil(deck.w * S), Math.ceil(deck.h * S));
   paintDeckBack(dc.getContext('2d'), S, dc.width, dc.height); // what every card in a deck shows
+  // The corners' labels, in pen (transparent around the ink): one canvas size for both, the longer word's.
+  const lf = font(500, 19 * view.k * S, 'Caveat'), mc = measure();
+  mc.font = lf;
+  const lw = Math.ceil(Math.max(...NAMES.map((t) => mc.measureText(t).width)) + 6 * S), lh = Math.ceil(24 * view.k * S);
+  const labels = NAMES.map((t) => {
+    const c = new OffscreenCanvas(lw, lh), x = c.getContext('2d');
+    Object.assign(x, { font: lf, fillStyle: '#000', textAlign: 'center', textBaseline: 'middle' });
+    x.fillText(t, lw / 2, lh / 2);
+    return c;
+  });
+  shared.label = { hw: lw / 2 / S, hh: lh / 2 / S };
   // Shelf-pack the cards into one atlas.
   const AW = Math.min(4096, g.device.limits.maxTextureDimension2D);
   let x = 0, y = 0, rowH = 0;
-  const places = [...drawn, ...backs, { canvas: dc }].map(({ canvas: c }) => {
+  const extra = [dc, ...labels], places = [...drawn, ...backs, ...extra.map((c) => ({ canvas: c }))].map(({ canvas: c }) => {
     if (x + c.width > AW) { x = 0; y += rowH + 2; rowH = 0; }
     const p = { x, y }; x += c.width + 2; rowH = Math.max(rowH, c.height); return p;
   });
@@ -2046,16 +2220,19 @@ async function buildAtlas(g) {
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, links);
   });
-  const pd = places[places.length - 1];
-  g.device.queue.copyExternalImageToTexture({ source: dc }, { texture: atlas, origin: pd }, [dc.width, dc.height]);
-  shared.deckUV = [pd.x / AW, pd.y / AH, (pd.x + dc.width) / AW, (pd.y + dc.height) / AH];
+  const [deckUV, ...labelUV] = extra.map((c, i) => {
+    const p = places[drawn.length + backs.length + i];
+    g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
+    return [p.x / AW, p.y / AH, (p.x + c.width) / AW, (p.y + c.height) / AH];
+  });
+  Object.assign(shared, { deckUV, labelUV });
   shared.atlas = atlas;
 }
 
 // ---------- uniforms ----------
 
-// Uniform layout: 20 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 20, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 13;
+// Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
+const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 13;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -2127,15 +2304,16 @@ function inkOn(s, tint, base, hueMix = 1) {
 
 const clock = { t: 0, frame: 0 };
 const NAME_ABS = absorbance(NAME_INK);
-// The page change in progress: the outgoing page is a frozen image whose desk origin is frozenX (CSS px).
+// capturing: drawing the frozen frame a page turn starts from (the page without its corner). trans.fade: the crossfade
+// from the frame before a sim resolution change.
 let capturing = false;
-const trans = { on: false, frozenX: 0, fade: 0 };
+const trans = { fade: 0 };
 function writeUniforms(g, sm = sim, hold = false) {
   const s = sm, d = s.dpr, dev = shared.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
-    if ((!view.phone && x.region !== s.page && !x.seam && !x.fly?.deck.seam) || x.gone || (capturing && (x.seam || x.fly))) return false;
+    if ((!view.phone && x.region !== s.page) || x.gone) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
@@ -2156,7 +2334,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     T.respawn, T.edge, sources.length, clock.frame,
     (cursor.x - s.origin) * d, cursor.y * d, cursor.amt, 0.94, 0.6, 0.4, st.gain, st.gamma,
     ...absorbance(hexRGB(st.ink)), s.W / shared.CW, ...NAME_ABS, Math.max(1, Math.round(1 / T.share)),
-    vs ? vs.id : -1, videoMix, vs?.player.fading ? clamp(vs.player.fade) : 0, cam.x * dev,
+    vs ? vs.id : -1, videoMix, vs?.player.fading ? clamp(vs.player.fade) : 0, dev * view.k,
     EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
     st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, 0, order.length,
@@ -2164,10 +2342,15 @@ function writeUniforms(g, sm = sim, hold = false) {
     T.shadowSoft, T.shadow, T.landRelease, 0,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
-    s.origin * dev, trans.on ? 1 + 0.4 * smooth(cam.t / 0.3) : trans.fade > 0 ? 2 + trans.fade : 0, trans.frozenX * dev, shared.CW,
+    shared.CW, shared.CH, trans.fade, turn.on && !capturing ? 1 : 0,
     st.stain, st.bleed * d, hold ? 1 : 0, 0,
     T.pDesat, T.pWarm, T.pBlack, T.pDuo,
     T.pGrain, T.pMatte, 0, 0,
+    ...(turn.on && !capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
+    ...(capturing || view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
+    // the label sits on the flap at rest, its foot a few px from the fold
+    (view.k * (DOOR.d - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
+    ...shared.labelUV[page], ...shared.labelUV[turn.from],
     ...order, ...Array(MAX - order.length).fill(0), ...vu], 0);
   for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, s.origin, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1);
   g.device.queue.writeBuffer(g.uniform, 0, U);
@@ -2213,7 +2396,7 @@ function qualityCheck(dt) {
   // veins keep their weight through the change instead of dimming and recovering.
   Q.shown += (Q.level - Q.shown) * Math.min(1, dt * 3);
   Q.depMul = Math.max(1, sim.ref / activeAgents(sim));
-  if (!autoOn()) return;
+  if (!autoOn() || turn.on) return; // a page turn holds the frozen frame a resolution change would need
   const t = clock.t;
   Q.vsync = Math.max(4, Math.min(...stats.intervals.filter((x) => x > 4), 16.7)); // the display's frame period
   if (t > Q.nextCheck && t > Q.checkUntil) { Q.checkUntil = t + 1.5; Q.nextCheck = t + 15; }
@@ -2244,7 +2427,7 @@ function resizeSims() {
   sims.forEach(destroySim);
   sims = (view.phone ? [0] : [0, 1]).map((pg) => Object.assign(createSim(gpu, pg), { t: 4.5, warm: WARM_STEPS }));
   sim = sims[page];
-  trans.fade = 1; trans.frozenX = cam.x;
+  trans.fade = 1;
 }
 
 let last = 0, acc = 0, running = true;
@@ -2259,7 +2442,8 @@ function frame(now) {
   stepFlights(dt);
   syncHover();
   stepCards(dt);
-  stepCam(dt);
+  stepTurn(dt);
+  stepDoor(dt);
   stepMedia(dt);
   cursor.amt *= Math.exp(-dt * 2);
   acc += dt;
@@ -2521,7 +2705,6 @@ async function main() {
   await loadClipLists();
   for (const s of sources) if (!s.still && clipLists[s.key]?.poster) s.img.src = '/desk-media/' + clipLists[s.key].poster; // an explicit still wins
   layout(); // the startup still uses the final layout right away
-  panTo(regionFromHash(), true);
   const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
   await Promise.race([fontsReady, new Promise((r) => setTimeout(r, 3000))]);
   mark('fonts');
@@ -2537,8 +2720,10 @@ async function main() {
   if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); layout(); return; }
   await rebuild(true);
   if (introOn()) drawFrom(page, { delay: INTRO_DELAY }); // the first visit (or a deep link) draws from that page's deck, silently
-  else dealt.add(page); // no intro: this page is simply there
   pileUp(0); pileUp(1); // each deck holds its page's cards that are not on the desk
+  dest = page;
+  door.amt = introOn() ? -1 : 0; // the corner folds back just after the deal starts
+  if (reduced) Object.assign(door, { amt: 1, d: restD(false) }); // no frame loop: drawn folded
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
   writeUniforms(gpu);
   const enc0 = gpu.device.createCommandEncoder();
@@ -2654,7 +2839,7 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, trans: () => ({ ...trans, camT: cam.t }), sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
+window.__j = { Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {
