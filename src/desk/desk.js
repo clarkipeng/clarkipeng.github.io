@@ -1281,10 +1281,10 @@ function restoreDesk() {
 }
 
 // ---------- drawing ----------
-// The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down under its
-// navigation card at deck size; the deck fans toward the page, and they are dealt one after another, each traveling to
-// its spot on an ease-out while it grows to its own size and turns face up (from 10% to 51% of the way), landing with
-// the burst at contact. The navigation card is the last one left. The first visit, a deep link, and page changes (as
+// The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down in a stack on
+// top of its navigation card at deck size; the deck fans toward the page from the top card down, and they are dealt top
+// first: each lifts up off the stack, then travels to its spot on an ease-out while it grows to its own size and turns
+// face up (from 10% to 51% of the way), landing with the burst at contact. The navigation card, at the bottom, is left. The first visit, a deep link, and page changes (as
 // the camera settles) all draw this way.
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
 const INTRO_DELAY = 0.3; // s before the first visit's deck fans
@@ -1312,6 +1312,7 @@ function drawFrom(region, { delay = 0 } = {}) {
   for (const s of cards) s.rel = -1;
   holdPage(sim); // with the cards still in their places, so each agent waits for the card that lands nearest it
   cards.forEach((s, k) => deal(s, deck, delay + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: delay }));
+  topZ += cards.length; // the stack sits above everything, the first to be dealt on top
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
 }
@@ -1320,17 +1321,20 @@ function drawFrom(region, { delay = 0 } = {}) {
 function deal(s, deck, at, fan = null) {
   s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan, s0: deck.w / s.w };
   Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.s0, vx: 0, vy: 0, released: false, shove: null, kb: null,
-    z: deck.z - 1 - (fan ? fan.n - fan.k : 0) }); // under the navigation card, the first to go on top
+    z: fan ? topZ + fan.n - fan.k : ++topZ }); // on top of the navigation card
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Where a waiting card sits: in the deck, or fanned toward the page around the deck's outer edge (top card furthest in).
+// Where a waiting card sits: stacked on the deck (each card a little in and up from the one below), or fanned toward the
+// page around the deck's outer edge, opening from the top card down (the top card swings furthest in).
 function waitPose(k, t) {
   const d = k.deck;
   if (!k.fan) return [d.x, d.y, d.rot];
-  const out = d.edge === 'left' ? -1 : d.edge === 'right' ? 1 : 0, a = 1 - (1 - clamp((t - k.fan.at) / DRAW.fan)) ** 3;
-  const { k: j, n } = k.fan, deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
+  const out = d.edge === 'left' ? -1 : d.edge === 'right' ? 1 : 0, { k: j, n } = k.fan, h = 1.2 * (n - j);
+  const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
+  const deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
   const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the deck's center
-  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * a * 30 * (n - j) / n, d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th), d.rot + deg];
+  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * (h + a * 30 * (n - j) / n),
+    d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) - h, d.rot + deg];
 }
 function stepFlights(dt) {
   if (!flights.on) return;
@@ -1339,10 +1343,11 @@ function stepFlights(dt) {
   for (const s of sources) {
     const k = s.fly;
     if (!k) continue;
-    const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(u);
+    // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
+    const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(clamp((u - 0.08) / 0.92));
     if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
     Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.s0 + (1 - k.s0) * e,
-      turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.33 * Math.sin(Math.PI * u) });
+      turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
     if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, flyLift: 0 }); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
