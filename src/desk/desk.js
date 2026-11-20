@@ -914,7 +914,7 @@ function layout() {
     Object.assign(linksEl.style, { left: '', top: '', maxWidth: '' });
     root.querySelector('#page').style.height = '';
   }
-  turn.on = false; // a turn in progress just ends
+  turn.on = false; clipLinks(); // a turn in progress just ends
   cam.x = view.phone ? 0 : regionFromHash() * view.w; placePage(); setInert(regionFromHash()); placeDoor();
   for (const s of sources) {
     if (s.media) {
@@ -1564,8 +1564,8 @@ function drawMore(deck, all = false) {
   take.forEach((s, i) => {
     const [x, y, r] = s.slot ? homeOf(s) : freeSlot(s);
     if (!s.slot) s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
-    Object.assign(s.fly, { x, y, r }); s.inDeck = false; s.shoveOnLand = !all;
-    deal(s, deck, i * T.drawStagger, { k: i, n: take.length, at: 0, region: deck.region });
+    s.inDeck = false; s.shoveOnLand = !all;
+    deal(s, deck, i * T.drawStagger, { k: i, n: take.length, at: 0, region: deck.region }, [x, y, r]);
   });
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
