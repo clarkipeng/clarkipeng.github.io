@@ -121,7 +121,6 @@ const GROUPS = {
   ],
   // Desk: what the desk does with cards you move.
   Desk: [
-    ['tidyDbl', 1, 0, 1, 1, 'double-click the desk to tidy'],
     ['remember', 1, 0, 1, 1, 'remember where cards were left'],
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
@@ -699,11 +698,11 @@ const regionLabel = root.querySelector('.region-label');
 const pageEl = root.querySelector('#page');
 const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
-// A page with more cards than hand-placed slots gets an overflow deck; cards without a data-slot wait in it.
+// Each page's deck; cards without a data-slot (more than the hand-placed slots) start in it.
 {
   const list = pageEl.querySelector('.sources');
-  for (const region of ['main', 'research']) if (list.querySelector(`.src[data-region="${region}"]:not([data-slot]):not(.deck)`)) {
-    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="more-${region}" data-region="${region}" data-edge="bottom" data-slot="0,0,150,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Draw another project"></div></li>`);
+  for (const region of ['main', 'research']) { // every page has a deck for its cards
+    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="deck-${region}" data-region="${region}" data-edge="right" data-slot="0,0,170,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Deck: draw a card (double-click to gather or deal)"></div></li>`);
   }
 }
 const sources = [...root.querySelectorAll('.src')].map((el, id) => {
@@ -803,11 +802,11 @@ function layout() {
     view.worldW = 2 * vw; // one continuous desk: main region, then research to the right
     for (const s of sources) {
       Object.assign(s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k)));
-      if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } else s.x = -1e5; // overflow cards wait in their deck
+      if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
     restoreDesk(); // where they were left last time, if still valid
     placeDecks();
-    for (const r of [0, 1]) if (r !== page) pileUp(r); // a page not dealt yet waits on the seam card
+    for (const r of [0, 1]) pileUp(r); // each deck holds its page's cards that are not on the desk
   } else {
     const pad = 22;
     view.labelY = 0;
@@ -978,10 +977,10 @@ for (const s of sources) {
     e.preventDefault();
     if (s.suppressClick) { s.suppressClick = false; return; }
     if (s.flying) return;
-    s.more ? drawMore(s) : s.nav ? navigate(s) : flip(s);
+    s.more ? deckClick(s, e) : s.nav ? navigate(s) : flip(s);
   });
   hit.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? drawMore(s) : s.nav ? navigate(s) : flip(s); }
+    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : s.nav ? navigate(s) : flip(s); }
     else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
   });
   hit.addEventListener('pointerdown', (e) => {
@@ -998,8 +997,13 @@ for (const s of sources) {
       s.vx = lerp(s.vx, (nx - s.x) / dt, k); s.vy = lerp(s.vy, (ny - s.y) / dt, k);
       s.x = nx; s.y = ny; lt = now;
     };
-    const up = () => {
+    const up = (ev) => {
       hit.removeEventListener('pointermove', move);
+      const deck = press.moved && pageDeck(s.region);
+      if (deck && overDeck(deck, deskX(ev), deskY(ev)) && !flights.on) { // dropped on its deck: back on the pile
+        Object.assign(s, { dragging: false, suppressClick: true }); s.el.classList.remove('dragging');
+        collect(s, deck, 0); Object.assign(flights, { on: true, t: 0 }); stepFlights(0); return;
+      }
       if (press.moved) {
         s.suppressClick = true; s.dragging = false; s.released = true; s.el.classList.remove('dragging');
         const keep = performance.now() - lt > 80 ? 0 : 0.35; // a little momentum, none if held still before letting go
@@ -1215,7 +1219,6 @@ function stepShove(s, dt) {
   const e = easeOutQuart(clamp(v.t / v.dur));
   s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
   if (v.tr !== undefined) s.rot = v.fr + (v.tr - v.fr) * e; // tidy turns it home too
-  if (v.t >= v.dur && v.leave) { Object.assign(s, { shove: null, gone: true }); s.el.hidden = true; return; } // an emptied deck
   if (v.t >= v.dur) { s.shove = null; land(s, clamp(0.15 + v.dist / (300 * view.k), 0.1, 0.7)); placeDom(s); }
 }
 
@@ -1223,24 +1226,6 @@ function stepShove(s, dt) {
 // ---------- tidy ----------
 // A card's home: its slot on this layout, at its slot's angle.
 const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H) * view.h, s.slot.r];
-// Tidy: every card on this page glides back home, one after another, turning to its home angle, and lands.
-function tidy() {
-  if (view.phone) return;
-  forgetDesk();
-  let i = 0;
-  for (const s of sources.filter((o) => o.region === page && !o.dragging && !o.flying && o.kind !== 'deck' && !o.overflow)) { // drawn overflow cards stay
-    const [tx, ty, tr] = homeOf(s), dist = Math.hypot(tx - s.x, ty - s.y);
-    if (dist < 0.5 && Math.abs(tr - s.rot) < 0.05) continue;
-    Object.assign(s, { vx: 0, vy: 0, released: false, kb: null });
-    if (reduced || !gpu) { Object.assign(s, { x: tx, y: ty, rot: tr, shove: null }); placeDom(s); continue; } // instant
-    s.shove = { fx: s.x, fy: s.y, tx, ty, fr: s.rot, tr, dist, t: -0.05 * i++, dur: MOTION.settle };
-  }
-  if (reduced && gpu) drawStill();
-}
-addEventListener('dblclick', (e) => { // on the bare desk only, not on a card, a link, the text, or the panel
-  if (!T.tidyDbl || e.target.closest?.('.src, a, button, input, select, .tweak, .name, .tagline')) return;
-  getSelection()?.removeAllRanges(); tidy();
-});
 
 
 // ---------- the desk remembers ----------
@@ -1255,12 +1240,12 @@ function saveDesk() {
   const cards = {}, drawn = {};
   for (const s of sources) {
     if (s.overflow && !s.inDeck) drawn[s.key] = [s.slot.x, s.slot.y, s.slot.r].map((n) => +n.toFixed(3));
-    if (s.flying || s.dragging || s.kind === 'deck' || s.inDeck) continue;
+    if (s.flying || s.dragging || s.kind === 'deck' || s.inDeck) continue; // piles are saved as the pile list
     const [hx, hy, hr] = homeOf(s), v = s.shove, x = v ? v.tx : s.x, y = v ? v.ty : s.y;
     const r = v?.tr ?? (s.flip !== s.flipTo ? s.rotTo : s.rot);
     if (Math.hypot(x - hx, y - hy) > 0.5 || Math.abs(r - hr) > 0.05) cards[s.key] = [(x - s.region * view.w) / view.w, y / view.h, r].map((n) => +n.toFixed(4));
   }
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ sig: layoutSig(), size: sizeClass(), cards, drawn })); } catch { /* storage off */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ sig: layoutSig(), size: sizeClass(), cards, drawn, pile: sources.filter((o) => o.inDeck).map((o) => o.key) })); } catch { /* storage off */ }
 }
 function forgetDesk() { try { localStorage.removeItem(SAVE_KEY); } catch { /* storage off */ } }
 function restoreDesk() {
@@ -1269,6 +1254,7 @@ function restoreDesk() {
   try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { /* storage off or bad data */ }
   if (!d) return;
   if (d.sig !== layoutSig() || d.size !== sizeClass()) { forgetDesk(); return; }
+  for (const s of sources) if (d.pile?.includes(s.key) && s.kind !== 'deck') s.inDeck = true; // on its deck when you left
   for (const [key, sl] of Object.entries(d.drawn || {})) { // overflow cards drawn before, at their generated slots
     const s = sources.find((o) => o.key === key && o.overflow);
     if (!s || !Array.isArray(sl) || sl.length !== 3 || !sl.every(Number.isFinite)) continue;
@@ -1312,7 +1298,7 @@ function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x 
 const drawEase = cubicBezier(0.25, 1, 0.5, 1);
 function drawFrom(region, { delay = 0 } = {}) {
   endFlights();
-  const deck = sources.find((s) => s.nav && (s.seam || s.region === region));
+  const deck = pageDeck(region);
   const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   dealt.add(region);
@@ -1343,18 +1329,20 @@ const LABEL_STRIP = 34; // CSS px of the seam card left showing above a pile, wh
 function waitPose(k, t) {
   const d = k.deck;
   if (!k.fan) return [d.x, d.y, d.rot];
-  const out = d.seam ? (k.fan.region ? -1 : 1) : 0, { k: j, n } = k.fan, [jx, jy, jr] = k.jit; // out: toward the other page
+  const out = d.seam ? (k.fan.region ? -1 : 1) : d.edge === 'right' ? 1 : 0, { k: j, n } = k.fan, [jx, jy, jr] = k.jit; // out: toward the other page
   const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
   const deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
   const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the pile's center
   return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * a * 30 * (n - j) / n + jx,
-    d.y + LABEL_STRIP * view.k + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + deg + jr];
+    d.y + (d.seam ? LABEL_STRIP * view.k : 0) + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + deg + jr];
 }
-// A page not dealt yet keeps its cards face down on the seam card until you go there.
+// A page's deck holds its cards that are not on the desk: all of them before the page is first shown, else those put
+// back or never dealt.
 function pileUp(region) {
-  const deck = sources.find((s) => s.seam);
-  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.inDeck).sort((a, b) => a.order - b.order);
-  if (view.phone || !gpu || reduced || !deck || !cards.length || dealt.has(region)) return;
+  const deck = pageDeck(region), all = !dealt.has(region) && region !== page;
+  const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.fly && (all || s.inDeck)).sort((a, b) => a.order - b.order);
+  if (view.phone || !gpu || reduced || !deck || !cards.length) return;
+  for (const s of cards) if (s.inDeck && !s.pileZ) s.pileZ = -s.order; // never dealt: the first in order on top
   cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length, at: Infinity, region }));
   topZ += cards.length;
   for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
@@ -1367,11 +1355,12 @@ function stepFlights(dt) {
     const k = s.fly;
     if (!k || k.at === Infinity) continue; // a pile at rest
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
-    const [wx, wy, wr] = waitPose(k, flights.t), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(clamp((u - 0.08) / 0.92));
-    if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
+    const [wx, wy, wr] = waitPose(k, flights.t), u0 = clamp((flights.t - k.at) / DRAW.dur), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
+    if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
     Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp(flights.t / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
       turn: smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
-    if (u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0 }); s.el.classList.remove('flying'); land(s, 1); } // contact
+    if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); saveDesk(); } // back on the pile, no burst
+    else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
   }
@@ -1390,37 +1379,63 @@ function endFlights(all = false) { // all: piles too (a new layout)
   }
   flights.on = false;
 }
-// The navigation deck sits on the seam between the pages, half on each, low; an overflow deck sits at the bottom of its
-// page, away from the seam, only while it holds cards.
+// The navigation card sits on the seam between the pages, half on each, low; each page's deck peeks in at its right edge.
 function placeDecks() {
   for (const s of sources) {
-    if (s.overflow) s.el.hidden = !view.phone && s.inDeck;
     if (s.kind !== 'deck' || view.phone) continue;
     if (s.seam) Object.assign(s, { x: view.w, y: 0.8 * view.h, rot: 0 });
-    else Object.assign(s, { x: (s.region + (s.region ? 0.88 : 0.12)) * view.w, y: view.h + s.h / 2 - 0.45 * s.h, rot: s.region ? -2 : 2 });
+    else Object.assign(s, { x: (s.region + 1) * view.w - 0.45 * s.w + s.w / 2, y: 0.42 * view.h, rot: -2 }); // the page deck, peeking in
     s.home = s.rot;
-    if (s.more) s.el.hidden = s.gone = !sources.some((o) => o.region === s.region && o.inDeck);
   }
 }
-// The overflow deck: a click or key deals its next card into the best free spot (with a shove if it had to land on
-// something); once it is empty it slides away.
-function drawMore(deck) {
-  if (flights.on || view.phone || deck.shove) return;
-  const s = sources.filter((o) => o.region === deck.region && o.inDeck).sort((a, b) => a.order - b.order)[0];
-  if (!s) return;
-  const [x, y, r] = freeSlot(s);
-  s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
-  Object.assign(s, { inDeck: false, x, y, rot: r, home: r, shoveOnLand: true });
-  s.el.hidden = false;
-  const empty = !sources.some((o) => o.region === deck.region && o.inDeck);
-  if (empty) { // it slides off the bottom and is gone; focus moves to the card it gave
-    deck.shove = { fx: deck.x, fy: deck.y, tx: deck.x, ty: view.h + deck.h, dist: 0, t: 0.15, dur: MOTION.settle, leave: true };
-    if (document.activeElement === deck.hit) s.hit.focus();
-  }
-  if (!gpu || reduced) { endFlights(); placeDom(s); if (empty) { Object.assign(deck, { gone: true, shove: null }); deck.el.hidden = true; } if (gpu) drawStill(); return; }
-  deal(s, deck, 0);
+// The page deck: holds a page's cards that are not on the desk, as a squared pile on it. Click draws the top card (to its
+// slot, or the best free spot), an empty deck just nudges; double-click gathers every card on the page back onto it,
+// or deals them all out when none are on the desk; a card dropped on it goes back on the pile. Enter draws,
+// Shift+Enter gathers or deals.
+const pageDeck = (r) => sources.find((s) => s.more && s.region === r);
+const pileOf = (r) => sources.filter((o) => o.region === r && o.inDeck).sort((a, b) => b.pileZ - a.pileZ); // top first
+let deckTimer = 0, dealSeq = 0, pileSeq = 0;
+function deckClick(deck, e) {
+  if (e.type === 'keydown') { e.shiftKey ? deckDouble(deck) : drawMore(deck); return; }
+  clearTimeout(deckTimer);
+  if (e.detail >= 2) deckDouble(deck); else deckTimer = setTimeout(() => drawMore(deck), 230); // wait to see if it is a double-click
+}
+function drawMore(deck, all = false) {
+  if (flights.on || view.phone) return;
+  const pile = pileOf(deck.region), take = all ? pile : pile.slice(0, 1);
+  if (!take.length) { deck.squashV = (deck.squashV || 0) + 8; return; } // empty: a tiny nudge
+  take.forEach((s, i) => {
+    const [x, y, r] = s.slot ? homeOf(s) : freeSlot(s);
+    if (!s.slot) s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
+    Object.assign(s.fly, { x, y, r }); s.inDeck = false; s.shoveOnLand = !all;
+    deal(s, deck, i * T.drawStagger, { k: i, n: take.length, at: 0, region: deck.region });
+  });
   Object.assign(flights, { on: true, t: 0 });
   stepFlights(0);
+}
+function deckDouble(deck) {
+  const out = sources.filter((o) => o.region === deck.region && o.kind !== 'deck' && !o.inDeck && !o.flying && !o.dragging);
+  if (out.length) gather(out, deck); else drawMore(deck, true);
+}
+// Gather: the deal played backward, last dealt first: each card lifts, turns face down, and travels back onto the pile;
+// no burst on the way back.
+function gather(cards, deck) {
+  if (flights.on) return;
+  cards.sort((a, b) => (b.dealtAt || -b.order) - (a.dealtAt || -a.order)).forEach((s, i) => collect(s, deck, i * T.drawStagger));
+  Object.assign(flights, { on: true, t: 0 });
+  stepFlights(0);
+}
+function collect(s, deck, at) {
+  Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true,
+    jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
+  Object.assign(s, { flying: true, turn: 1, flip: 0, flipTo: 0, drawScale: 1, morph: 1, dw: deck.w, dh: deck.h });
+  s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
+}
+// Is a desk point over a page's deck (the part that shows)?
+function overDeck(deck, x, y) {
+  const r = obb(deck), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]);
+  return Math.abs(x - deck.x) < ex && Math.abs(y - deck.y) < ey;
 }
 // The best free spot for a card on its page: a grid search for the least overlap with the other cards (24 px apart),
 // the name, tagline, links, and decks, inside a 32 px margin, then nearest the middle; its angle is a flip's Gaussian.
@@ -1638,6 +1653,12 @@ function paintDeckBack(x, S, cw, ch) {
 // A deck's top card: the deck back and its handwritten label across its top strip (the seam card has one on each half:
 // the side you see names where it goes).
 function paintDeck(x, s, S, cw, ch) {
+  if (s.more) { // a page deck is the place its pile sits: a faint inked outline on the paper, covered while it holds cards
+    x.fillStyle = TOK.paper; x.fillRect(0, 0, cw, ch);
+    x.strokeStyle = TOK.inkLine; x.globalAlpha = 0.55; x.lineWidth = S; x.setLineDash([5 * S, 4 * S]);
+    x.strokeRect(6.5 * S, 6.5 * S, cw - 13 * S, ch - 13 * S); x.setLineDash([]); x.globalAlpha = 1;
+    return;
+  }
   paintDeckBack(x, S, cw, ch);
   const labels = s.seam ? [[s.label, 0.25], [s.label2, 0.75]] : s.label ? [[s.label, 0.5]] : []; // the seam card: one per half
   x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -2114,7 +2135,7 @@ function writeUniforms(g, sm = sim, hold = false) {
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
-    if ((!view.phone && x.region !== s.page && !x.seam && !x.fly?.deck.seam) || x.inDeck || x.gone || (capturing && (x.seam || x.fly))) return false;
+    if ((!view.phone && x.region !== s.page && !x.seam && !x.fly?.deck.seam) || x.gone || (capturing && (x.seam || x.fly))) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
@@ -2467,9 +2488,7 @@ function tweakPanel() {
   };
   const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
   replay.onclick = () => drawFrom(page, { delay: INTRO_DELAY }); // starts over from bare paper
-  const tidyB = Object.assign(document.createElement('button'), { textContent: 'tidy' });
-  tidyB.onclick = () => tidy();
-  bar.append(copy, reset, replay, tidyB);
+  bar.append(copy, reset, replay);
   panel.append(bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
   const perf = panel.querySelector('.tweak-perf');
@@ -2519,7 +2538,7 @@ async function main() {
   await rebuild(true);
   if (introOn()) drawFrom(page, { delay: INTRO_DELAY }); // the first visit (or a deep link) draws from that page's deck, silently
   else dealt.add(page); // no intro: this page is simply there
-  pileUp(1 - page); // the other page waits on the seam card
+  pileUp(0); pileUp(1); // each deck holds its page's cards that are not on the desk
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
   writeUniforms(gpu);
   const enc0 = gpu.device.createCommandEncoder();
