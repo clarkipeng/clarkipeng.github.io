@@ -14,22 +14,12 @@ export const pages: PageMeta[] = [
   {
     path: '/',
     title: 'Clark Peng | CS at UCLA',
-    description: 'Clark Peng is a computer science student at UCLA and former CTO of Catapult (YC S26). His research includes VideoPhy-2 (ICLR 2026).',
-  },
-  {
-    path: '/portfolio',
-    title: 'Gadgets | Clark Peng',
-    description: 'Games, renderers, and simulations by Clark Peng, including a real-time 3D slime simulation and a playable 4D puzzle game.',
+    description: 'Clark Peng is a computer science student at UCLA and former CTO of Catapult (YC S26). He builds simulations and games, and his research includes VideoPhy-2 (ICLR 2026).',
   },
   {
     path: '/publications',
     title: 'Papers | Clark Peng',
     description: 'Papers by Clark Peng, including VideoPhy-2 at ICLR 2026 and DialectGen at the NeurIPS 2025 ResponsibleFM workshop.',
-  },
-  {
-    path: '/desk',
-    title: 'Desk | Clark Peng',
-    description: 'Projects and papers by Clark Peng on one desk: a GPU slime mold simulation, a 4D game engine, Catapult (YC S26), and VideoPhy-2 (ICLR 2026).',
   },
   {
     path: '/resume',
@@ -38,12 +28,19 @@ export const pages: PageMeta[] = [
   },
 ];
 
+// Old addresses that now live on the desk; GitHub Pages serves each a static page that sends it there at once.
+export const redirects = [
+  { path: '/portfolio', to: '/' },
+  { path: '/desk', to: '/' },
+];
+
 // Each page loads one font stylesheet; two Inter sheets would fight over the same faces. The site's is the default in
-// index.html. The desk's adds Inter's optical-size axis (the name takes the display cut) and Caveat for its notes.
+// index.html. The desk's (/ and /publications) adds Inter's optical-size axis (the name takes the display cut) and
+// Caveat for its notes.
 const siteFontsUrl = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
 export const deskFontsUrl =
   'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Caveat:wght@500;700&display=swap';
-const fontsUrl = (path: string) => (path === '/desk' ? deskFontsUrl : siteFontsUrl);
+const fontsUrl = (path: string) => (path === '/' || path === '/publications' ? deskFontsUrl : siteFontsUrl);
 
 export const pageMeta = (path: string) => pages.find((page) => page.path === path) ?? pages[0];
 

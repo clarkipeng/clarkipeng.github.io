@@ -7,9 +7,11 @@
 // One fragment pass at full device resolution draws paper grain, one muted ink (Beer-Lambert, so it darkens like dye),
 // the crisp signature, and the cards (atlas texture, video via importExternalTexture) with soft drop shadows.
 // The DOM keeps invisible hit targets and the accessible text.
-// Site port of .context/mockups/k-desk-minimal.js: the same code, run inside mountDesk(root), which returns a teardown.
+// Site port of .context/mockups/k-desk-minimal.js: the same code, run inside mountDesk(root, router), which returns a
+// teardown. Its pages have their own addresses (the mockup's #research is /publications here); router.push(path, state)
+// and router.state() go through the site's router, so it keeps the history and the page title.
 
-export function mountDesk(root) {
+export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;
 const addEventListener = (type, fn, opts) => window.addEventListener(type, fn, { ...opts, signal });
 let dead = false;
@@ -925,7 +927,7 @@ function layout() {
     root.querySelector('#page').style.height = '';
   }
   turn.on = false; clipLinks(); // a turn in progress just ends
-  cam.x = view.phone ? 0 : regionFromHash() * view.w; placePage(); setInert(regionFromHash()); placeDoor();
+  cam.x = view.phone ? 0 : regionFromUrl() * view.w; placePage(); setInert(regionFromUrl()); placeDoor();
   for (const s of sources) {
     if (s.media) {
       const [z, px, py] = s.frame, v = 1 / z;
@@ -972,7 +974,9 @@ let focus = 0, focusAt = 0;
 // One page shows at a time: the camera is at x = 0 for the main page and at the viewport width for research. A page turn
 // moves it in one jump (the turning page covers the change).
 const cam = { x: 0 };
-const regionFromHash = () => (location.hash === '#research' ? 1 : 0);
+const PATHS = ['/', '/publications']; // the desk, and research
+const regionOf = (path) => { const i = PATHS.indexOf(path.replace(/(.)\/+$/, '$1')); return i < 0 ? null : i; };
+const regionFromUrl = () => regionOf(location.pathname) ?? 0;
 const WARM_STEPS = 150; // with reduced motion, a page you have not seen yet is formed before it is drawn
 let page = 0, dest = 0; // the page you see, and the page you are on your way to
 const NAMES = ['research', 'desk']; // written on each page's corner: where it leads
@@ -1126,18 +1130,18 @@ doorEl.addEventListener('click', (e) => {
   if (doorEl.dataset.dragged) { delete doorEl.dataset.dragged; return; }
   navigate(1 - dest);
 });
-// The address follows the page: research is #research, and going back to the desk pops it (the back button turns back).
+// The address follows the page: research is /publications, and going back to the desk pops it (the back button turns back).
 function record(to) {
-  if (to === 1) history.pushState({ fromMain: true }, '', '#research');
-  else if (history.state?.fromMain) history.back();
-  else history.pushState(null, '', location.pathname + location.search);
+  if (to === 1) router.push(PATHS[1] + location.search, { fromMain: true });
+  else if (router.state()?.fromMain) history.back();
+  else router.push(PATHS[0] + location.search);
 }
 function navigate(to) {
-  const popped = to === 0 && history.state?.fromMain; // the hashchange it fires turns the page
+  const popped = to === 0 && router.state()?.fromMain; // the popstate it fires turns the page
   record(to);
   if (!popped) go(to);
 }
-addEventListener('hashchange', () => go(regionFromHash()));
+addEventListener('popstate', () => { const r = regionOf(location.pathname); if (r != null) go(r); }); // not when leaving the desk
 // Every page change: gather this page's cards, turn the page, deal the other's. One change at a time; the last asked for
 // waits its turn.
 let pendingNav = null;
@@ -2598,7 +2602,7 @@ async function rebuild(first) {
   await buildAtlas(gpu);
   // Phones scroll one long page; desktops get a main page and a research page, each with its own sim.
   sims = (view.phone ? [0] : [0, 1]).map((pg) => createSim(gpu, pg));
-  page = view.phone ? 0 : regionFromHash();
+  page = view.phone ? 0 : regionFromUrl();
   sim = sims[page];
   // Bake the paper grain once (it never changes), so the per-frame pass reads it instead of computing noise.
   writeUniforms(gpu);
@@ -2776,6 +2780,7 @@ async function main() {
   await Promise.race([fontsReady, new Promise((r) => setTimeout(r, 3000))]);
   mark('fonts');
   layout(); // card sizes measured with the real fonts
+  if (view.phone && regionFromUrl()) scrollTo(0, regionLabel.getBoundingClientRect().top + scrollY - 24); // phones scroll to research
   await Promise.all(sources.map((s) => s.img?.decode().catch(() => {})));
   mark('images');
   // The desk fades in once, from bare paper: straight to the live field when WebGPU is quick, else the DOM still first.

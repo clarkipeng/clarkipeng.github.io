@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { deskFontsUrl } from '../data/seo';
 import html from '../desk/desk.html?raw';
 import '../desk/desk.css';
@@ -23,10 +24,17 @@ const fontSheet = () => {
 // The markup is set once; the desk script owns it from then on.
 const markup = { __html: html };
 
-// /desk: the desk mockup's markup and script, as is. The markup is prerendered (crawlers read it); the script draws the
-// WebGPU desk over it, and leaving the page tears it down.
+// The homepage: the desk mockup's markup and script, as is, at / (the desk) and /publications (research). The markup is
+// prerendered (crawlers read it); the script draws the WebGPU desk over it, turns between its pages through the router,
+// and leaving the desk tears it down.
 const DeskPage = () => {
   const ref = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const router = useRef({ navigate, location });
+  useEffect(() => {
+    router.current = { navigate, location };
+  });
 
   useEffect(() => {
     const root = ref.current;
@@ -40,7 +48,11 @@ const DeskPage = () => {
     let destroy: (() => void) | undefined;
     let gone = false;
     Promise.all([import('../desk/desk.js'), fontSheet()]).then(([{ mountDesk }]) => {
-      if (!gone) destroy = mountDesk(root);
+      if (!gone)
+        destroy = mountDesk(root, {
+          push: (path, state) => router.current.navigate(path, { state }),
+          state: () => router.current.location.state,
+        });
     });
     return () => {
       gone = true;
@@ -51,6 +63,6 @@ const DeskPage = () => {
   return <div id="desk" className="desk" ref={ref} dangerouslySetInnerHTML={markup} />;
 };
 
-// Memoized: a location change (the desk's own #research hash) re-renders the shell, and must not reset the markup the
-// desk script is drawing on.
+// Memoized: the shell re-renders on every location change. The desk's own page turns re-render it too (it reads the
+// router), but the markup string is unchanged, so React leaves the DOM the desk script is drawing on alone.
 export default memo(DeskPage);

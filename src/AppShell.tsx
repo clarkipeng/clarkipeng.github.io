@@ -1,13 +1,10 @@
-import { useEffect } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { Header } from './components/Header';
 import { ThemeToggle } from './components/ThemeToggle';
 import { pageMeta } from './data/seo';
-import HomePage from './pages/HomePage';
-import PortfolioPage from './pages/PortfolioPage';
 import CVPage from './pages/CVPage';
-import PublicationsPage from './pages/PublicationsPage';
 import SmokePage from './pages/SmokePage';
 import DeskPage from './pages/DeskPage';
 
@@ -21,29 +18,28 @@ const PageTitle = () => {
   return null;
 };
 
-const Site = () => (
+const Site = ({ children }: { children: ReactNode }) => (
   <div className="relative flex min-h-screen flex-col">
     <Header />
     <ThemeToggle className="fixed right-5 top-1/2 z-30 h-10 w-10 -translate-y-1/2" />
-    <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/portfolio" element={<PortfolioPage />} />
-      <Route path="/resume" element={<CVPage />} />
-      <Route path="/publications" element={<PublicationsPage />} />
-      <Route path="/smoke" element={<SmokePage />} />
-      <Route path="*" element={<HomePage />} />
-    </Routes>
+    {children}
   </div>
 );
 
-// The desk is its own page: always the light paper desk, without the site header or theme toggle.
+// The desk is the homepage: / is its main page and /publications its research page, one desk that turns between them.
+// It is always the light paper desk, without the site header or theme toggle. Any other address (the old /portfolio
+// and /desk among them) goes to the desk.
+const deskPaths = ['/', '/publications'];
+const sitePages: Record<string, () => ReactNode> = { '/resume': () => <CVPage />, '/smoke': () => <SmokePage /> };
+
 export const AppShell = () => {
-  const { pathname } = useLocation();
+  const pathname = useLocation().pathname.replace(/(.)\/+$/, '$1');
+  const page = sitePages[pathname];
 
   return (
     <ThemeProvider>
       <PageTitle />
-      {pathname === '/desk' ? <DeskPage /> : <Site />}
+      {deskPaths.includes(pathname) ? <DeskPage /> : page ? <Site>{page()}</Site> : <Navigate to="/" replace />}
     </ThemeProvider>
   );
 };
