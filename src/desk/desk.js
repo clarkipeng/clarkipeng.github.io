@@ -1025,7 +1025,9 @@ function freeze(sm = sim) {
 function show(region) {
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
+  if (sim) sim.ready = false; // the page you leave stops; it is warmed again before it next shows
   page = region; if (gpu) sim = sims[page];
+  if (sim) sim.pre = false;
   cam.x = view.phone ? 0 : region * view.w; placePage(); setInert(region);
   tweakSync?.();
 }
@@ -1038,7 +1040,7 @@ function startTurn(to, mode) {
   const r = linksEl.getBoundingClientRect(); // where the links show on the main page
   turn.links = { left: r.left + (to ? view.w : 0), top: r.top, width: r.width, height: r.height };
   Object.assign(door, { amt: 0, d: 0, a: Math.PI / 4 }); // the new page's corner lies flat until the turn is over
-  drawFrom(to, { delay: mode === 'drag' ? Infinity : DEAL_AT * T.turnS });
+  drawFrom(to, { delay: mode === 'drag' ? Infinity : DEAL_AT * T.turnS, hold: false });
 }
 function stepTurn(dt) {
   if (!turn.on) return;
@@ -1076,7 +1078,7 @@ function clipLinks() {
 }
 // The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
 const hitEl = doorEl.querySelector('.hit');
-hitEl.addEventListener('pointerenter', () => (door.hover = true));
+hitEl.addEventListener('pointerenter', () => { door.hover = true; prewarm(1 - page); });
 hitEl.addEventListener('pointerleave', () => (door.hover = false));
 hitEl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || !turns() || busy() || sources.some((s) => s.dragging)) return;
@@ -1102,7 +1104,7 @@ const letGo = () => {
   if (2 * turn.target - Math.PI * rollR(turn.target) > span(turn.a) / 2) { // the corner is past halfway: complete the turn
     const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
     Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
-    drawFrom(turn.to, { delay: DEAL_AT * dur });
+    drawFrom(turn.to, { delay: DEAL_AT * dur, hold: false });
     dest = turn.to; record(turn.to);
   } else Object.assign(turn, { mode: 'back', t: 0, d0: turn.d, d1: restD(hitEl.matches(':hover')), dur: 0.4 });
 };
@@ -1133,6 +1135,7 @@ function go(region) {
   if (busy()) { pendingNav = region; return; }
   if (region === page) return;
   if (!turns()) { jump(region); return; }
+  prewarm(region);
   const out = sources.filter((s) => s.region === page && s.kind !== 'deck' && !s.inDeck && !s.dragging);
   if (!out.length) { startTurn(region, 'auto'); return; }
   // The turn starts while the last cards are still landing (the page keeps drawing them as it turns).
@@ -1143,6 +1146,25 @@ function next() {
   const n = pendingNav;
   pendingNav = null;
   go(n);
+}
+// Warming the other page: so a turn uncovers a page whose slime has its network, the hidden page steps once a frame
+// (after the frame's own work, outside the quality check's timing) with its cards counted at home, while you hover the
+// corner, during the gather, and once after the first visit's deal for a page never shown (its network forms from
+// scattered agents, about 3 s of sim time). Otherwise only the page you see steps.
+const WARM = { fresh: 180, again: 30 };
+function prewarm(region) {
+  const sm = sims[region];
+  if (!turns() || !sm || sm === sim || sm.ready || sm.pre) return;
+  Object.assign(sm, { pre: true, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
+}
+function stepWarm() {
+  const sm = sims.find((x) => x !== sim && x.pre);
+  if (!sm) return;
+  if (sm.warm-- <= 0) { Object.assign(sm, { pre: false, ready: true, warm: 0 }); return; }
+  atHome(sm.page, () => writeUniforms(gpu, sm));
+  const enc = gpu.device.createCommandEncoder();
+  encodeStep(enc, 'ead', null, sm);
+  gpu.device.queue.submit([enc.finish()]);
 }
 // Without the turn the other page is just there, and the cards of the page you leave go home.
 function jump(region) {
@@ -1474,20 +1496,28 @@ function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x 
 const drawEase = cubicBezier(0.25, 1, 0.5, 1);
 // Deal a page's featured cards (the ones with a home slot) from its pile to their homes, the pile fanning at `delay` (s;
 // Infinity: they wait on the pile, already held for, until dealt again with a real delay).
-function drawFrom(region, { delay = 0 } = {}) {
+// hold: the page starts from bare paper and its slime grows out of the cards as they land (the first visit); a page turned
+// to keeps the network it was warmed with, and the cards land on it.
+function drawFrom(region, { delay = 0, hold = true } = {}) {
   endFlights(false, region);
   const deck = pageDeck(region);
   const cards = sources.filter((s) => s.region === region && s.featured && !s.dragging).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
-  const was = cards.map((s) => [s.x, s.y]);
-  for (const s of cards) { Object.assign(s, { rel: -1, inDeck: false }); [s.x, s.y] = homeOf(s); } // each counts at its home
-  holdPage(sim); // so each agent waits for the card that will land nearest it
-  cards.forEach((s, i) => { [s.x, s.y] = was[i]; });
+  for (const s of cards) Object.assign(s, { inDeck: false }, hold ? { rel: -1 } : {});
+  if (hold) atHome(region, () => holdPage(sim)); // so each agent waits for the card that will land nearest it
   const t0 = now() + delay;
   cards.forEach((s, k) => deal(s, deck, t0 + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: t0, region }, homeOf(s)));
   topZ += cards.length; // the stack sits above everything, the first to be dealt on top
   flights.on = true;
   stepFlights(0);
+}
+// Runs fn with a page's featured cards lying at home (its slime sees them there while they are on its pile).
+function atHome(region, fn) {
+  const cards = sources.filter((s) => s.region === region && s.featured);
+  const was = cards.map(({ x, y, rot, flying, drawScale, turn, morph }) => ({ x, y, rot, flying, drawScale, turn, morph }));
+  for (const s of cards) { [s.x, s.y, s.rot] = homeOf(s); Object.assign(s, { flying: false, drawScale: 1, turn: null, morph: null }); }
+  fn();
+  cards.forEach((s, i) => Object.assign(s, was[i]));
 }
 // One card onto its way out of a deck to `to` (its home, or where it is now): it waits in the deck (fanned, as card k of
 // n, when fan is given), then is dealt at `at`.
@@ -2446,7 +2476,7 @@ function resizeSims() {
   gpu.device.queue.submit([enc.finish()]);
   shared.fz = 1 - shared.fz;
   sims.forEach(destroySim);
-  sims = (view.phone ? [0] : [0, 1]).map((pg) => Object.assign(createSim(gpu, pg), { t: 4.5, warm: WARM_STEPS }));
+  sims = (view.phone ? [0] : [0, 1]).map((pg) => Object.assign(createSim(gpu, pg), { t: 4.5, warm: WARM_STEPS, warmN: pg === page ? 25 : 1 }));
   sim = sims[page];
   trans.fade = 1;
 }
@@ -2487,7 +2517,7 @@ function frame(now) {
   }
   if (steps === 2) acc = Math.min(acc, STEP);
   if (sim.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
-    const n = Math.min(sim.warm, 25);
+    const n = Math.min(sim.warm, sim.warmN || 1); // a resolution change catches up fast under its crossfade; a page warming before it showed keeps going one step a frame
     sim.warm -= n;
     writeUniforms(gpu);
     const enc = gpu.device.createCommandEncoder();
@@ -2511,6 +2541,7 @@ function frame(now) {
       timed.read.unmap(); timed.busy = false;
     }).catch(() => { timed.busy = false; });
   }
+  stepWarm();
   qualityCheck(dt);
   if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
   for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
@@ -2771,6 +2802,7 @@ async function main() {
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
   setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
+  setTimeout(() => dead || prewarm(1 - page), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // the other page, once
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
