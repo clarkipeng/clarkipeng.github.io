@@ -1330,8 +1330,9 @@ function deal(s, deck, at, fan = null) {
     z: fan ? topZ + fan.n - fan.k : ++topZ }); // on top of the navigation card
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Where a waiting card sits: stacked on the deck (each card a little in and up from the one below), or fanned toward the
-// page around the deck's outer edge, opening from the top card down (the top card swings furthest in).
+// Where a waiting card sits: stacked by the seam card toward its page, overlapping its inner edge so the card's label
+// always shows (each card a little in and up from the one below), then fanned toward the page around the stack's outer
+// edge, opening from the top card down (the top card swings furthest in).
 function waitPose(k, t) {
   const d = k.deck;
   if (!k.fan) return [d.x, d.y, d.rot];
@@ -1339,7 +1340,7 @@ function waitPose(k, t) {
   const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
   const deg = out * a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
   const ox = -out * 0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the deck's center
-  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * (h + a * 30 * (n - j) / n),
+  return [d.x + out * 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - out * (h + a * 30 * (n - j) / n + 0.85 * d.w), // beside the label
     d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) - h, d.rot + deg];
 }
 function stepFlights(dt) {
