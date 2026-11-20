@@ -1,0 +1,64 @@
+{
+  "slime": {
+    "poster": "slime-poster.jpg",
+    "clips": [
+      "slime-01.mp4",
+      "slime-02.mp4",
+      "slime-03.mp4"
+    ]
+  },
+  "vp2": {
+    "poster": "vp2-poster.jpg",
+    "clips": [
+      "vp2-01.mp4",
+      "vp2-02.mp4",
+      "vp2-03.mp4",
+      "vp2-04.mp4"
+    ]
+  },
+  "pdfr": {
+    "poster": "pdfr-poster.jpg",
+    "clips": [
+      "pdfr-01.mp4"
+    ]
+  },
+  "suika": {
+    "poster": "suika-poster.jpg",
+    "clips": [
+      "suika-01.mp4",
+      "suika-02.mp4",
+      "suika-03.mp4"
+    ]
+  },
+  "ray": {
+    "poster": "ray-poster.jpg",
+    "clips": [
+      "ray-01.mp4",
+      "ray-02.mp4"
+    ]
+  },
+  "rl": {
+    "poster": "rl-poster.jpg",
+    "clips": [
+      "rl-01.mp4",
+      "rl-02.mp4",
+      "rl-03.mp4"
+    ]
+  },
+  "catapult": {
+    "poster": "catapult-poster.jpg",
+    "clips": [
+      "catapult-01.mp4",
+      "catapult-02.mp4",
+      "catapult-03.mp4"
+    ]
+  },
+  "sine": {
+    "poster": "sine-poster.jpg",
+    "clips": [
+      "sine-01.mp4",
+      "sine-02.mp4",
+      "sine-03.mp4"
+    ]
+  }
+}
