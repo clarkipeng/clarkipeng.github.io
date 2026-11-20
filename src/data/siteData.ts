@@ -114,7 +114,7 @@ export const portfolioProjects = [
     id: 6,
     title: 'Raytracer from Scratch',
     description: 'A from-scratch renderer for experimenting with light, sound, and noisy physical scenes.',
-    images: ['/images/raytracer.jpeg'],
+    images: ['/images/raytracer-converging.mp4', '/images/raytracer.jpeg'],
     tags: ['C++', 'Graphics', 'Raytracing'],
     year: '2022',
     links: [
@@ -138,6 +138,18 @@ export const publications = [
     abstract: 'A benchmark for whether generated videos obey everyday physical cause and effect.',
   },
   {
+    id: 4,
+    title: 'Cross-Lingual Alignment for Decoder-Only Models using MoE Routers',
+    authors: 'Lucas Bandarkar, Clark Peng, Ahmed Haj Ahmed, Aditi Khandelwal, Nanyun Peng',
+    venue: 'arXiv 2026',
+    date: '2026-10-01',
+    paperUrl: 'https://arxiv.org/abs/2610.01921',
+    links: [
+      { label: 'arXiv', href: 'https://arxiv.org/abs/2610.01921' },
+    ],
+    abstract: 'Aligning languages inside decoder-only LLMs by matching their mixture-of-experts router outputs, which improves multilingual performance.',
+  },
+  {
     id: 2,
     title: 'DialectGen: Benchmarking and Improving Dialect Robustness in Multimodal Generation',
     authors: 'Yu Zhou, Sohyun An, Haikang Deng, Da Yin, Clark Peng, Cho-Jui Hsieh, Kai-Wei Chang, Nanyun Peng',
@@ -150,8 +162,21 @@ export const publications = [
     abstract: 'A study of how image and video models handle English dialects, plus ways to make them fairer.',
   },
   {
+    id: 5,
+    title: 'Variable-Rate Harmonic-Percussive Time-Scale Modification with Real-Time Playback in Python',
+    authors: 'Sayema Lubis, Clark Peng, Jared Carreño, TJ Tsai',
+    venue: 'arXiv 2026',
+    date: '2026-07-20',
+    paperUrl: 'https://arxiv.org/abs/2609.18999',
+    links: [
+      { label: 'arXiv', href: 'https://arxiv.org/abs/2609.18999' },
+      { label: 'Code', href: 'https://github.com/HMC-MIR/TSMRealTime' },
+    ],
+    abstract: 'Real-time audio time stretching in Python, with a playback rate that can change every frame to follow a live performer.',
+  },
+  {
     id: 3,
-    title: 'Event Detection via Probability Density Function Regression',
+    title: 'Boundary Density Likelihood for Direct Event-Time Supervision',
     authors: 'Clark Peng, Tolga Dincer',
     venue: 'arXiv 2024',
     date: '2024-08-23',
