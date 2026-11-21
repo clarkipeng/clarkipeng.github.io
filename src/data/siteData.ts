@@ -114,7 +114,7 @@ export const portfolioProjects = [
     id: 6,
     title: 'Raytracer from Scratch',
     description: 'A from-scratch renderer for experimenting with light, sound, and noisy physical scenes.',
-    images: ['/images/raytracer-converging.mp4', '/images/raytracer.jpeg'],
+    images: ['/images/raytracer-two-mirrors.mp4', '/images/raytracer.jpeg'],
     tags: ['C++', 'Graphics', 'Raytracing'],
     year: '2022',
     links: [
