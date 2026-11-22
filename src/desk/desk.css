@@ -59,6 +59,7 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk.phone .deck { display: none; }
 /* A deck without WebGPU: a paper card. */
 #desk .deck .hit { background: var(--paper); cursor: pointer; }
+#desk .lid { visibility: hidden; pointer-events: none; } /* the card box's lid: drawn by WebGPU, no hit area of its own */
 /* The page corner, the way to the other page: WebGPU draws the fold; this is its hit area and focus ring, and without
    WebGPU a flat drawing of the fold (desk.js placeDoor). */
 #desk .door { position: fixed; right: 0; bottom: 0; z-index: 3; padding: 0; border: 0; background: none; pointer-events: none; outline: none; }
