@@ -1506,13 +1506,13 @@ const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H
 
 
 // ---------- drawing ----------
-// The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down in a pile on its
-// deck; the pile fans toward the page from the top card down, and they are dealt top first: each lifts up off the pile,
-// then travels home on an ease-out while it turns face up (from 10% to 51% of the way), landing with the burst at
-// contact. The first visit, a deep link, and every page turn deal this way.
-const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
+// The one way cards enter a page: a page's cards wait face down in a squared pile on its deck, and they are dealt top
+// first: each lifts off the pile and slides off it toward home on an ease-out, turns face up on the way (from 10% to 51%
+// of the travel), then turns from the pile's angle to its desk angle (45% to 90%), and lands with the burst at contact.
+// Going back onto a pile is the same path backward: it lifts, turns square with the pile, turns face down, slides on. The first visit, a deep link, and every page turn deal this way.
+const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, rotA: 0.45, rotB: 0.9 }; // s, then fractions of the travel
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
-const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's deck fans: it slides in first
+const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's deal: the deck slides in first
 // One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
 // follows at thenAt (or once every card is down): the page turn after a gather.
 const flights = { on: false, t: 0, then: null, thenAt: Infinity };
@@ -1532,7 +1532,7 @@ function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x 
   };
 }
 const drawEase = cubicBezier(0.25, 1, 0.5, 1);
-// Deal a page's featured cards (the ones with a home slot) from its pile to their homes, the pile fanning at `delay` (s;
+// Deal a page's featured cards (the ones with a home slot) from its pile to their homes, the first at `delay` (s;
 // Infinity: they wait on the pile, already held for, until dealt again with a real delay).
 // hold: the page starts from bare paper and its slime grows out of the cards as they land (the first visit); a page turned
 // to keeps the network it was warmed with, and the cards land on it.
@@ -1544,7 +1544,7 @@ function drawFrom(region, { delay = 0, hold = true } = {}) {
   for (const s of cards) Object.assign(s, { inDeck: false }, hold ? { rel: -1 } : {});
   if (hold) atHome(region, () => holdPage(sim)); // so each agent waits for the card that will land nearest it
   const t0 = now() + delay;
-  cards.forEach((s, k) => deal(s, deck, t0 + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: t0, region }, homeOf(s)));
+  cards.forEach((s, k) => deal(s, deck, t0 + k * T.drawStagger, { k, n: cards.length }, homeOf(s)));
   topZ += cards.length; // the stack sits above everything, the first to be dealt on top
   flights.on = true;
   stepFlights(0);
@@ -1557,27 +1557,20 @@ function atHome(region, fn) {
   fn();
   cards.forEach((s, i) => Object.assign(s, was[i]));
 }
-// One card onto its way out of a deck to `to` (its home, or where it is now): it waits in the deck (fanned, as card k of
-// n, when fan is given), then is dealt at `at`.
-function deal(s, deck, at, fan = null, [x, y, r] = [s.x, s.y, s.rot]) {
-  s.fly = { at, x, y, r, deck, fan, t0: flights.t,
+// One card onto its way out of a deck to `to` (its home, or where it is now): it waits on the pile (card k of the n dealt
+// together, the first on top), then is dealt at `at`.
+function deal(s, deck, at, stack = null, [x, y, r] = [s.x, s.y, s.rot]) {
+  s.fly = { at, x, y, r, deck, t0: flights.t,
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   s.el.classList.add('flying'); // clicks go through to the deck
   Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null,
-    z: fan ? topZ + fan.n - fan.k : ++topZ }); // the first to be dealt on top
+    z: stack ? topZ + stack.n - stack.k : ++topZ }); // the first to be dealt on top
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Where a waiting card sits: squared on its deck like a real pile (a pixel or two and a degree or two off), then fanned
-// toward the page around the pile's outer edge, top card first.
-function waitPose(k, t) {
-  const d = k.deck;
-  if (!k.fan) return [d.x, d.y, d.rot];
-  const { k: j, n } = k.fan, [jx, jy, jr] = k.jit;
-  const a = 1 - (1 - clamp((t - k.fan.at - j * 0.03) / DRAW.fan)) ** 3;
-  const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180;
-  const ox = -0.62 * d.w, oy = -0.18 * d.h; // from the pivot (outer edge, a little low) to the pile's center
-  return [d.x + 0.62 * d.w + ox * Math.cos(th) - oy * Math.sin(th) - a * 30 * (n - j) / n + jx,
-    d.y + 0.18 * d.h + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + deg + jr];
+// Where a waiting card sits: squared on its deck like a real pile (a pixel or two and a degree or two off).
+function waitPose(k) {
+  const d = k.deck, [jx, jy, jr] = k.jit;
+  return [d.x + jx, d.y + jy, d.rot + jr];
 }
 // A page's deck holds its cards that are not on the desk: every card of a page you do not see (its featured cards come
 // out as you turn to it), and those put back or never dealt.
@@ -1586,9 +1579,9 @@ function pileUp(region) {
   const cards = sources.filter((s) => s.region === region && s.kind !== 'deck' && !s.fly && (region !== page || s.inDeck)).sort((a, b) => a.order - b.order);
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   for (const s of cards) { s.inDeck = true; s.pileZ ||= -s.order; } // never dealt: the first in order on top
-  cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length, at: Infinity, region }));
+  cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length }));
   topZ += cards.length;
-  for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
+  for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly); placeDom(s); }
 }
 function stepFlights(dt) {
   if (!flights.on) return;
@@ -1598,11 +1591,11 @@ function stepFlights(dt) {
     const k = s.fly;
     if (!k || k.at === Infinity) continue; // a pile at rest
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
-    const [wx, wy, wr] = waitPose(k, flights.t), u0 = clamp((flights.t - k.at) / (k.dur || DRAW.dur)), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
+    const [wx, wy, wr] = waitPose(k), u0 = clamp((flights.t - k.at) / (k.dur || DRAW.dur)), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
     if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
-    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e,
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * smooth((u - DRAW.rotA) / (DRAW.rotB - DRAW.rotA)),
       turn: (1 - (k.down || 0)) * smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
-    if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); } // back on the pile, no burst
+    if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k); } // back on the pile, no burst
     else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
@@ -1620,7 +1613,7 @@ function endFlights(all = false, region = null) { // all: piles too (a new layou
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k || (k.at === Infinity && !all)) continue;
-    if (k.back && !all) { k.at = Infinity; Object.assign(s, { turn: 0, flyLift: 0 }); [s.x, s.y, s.rot] = waitPose(k, 0); placeDom(s); continue; }
+    if (k.back && !all) { k.at = Infinity; Object.assign(s, { turn: 0, flyLift: 0 }); [s.x, s.y, s.rot] = waitPose(k); placeDom(s); continue; }
     s.el.classList.remove('flying');
     Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, flyLift: 0 });
     placeDom(s);
@@ -1658,7 +1651,7 @@ function arriveDeck(region, delay) {
 }
 function moveDeck(d) { // the deck to its slide's offset, and its pile with it
   d.x = d.spot + d.slide.at; placeDom(d);
-  for (const s of sources) if (s.fly?.deck === d && s.fly.at === Infinity) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
+  for (const s of sources) if (s.fly?.deck === d && s.fly.at === Infinity) { [s.x, s.y, s.rot] = waitPose(s.fly); placeDom(s); }
 }
 function stepDecks(dt) {
   for (const d of sources) {
@@ -1699,7 +1692,7 @@ function drawMore(deck, all = false) {
     const [x, y, r] = s.slot ? homeOf(s) : freeSlot(s);
     if (!s.slot) s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
     s.inDeck = false; s.shoveOnLand = !all;
-    deal(s, deck, now() + i * T.drawStagger, { k: i, n: take.length, at: now(), region: deck.region }, [x, y, r]);
+    deal(s, deck, now() + i * T.drawStagger, { k: i, n: take.length }, [x, y, r]);
   });
   flights.on = true;
   stepFlights(0);
@@ -1708,8 +1701,8 @@ function deckDouble(deck) {
   const out = sources.filter((o) => o.region === deck.region && o.kind !== 'deck' && !o.inDeck && !o.flying && !o.dragging);
   if (out.length) gather(out, deck); else drawMore(deck, true);
 }
-// Gather: the deal played backward, last dealt first: each card lifts, turns face down, and travels back onto the pile;
-// no burst on the way back.
+// Gather: the deal played backward, last dealt first: each card lifts, turns square with the pile, turns face down, and
+// slides back onto it; no burst on the way back.
 // Returns when the last card starts back.
 function gather(cards, deck) {
   if (flights.on) return 0;
@@ -1720,7 +1713,7 @@ function gather(cards, deck) {
 }
 function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true, down: s.down || 0, dur, // down: already face down
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, down: s.down || 0, dur, // down: already face down
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0 });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
@@ -2954,8 +2947,8 @@ async function main() {
     return;
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
-  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
-  setTimeout(() => dead || prewarm(1 - page), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // the other page, once
+  setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
+  setTimeout(() => dead || prewarm(1 - page), (introOn() ? INTRO_DELAY + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // the other page, once
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
