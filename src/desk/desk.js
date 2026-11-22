@@ -80,7 +80,7 @@ const GROUPS = {
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
-    ['backs', 'pen', 0, 0, 0, 'back style (quiet, index, pen)'],
+    ['backs', 'postcard', 0, 0, 0, 'back style (postcard; pen was the previous)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
@@ -164,7 +164,7 @@ const LOOKS = {
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
     main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
 };
-const CHOICES = { backs: ['quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
+const CHOICES = { backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 const T = { ...DEFAULTS };
@@ -1989,7 +1989,10 @@ function drawCard(s, S) {
 }
 
 // ---------- card backs ----------
-// The back of a card, in one of three styles (?backs=, or the panel):
+// The back of a card, in one of four styles (?backs=, or the panel):
+//   postcard: a project card's back is a postcard's: the message on the left, a thin divider, and the links on ruled
+//             address lines on the right under a small slime-cell stamp in the project's tint. It is also what a card
+//             shows face down in a deck. The polaroid and the note keep pen backs.
 //   quiet: type alone; links are ink text with a thin underline. The sticky note lists its links with small icons.
 //   index: an index card: a label strip, a header rule, and body lines on faint rules. The note is ruled and handwritten.
 //   pen:   quiet cards with a hand-drawn underline under each link; the note's links are handwritten in Caveat.
@@ -1997,6 +2000,7 @@ function drawCard(s, S) {
 // follows the front: paper cards stay paper, the polaroid's back is matte photo-paper stock, the note stays yellow.
 // Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
 const BACK_STYLES = {
+  postcard: { underline: 'pen', note: 'pen', postcard: true },
   quiet: { underline: 'line', note: 'icons' },
   index: { underline: 'line', note: 'ruled', ruled: true },
   pen: { underline: 'pen', note: 'pen' },
@@ -2021,13 +2025,17 @@ const ICONS = {
   Kaggle: [24, 'M18.825 23.859c-.022.092-.117.141-.281.141h-3.139c-.187 0-.351-.082-.492-.248l-5.178-6.589-1.448 1.374v5.111c0 .235-.117.352-.351.352H5.505c-.236 0-.354-.117-.354-.352V.353c0-.233.118-.353.354-.353h2.431c.234 0 .351.12.351.353v14.343l6.203-6.272c.165-.165.33-.246.495-.246h3.239c.144 0 .236.06.281.18.046.149.034.255-.036.315l-6.555 6.344 6.836 8.507c.095.104.117.208.075.339z'],
   Resume: [24, 'M6 1.5h8.5L20 7v14a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 4.5 21V3A1.5 1.5 0 0 1 6 1.5zm7.5 1.8V8h4.7zM8 12v1.6h8V12zm0 4v1.6h8V16z'],
 };
-const backStyle = () => BACK_STYLES[T.backs] || BACK_STYLES.pen;
+const backStyle = (s) => { const st = BACK_STYLES[T.backs] || BACK_STYLES.postcard; return st.postcard && s?.kind !== 'photo' ? BACK_STYLES.pen : st; };
+// The postcard back: where the divider sits (a share of the width), the gap either side of it, the stamp (w, h), and how
+// many ruled address lines it has (at least one per link).
+const PC = { split: 0.62, gutter: 14, stamp: [40, 48], lines: 3 };
 
 // A link: its text at (x, base) and its hit area (a 24px row, 4px wider than the text on each side).
 const linkAt = (a, x, base, tw, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
 
 function backLayout(s, b = s) {
-  const st = backStyle(), w = b.w, m = measure(), { pad, row } = BK;
+  const st = backStyle(s), w = b.w, m = measure(), { pad, row } = BK;
+  if (st.postcard) return postcardLayout(s, b);
   if (s.kind === 'note') {
     // A tidy list, one link per line, from the same first baseline as every other back.
     const hand = st.note !== 'icons', f = hand ? TYPE.noteHand : TYPE.noteLink, x0 = pad + (hand ? 0 : 20);
@@ -2070,6 +2078,68 @@ function backLayout(s, b = s) {
   return { st, lines, links, w, h: b.h, need, strip: strip ? label : null, ruleTop, ruleEnd: base0 + (rows.length - 1) * pitch + 5 };
 }
 
+// The message (title, then the back copy) from the same first baseline as every back, in the column left of the divider;
+// the links on the address lines, which sit at the bottom of the right column, the last 22px above the bottom edge.
+function postcardLayout(s, b) {
+  const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK;
+  const divX = Math.round(w * PC.split), colW = divX - pad - PC.gutter, lines = [];
+  let y = BK.first - TYPE.title.lh;
+  const add = (t, kind, gap) => { y += gap; wrapLines(t, colW, TYPE[kind].font).forEach((l) => { y += TYPE[kind].lh; lines.push({ t: l, f: TYPE[kind], y }); }); };
+  const title = s.backTitle ?? b.title ?? '';
+  if (title) add(title, 'title', 0);
+  s.backParas.forEach((t, i) => add(t, 'body', title || i ? 8 : 0));
+  m.font = TYPE.link.font;
+  const x0 = divX + PC.gutter, x1 = w - pad, n = Math.max(PC.lines, s.backLinks.length), base0 = h - BK.bottom - (n - 1) * row;
+  const links = s.backLinks.map((a, i) => linkAt(a, x0, base0 + i * row, m.measureText(a.textContent).width));
+  const stampBottom = pad - 2 + PC.stamp[1], wide = links.some((k) => k.tx + k.tw > x1);
+  const need = wide ? Infinity : Math.max(Math.ceil(y + BK.bottom), stampBottom + 12 + 16 + (n - 1) * row + BK.bottom);
+  return { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
+}
+// OKLab blend of an sRGB hex toward another hex's hue at the first one's lightness and chroma (mix 0 to 1): the stamp's
+// olive ink with a cast of the project's color.
+function tintHex(baseHex, hueHex, mix) {
+  const [L, a0, b0] = oklab(hexRGB(baseHex)), c = oklab(hexRGB(hueHex)), C = Math.hypot(a0, b0), hh = Math.atan2(c[2], c[1]);
+  const [r, g, bl] = fromOklab([L, a0 + mix * (C * Math.cos(hh) - a0), b0 + mix * (C * Math.sin(hh) - b0)]);
+  return `rgb(${r.toFixed(0)}, ${g.toFixed(0)}, ${bl.toFixed(0)})`;
+}
+// A small postage stamp: perforated paper, a fine frame, and a few slime cells (seeded by the card) in the tinted ink.
+function paintStamp(x, x0, y0, sw, sh, ink, seed) {
+  x.fillStyle = TOK.stockWarm; x.fillRect(x0, y0, sw, sh);
+  x.fillStyle = TOK.stock; // the perforation: little bites along every edge
+  const bite = (cx, cy) => { x.beginPath(); x.arc(cx, cy, 1.5, 0, 2 * Math.PI); x.fill(); };
+  for (let i = 0, n = Math.round(sw / 4.5); i <= n; i++) { bite(x0 + (i * sw) / n, y0); bite(x0 + (i * sw) / n, y0 + sh); }
+  for (let i = 1, n = Math.round(sh / 4.5); i < n; i++) { bite(x0, y0 + (i * sh) / n); bite(x0 + sw, y0 + (i * sh) / n); }
+  const ix = x0 + 4.5, iy = y0 + 4.5, iw = sw - 9, ih = sh - 9, r = rng(seed * 2654435761 + 1);
+  x.save(); x.beginPath(); x.rect(ix, iy, iw, ih); x.clip();
+  x.fillStyle = ink; x.globalAlpha = 0.12; x.fillRect(ix, iy, iw, ih); x.globalAlpha = 1;
+  const pts = Array.from({ length: 9 }, (_, i) => [ix - 4 + ((i % 3) + 0.2 + 0.6 * r()) * ((iw + 8) / 3), iy - 4 + (Math.floor(i / 3) + 0.2 + 0.6 * r()) * ((ih + 8) / 3)]);
+  x.strokeStyle = ink; x.lineCap = 'round';
+  for (const [i, p] of pts.entries()) { // each cell's center to its nearest neighbors: veins between the cells
+    const near = pts.map((q, j) => [Math.hypot(q[0] - p[0], q[1] - p[1]), j]).filter(([, j]) => j > i).sort((a, c) => a[0] - c[0]).slice(0, 3);
+    for (const [d, j] of near) {
+      const q = pts[j], bend = (r() - 0.5) * 0.5 * d;
+      x.lineWidth = Math.max(0.7, 1.9 - d / 14);
+      x.beginPath(); x.moveTo(p[0], p[1]);
+      x.quadraticCurveTo((p[0] + q[0]) / 2 - ((q[1] - p[1]) / d) * bend, (p[1] + q[1]) / 2 + ((q[0] - p[0]) / d) * bend, q[0], q[1]); x.stroke();
+    }
+  }
+  x.restore();
+  x.strokeStyle = ink; x.lineWidth = 0.8; x.strokeRect(ix + 0.4, iy + 0.4, iw - 0.8, ih - 0.8);
+}
+function drawPostcard(x, s, L) {
+  const P = L.postcard, { w, h } = L, { pad, row } = BK;
+  x.fillStyle = '#a5a9708c'; x.fillRect(P.divX, pad, 1, h - 2 * pad); // the divider, a thin olive rule
+  const [sw, sh] = PC.stamp;
+  paintStamp(x, w - pad - sw + 2, pad - 2, sw, sh, tintHex(TOK.inkLine, s.hueHex, 0.45), s.id + 1);
+  x.fillStyle = '#a5a97059'; // the address lines
+  for (let i = 0; i < P.n; i++) x.fillRect(P.x0 - 2, P.base0 + i * row + 5, P.x1 - P.x0 + 2, 1);
+  for (const l of L.lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
+  for (const k of L.links) { // written on its line, which darkens under it as its underline
+    x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(k.a.textContent, k.tx, k.base);
+    x.fillStyle = TOK.inkLine; x.fillRect(k.tx, k.base + 5, k.tw, 1);
+  }
+}
+
 // Deterministic noise, so the atlas looks the same on every build.
 function rng(seed) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
 // Matte stock: a faint, fine grain (photo-paper backs and the note).
@@ -2100,6 +2170,7 @@ function drawBack(s, S) {
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, w, 22); } // the same sticky strip as the front
   x.textBaseline = 'alphabetic';
+  if (L.postcard) { drawPostcard(x, s, L); return { canvas: c, links, w, h }; }
   // index: the label strip, the header rule, and faint rules under every line to the bottom of the card
   if (L.strip) {
     x.fillStyle = TOK.stockWarm; x.fillRect(0, 0, w, BK.strip);
@@ -2418,7 +2489,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
-    ...((s.fly || s.down > 0) && shared.deckUV ? shared.deckUV : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
+    ...((s.fly || s.down > 0) && shared.deckUV && !backStyle(s).postcard ? shared.deckUV : s.buv || s.uv), // face down in a deck: its postcard back ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
