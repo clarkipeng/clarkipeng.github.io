@@ -18,7 +18,7 @@ let dead = false;
 
 const MAX = 32; // cards and decks the uniforms hold (room for overflow projects)
 const REF_W = 1440, REF_H = 900, PHONE = 700;
-const POSTCARD = 3 / 2; // every project card is a landscape postcard: its picture is 3:2, so a 1200x800 clip fills it
+const POSTCARD = 3 / 2; // every project card is one landscape postcard, 3:2, the same size on the desk and in a deck
 const STEP = 1 / 60;
 const PAPER = [0xf3, 0xf1, 0xea];
 // Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
@@ -813,8 +813,8 @@ let view = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, doc
 let nameBox = null; // CSS px: { x, baseline, size }
 
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
-function cardBox(s, w) {
-  if (s.kind === 'deck') return { w, h: Math.round(w * 1.4), media: null }; // a face-down card back
+function cardBox(s, w, h = Math.round(w / POSTCARD)) {
+  if (s.kind === 'deck') return { w, h, media: null }; // a pile of face-down postcards
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
     return { w, h: 28 + lines.length * 26.5, media: null, lines };
@@ -827,27 +827,36 @@ function cardBox(s, w) {
     const mw = w - 16;
     return { w, h: 8 + mw / s.aspect + 36, media: { x: 8, y: 8, w: mw, h: mw / s.aspect } };
   }
-  const mw = w - 12, mh = mw / s.aspect;
+  // A postcard: the picture takes what the caption leaves (a long title wraps), cover-framed.
+  const mw = w - 12;
   const [title, sub] = [s.el.querySelector('.cap b').textContent, s.el.querySelector('.cap span').textContent];
   const m = measure();
   m.font = font(600); const tw = m.measureText(title).width;
   m.font = font(400); const sw = m.measureText(sub).width;
   const oneLine = tw + sw + 14 < mw - 4;
   const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
-  return { w, h: 6 + mh + (oneLine ? 32 : 31 + titleLines.length * 18), media: { x: 6, y: 6, w: mw, h: mh }, title, titleLines, sub, oneLine };
+  return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 32 : 31 + titleLines.length * 18) }, title, titleLines, sub, oneLine };
 }
-// One size for both faces, like a real card: the front's own size when the back's copy fits on it at the shared type
-// scale; otherwise a postcard grows as a whole (its picture stays 3:2) until the back fits, and any other card becomes
-// the smallest card (up to maxW wide) that fits it, whose image is cropped (cover framing) to at most 25% wider or
-// taller than its own aspect. A note grows taller.
+// One postcard size for every project card, on the desk and in a deck (nothing scales when it is drawn or put back):
+// the smallest 3:2 card on which every project's back fits at the shared type scale, scaled up with the desk on big
+// screens. On a phone the screen sets the width (maxW), and if a back needs more room every card grows taller alike.
+function cardSize(k, maxW = 0) {
+  const photos = sources.filter((s) => s.kind === 'photo');
+  const fits = (w, h) => photos.every((s) => backLayout(s, cardBox(s, w, h)).need <= h);
+  if (maxW) { let h = Math.round(maxW / POSTCARD); while (h < 3 * maxW && !fits(maxW, h)) h += 2; return { w: maxW, h }; }
+  let lo = 120, hi = 360; // half widths: the card is 2 * n px wide
+  while (fits(2 * hi, Math.round((2 * hi) / POSTCARD)) === false && hi < 600) hi += 60;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (fits(2 * mid, Math.round((2 * mid) / POSTCARD))) hi = mid; else lo = mid + 1; }
+  const w = Math.max(2 * lo, 2 * Math.round(lo * k));
+  return { w, h: Math.round(w / POSTCARD) };
+}
+// The polaroid and the note keep their own shapes, one size for both faces: the front's own size when the back's copy
+// fits on it at the shared type scale; otherwise the polaroid becomes the smallest card (up to maxW wide) that fits it,
+// its image cropped (cover framing) to at most 25% wider or taller than its own aspect, and the note grows taller.
 function fitCard(s, w0, maxW = Math.round(w0 * 1.5)) {
   const box = cardBox(s, w0);
   if (!s.backEl || backLayout(s, box).need <= box.h) return box;
   if (!s.media) return { ...box, h: backLayout(s, box).need };
-  if (s.kind === 'photo') {
-    for (let w = w0 + 2; w <= 2 * w0; w += 2) { const b = cardBox(s, w); if (backLayout(s, b).need <= b.h) return b; }
-    return cardBox(s, 2 * w0);
-  }
   let best = null;
   for (let w = w0; w <= maxW; w += 2) {
     const b = cardBox(s, w), chrome = b.h - b.media.h, mw = b.media.w;
@@ -884,8 +893,9 @@ function layout() {
     const k = clamp(Math.min(vw / REF_W, vh / REF_H), 0.62, 1.35);
     view.k = k; view.docH = vh;
     nameBox = { x: 54 * k, baseline: 46 * k + 60 * k * 0.8, size: 60 * k };
+    view.card = cardSize(k);
     for (const s of sources) {
-      Object.assign(s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k)));
+      Object.assign(s, s.kind === 'photo' || s.kind === 'deck' ? cardBox(s, view.card.w, view.card.h) : fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k)));
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
     placeDecks();
@@ -899,14 +909,15 @@ function layout() {
     view.labelY = 0;
     nameBox = { x: pad, baseline: 30 + 44 * 0.8, size: 44 };
     let y = 0;
-    for (const s of sources) if (s.kind === 'deck') Object.assign(s, fitCard(s, 150)); // phones scroll to research: no decks
+    const full = Math.min(vw - 32, 380);
+    view.card = cardSize(1, full);
+    for (const s of sources) if (s.kind === 'deck') Object.assign(s, cardBox(s, view.card.w, view.card.h)); // phones scroll to research: no decks
     placeDecks();
     const order = [...sources].filter((s) => s.kind !== 'deck').sort((a, b) => a.order - b.order);
     for (const [i, s] of order.entries()) {
       if (s.region && !view.labelY) { view.labelY = y + 10; y += 56; } // research becomes a section further down
-      const full = Math.min(vw - 56, 380);
       const w = Math.round(s.kind === 'polaroid' ? full * 0.56 : s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
-      Object.assign(s, fitCard(s, w, full));
+      Object.assign(s, s.kind === 'photo' ? cardBox(s, view.card.w, view.card.h) : fitCard(s, w, full));
       s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       s.py = y + s.h / 2; y += s.h + 30;
@@ -958,7 +969,7 @@ function placeDoor() {
   for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(-45 ${cx} ${cy})`]]) t.setAttribute(a, v);
 }
 function placeDom(s) {
-  const r = s.rot + (s.sway * 180) / Math.PI, sc = (1 + 0.035 * s.lift) * (s.drawScale ?? 1), w = s.w, h = s.h;
+  const r = s.rot + (s.sway * 180) / Math.PI, sc = 1 + 0.035 * s.lift, w = s.w, h = s.h;
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(s.x - w / 2).toFixed(2)}px, ${(s.y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${sc.toFixed(4)})`;
   s.el.style.zIndex = s.z;
@@ -1496,9 +1507,9 @@ const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H
 
 // ---------- drawing ----------
 // The one way cards enter a page (Clark's deck-lab pick, "fan then deal"): a page's cards wait face down in a pile on its
-// deck at deck size; the pile fans toward the page from the top card down, and they are dealt top first: each lifts up
-// off the pile, then travels home on an ease-out while it grows to its own size and turns face up (from 10% to 51% of
-// the way), landing with the burst at contact. The first visit, a deep link, and every page turn deal this way.
+// deck; the pile fans toward the page from the top card down, and they are dealt top first: each lifts up off the pile,
+// then travels home on an ease-out while it turns face up (from 10% to 51% of the way), landing with the burst at
+// contact. The first visit, a deep link, and every page turn deal this way.
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, fan: 0.26 }; // s, fractions of the travel, s to fan open
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's deck fans: it slides in first
@@ -1541,18 +1552,18 @@ function drawFrom(region, { delay = 0, hold = true } = {}) {
 // Runs fn with a page's featured cards lying at home (its slime sees them there while they are on its pile).
 function atHome(region, fn) {
   const cards = sources.filter((s) => s.region === region && s.featured);
-  const was = cards.map(({ x, y, rot, flying, drawScale, turn, morph }) => ({ x, y, rot, flying, drawScale, turn, morph }));
-  for (const s of cards) { [s.x, s.y, s.rot] = homeOf(s); Object.assign(s, { flying: false, drawScale: 1, turn: null, morph: null }); }
+  const was = cards.map(({ x, y, rot, flying, turn }) => ({ x, y, rot, flying, turn }));
+  for (const s of cards) { [s.x, s.y, s.rot] = homeOf(s); Object.assign(s, { flying: false, turn: null }); }
   fn();
   cards.forEach((s, i) => Object.assign(s, was[i]));
 }
 // One card onto its way out of a deck to `to` (its home, or where it is now): it waits in the deck (fanned, as card k of
 // n, when fan is given), then is dealt at `at`.
 function deal(s, deck, at, fan = null, [x, y, r] = [s.x, s.y, s.rot]) {
-  s.fly = { at, x, y, r, deck, fan, t0: flights.t, grow: !!fan && s.fly?.at !== Infinity, // a card not on the pile yet grows in there
+  s.fly = { at, x, y, r, deck, fan, t0: flights.t,
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   s.el.classList.add('flying'); // clicks go through to the deck
-  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, drawScale: s.fly.grow ? 0.05 : 1, morph: 0, dw: deck.w, dh: deck.h, vx: 0, vy: 0, released: false, shove: null, kb: null,
+  Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null,
     z: fan ? topZ + fan.n - fan.k : ++topZ }); // the first to be dealt on top
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
@@ -1577,7 +1588,7 @@ function pileUp(region) {
   for (const s of cards) { s.inDeck = true; s.pileZ ||= -s.order; } // never dealt: the first in order on top
   cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length, at: Infinity, region }));
   topZ += cards.length;
-  for (const s of cards) { Object.assign(s.fly, { grow: false }); s.drawScale = 1; [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); } // already on the pile: nothing grows in
+  for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly, 0); placeDom(s); }
 }
 function stepFlights(dt) {
   if (!flights.on) return;
@@ -1589,10 +1600,10 @@ function stepFlights(dt) {
     // It lifts off the stack first (8% of the draw) and only then travels, so it rises up and over the cards below.
     const [wx, wy, wr] = waitPose(k, flights.t), u0 = clamp((flights.t - k.at) / (k.dur || DRAW.dur)), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
     if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
-    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e, drawScale: k.grow ? Math.max(0.05, 1 - (1 - clamp((flights.t - k.t0) / 0.22)) ** 3) : 1, morph: e, // the stack grows in, nothing pops
+    Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * e,
       turn: (1 - (k.down || 0)) * smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
     if (k.back && u0 >= 1) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k, 0); } // back on the pile, no burst
-    else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, drawScale: 1, morph: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
+    else if (!k.back && u >= 1) { Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, turn: null, flyLift: 0, dealtAt: ++dealSeq }); s.el.classList.remove('flying'); land(s, 1); } // contact
     else busy = true;
     placeDom(s);
   }
@@ -1609,9 +1620,9 @@ function endFlights(all = false, region = null) { // all: piles too (a new layou
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
     const k = s.fly;
     if (!k || (k.at === Infinity && !all)) continue;
-    if (k.back && !all) { k.at = Infinity; Object.assign(s, { turn: 0, morph: 1, flyLift: 0 }); [s.x, s.y, s.rot] = waitPose(k, 0); placeDom(s); continue; }
+    if (k.back && !all) { k.at = Infinity; Object.assign(s, { turn: 0, flyLift: 0 }); [s.x, s.y, s.rot] = waitPose(k, 0); placeDom(s); continue; }
     s.el.classList.remove('flying');
-    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, drawScale: 1, morph: null, flyLift: 0 });
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, flip: 0, flipTo: 0, turn: null, flyLift: 0 });
     placeDom(s);
   }
   flights.on = sources.some((s) => s.fly && s.fly.at !== Infinity);
@@ -1711,7 +1722,7 @@ function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
   s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, fan: { k: 0, n: 1, at: Infinity, region: s.region }, back: true, down: s.down || 0, dur, // down: already face down
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
-  Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0, drawScale: 1, morph: 1, dw: deck.w, dh: deck.h });
+  Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0 });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
 // Is a desk point over a page's deck (grown by pad px)?
@@ -2394,7 +2405,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const fa = tn != null ? Math.PI * (1 - easeFlip(tn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56)), fc = Math.cos(fa); // a drawn card turns on its own clock
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
   const lift = Math.max(s.lift, 0.9 * up, s.flyLift);
-  const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0)) * (s.drawScale ?? 1);
+  const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
   const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1);
@@ -2403,8 +2414,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
   const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * (f - zh), f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * (f - zh), -mu[2], -mv[2], f - zh]);
-  const mw = s.morph != null ? lerp(s.dw, s.w, s.morph) : s.w, mh = s.morph != null ? lerp(s.dh, s.h, s.morph) : s.h; // a card in a deck has the deck card's shape
-  const hw = (mw * dpr) / 2, hh = (mh * dpr) / 2;
+  const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2;
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
