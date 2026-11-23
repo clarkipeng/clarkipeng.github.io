@@ -1013,9 +1013,12 @@ const regionFromUrl = () => regionOf(location.pathname) ?? 0;
 const WARM_STEPS = 150; // with reduced motion, a page you have not seen yet is formed before it is drawn
 let page = 0, dest = 0; // the page you see, and the page you are on your way to
 const NAMES = ['research', 'desk']; // written on each page's corner: where it leads
-// Tab stays on the page you see: the other page's cards are inert (focusing one would scroll the desk sideways).
+// Tab stays on the page you see: the other page's cards are inert (focusing one would scroll the desk sideways), and so
+// are cards lying in a deck (face down, nothing to show; the deck itself is the way to them).
+const inertFor = (s, region) => !view.phone && (s.region !== region || (s.inDeck && s.kind !== 'deck'));
+const syncInert = () => { for (const s of sources) { const v = inertFor(s, page); if (s.el.inert !== v) s.el.inert = v; } };
 const setInert = (region) => {
-  for (const s of sources) s.el.inert = !view.phone && s.region !== region;
+  for (const s of sources) s.el.inert = inertFor(s, region);
   doorEl.setAttribute('aria-label', region ? 'Back to the desk' : 'Go to research');
   doorEl.querySelector('text').textContent = NAMES[region];
 };
@@ -2787,6 +2790,7 @@ function frame(now) {
   last = now;
   stepDecks(dt); // first: cards waiting on a deck follow it this frame
   stepFlights(dt);
+  syncInert();
   syncHover();
   stepCards(dt);
   stepTurn(dt);
