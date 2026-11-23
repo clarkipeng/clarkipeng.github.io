@@ -2608,6 +2608,20 @@ function renderEntries(g, sm, extra = []) {
     { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared.atlas.createView() }, { binding: 4, resource: g.sampler },
     { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, ...extra];
 }
+// A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
+// on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
+// only on the desk, when it is turned over. Drawn at the card's size on the desk, landscape or portrait.
+function paintPlainBack(region, portrait, S) {
+  const cs = view.cs || 1, w = (portrait ? view.card.h : view.card.w) * cs, h = (portrait ? view.card.w : view.card.h) * cs;
+  const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
+  x.scale(S, S); x.fillStyle = TOK.stock; x.fillRect(0, 0, w, h);
+  x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
+  // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
+  // shows and the name is written upside down there; a portrait card's left part shows, the name turned to read up.
+  if (portrait) { x.translate(w * 0.27, h / 2); x.rotate(-Math.PI / 2); } else { x.translate(w / 2, h * 0.73); x.rotate(Math.PI); }
+  x.fillText(BOX_NAMES[region], 0, 2);
+  return c;
+}
 async function buildAtlas(g) {
   const S = shared.dev; // cards rasterize at device resolution
   const drawn = [];
@@ -2615,6 +2629,7 @@ async function buildAtlas(g) {
   const backs = sources.filter((src) => src.backEl || src.lid).map((src) => ({ src, ...(src.lid ? drawLidOutside(src, S) : drawBack(src, S)) }));
   const dc = new OffscreenCanvas(Math.ceil(view.card.w * S), Math.ceil(view.card.h * S));
   paintDeckBack(dc.getContext('2d'), S, dc.width, dc.height); // what a card in a deck shows with the earlier backs (backs: pen)
+  const plain = [0, 1].flatMap((r) => [false, true].map((portrait) => paintPlainBack(r, portrait, S))); // [page][portrait]
   // The corners' labels, in pen (transparent around the ink): one canvas size for both, the longer word's.
   const lf = font(500, T.cornerLabel * view.k * S, 'Caveat'), mc = measure();
   mc.font = lf;
@@ -2629,7 +2644,7 @@ async function buildAtlas(g) {
   // Shelf-pack the cards into one atlas.
   const AW = Math.min(4096, g.device.limits.maxTextureDimension2D);
   let x = 0, y = 0, rowH = 0;
-  const extra = [dc, ...labels], places = [...drawn, ...backs, ...extra.map((c) => ({ canvas: c }))].map(({ canvas: c }) => {
+  const extra = [dc, ...plain, ...labels], places = [...drawn, ...backs, ...extra.map((c) => ({ canvas: c }))].map(({ canvas: c }) => {
     if (x + c.width > AW) { x = 0; y += rowH + 2; rowH = 0; }
     const p = { x, y }; x += c.width + 2; rowH = Math.max(rowH, c.height); return p;
   });
@@ -2648,12 +2663,13 @@ async function buildAtlas(g) {
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, links);
   });
-  const [deckUV, ...labelUV] = extra.map((c, i) => {
+  const [deckUV, ...rest] = extra.map((c, i) => {
     const p = places[drawn.length + backs.length + i];
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     return [p.x / AW, p.y / AH, (p.x + c.width) / AW, (p.y + c.height) / AH];
   });
-  Object.assign(shared, { deckUV, labelUV });
+  const plainUV = [rest.slice(0, 2), rest.slice(2, 4)], labelUV = rest.slice(4);
+  Object.assign(shared, { deckUV, plainUV, labelUV });
   shared.atlas = atlas;
 }
 
@@ -2715,7 +2731,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
-    ...((s.fly || s.down > 0) && shared.deckUV && !backStyle(s).postcard ? shared.deckUV : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
+    ...((s.fly || s.down > 0) && shared.deckUV ? (backStyle(s).postcard ? shared.plainUV[s.region][s.w > s.h ? 0 : 1] : shared.deckUV) : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
