@@ -85,11 +85,11 @@ const GROUPS = {
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
     ['backs', 'postcard', 0, 0, 0, 'back style (postcard; pen was the previous)'],
-    ['cards', 'as-is', 0, 0, 0, 'card size preset'],
-    ['cardScale', 1, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
-    ['backTitle', 1, 0, 1, 1, 'title on the back (it is on the front)'],
-    ['backTight', 0, 0, 1, 1, 'tighter back padding and link rows'],
-    ['framing', 0, 0, 1, 1, 'frame thumbnails on their subject (data-focus)'],
+    ['cards', 'compact', 0, 0, 0, 'card size preset'],
+    ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
+    ['backTitle', 0, 0, 1, 1, 'title on the back (it is on the front)'],
+    ['backTight', 1, 0, 1, 1, 'tighter back padding and link rows'],
+    ['framing', 1, 0, 1, 1, 'frame thumbnails on their subject (data-focus)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
@@ -173,11 +173,11 @@ const LOOKS = {
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
     main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
 };
-// Card size presets (options; as-is is today's card): compact is the smallest scale at which every back still fits,
-// with the title on the front only, tighter backs, and thumbnails framed on their subject.
+// Card size presets: compact (Clark's pick, 2026-11-23, the default) shows cards at 0.75 with the title on the front
+// only, tighter backs, and thumbnails framed on their subject; as-is is the full-size card from before.
 const CARD_PRESETS = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
-  compact: { cardScale: 0.85, backTitle: 0, backTight: 1, framing: 1 },
+  compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
 const CHOICES = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
