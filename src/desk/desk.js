@@ -11,6 +11,8 @@
 // teardown. Its pages have their own addresses (the mockup's #research is /publications here); router.push(path, state)
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
+import { clips, mediaUrl } from 'virtual:desk-media';
+
 export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;
 const addEventListener = (type, fn, opts) => window.addEventListener(type, fn, { ...opts, signal });
@@ -1985,15 +1987,12 @@ function freeSlot(s) {
 
 // media/clips.json maps a card key to { poster, clips }; new clips drop in with no code change. Cards without an entry
 // fall back to their data-video source.
-let clipLists = {};
-async function loadClipLists() {
-  try { clipLists = await (await fetch('/desk-media/clips.json', { cache: 'no-cache' })).json(); } catch { clipLists = {}; }
-}
+const clipLists = clips; // clips.json, built in; every media address carries its file's content hash
 // Each clip is "file.mp4" or { "src": "file.mp4", "start": seconds } (default start 0).
 function playlistFor(s) {
   if (!s.media) return null; // only cards with a media area can play clips
   const e = clipLists[s.key];
-  if (e?.clips?.length) return e.clips.map((c) => (typeof c === 'string' ? { src: '/desk-media/' + c, start: 0 } : { src: '/desk-media/' + c.src, start: +c.start || 0 }));
+  if (e?.clips?.length) return e.clips.map((c) => (typeof c === 'string' ? { src: mediaUrl('/desk-media/' + c), start: 0 } : { src: mediaUrl('/desk-media/' + c.src), start: +c.start || 0 }));
   return s.videoSrc ? [{ src: s.videoSrc, start: 0 }] : null;
 }
 function makeVideo(src, lazy = false) {
@@ -3251,13 +3250,12 @@ async function warm(steps) {
 
 async function main() {
   const t0 = performance.now(), mark = (k) => (bootLog[k] = Math.round(performance.now() - t0));
-  await loadClipLists();
   // A card rests on its cover when it has one (an image not from its clips, kept like an explicit still: hover fades from
   // it into the clip and back), else on its poster (the frame its first clip starts from); an explicit still wins.
   for (const s of sources) {
     const e = clipLists[s.key];
-    if (e?.cover && !s.still) { s.img.src = '/desk-media/' + e.cover; s.still = 'cover'; }
-    else if (!s.still && e?.poster) s.img.src = '/desk-media/' + e.poster;
+    if (e?.cover && !s.still) { s.img.src = mediaUrl('/desk-media/' + e.cover); s.still = 'cover'; }
+    else if (!s.still && e?.poster) s.img.src = mediaUrl('/desk-media/' + e.poster);
   }
   layout(); // the startup still uses the final layout right away
   const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);

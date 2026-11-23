@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { deskFontsUrl } from '../data/seo';
-import html from '../desk/desk.html?raw';
+import { versionHtml } from 'virtual:desk-media';
+import raw from '../desk/desk.html?raw';
 import '../desk/desk.css';
 
 // The desk measures its text in its own fonts, so their stylesheet must be in before the desk starts. It stands in for
@@ -21,7 +22,8 @@ const fontSheet = () => {
   });
 };
 
-// The markup is set once; the desk script owns it from then on.
+// The markup is set once; the desk script owns it from then on. Its images load at their content-hashed addresses.
+const html = versionHtml(raw);
 const markup = { __html: html };
 
 // The homepage: the desk mockup's markup and script, as is, at / (the desk) and /publications (research). The markup is
