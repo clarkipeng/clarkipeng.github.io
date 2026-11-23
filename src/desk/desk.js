@@ -1038,11 +1038,13 @@ function animateFlatDoor() {
   };
   flatDoor = requestAnimationFrame(tick);
 }
+// A card dragged over its deck turns face down (s.down) and, with it, toward the pile's angle (s.downTo).
+const shownRot = (s) => (s.down > 0 && s.downTo != null ? lerp(s.rot, s.downTo, smooth(s.down)) : s.rot);
 // The DOM box (hit area and focus ring) follows the drawn card: the same lift scale, landing squash, and the camera's
 // perspective on a lifted card (cardUniform's f / (f - zh)); the 3D tilt is left out.
 function placeDom(s) {
   const lift = Math.max(s.lift, s.flyLift || 0), sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0)) * (1800 / (1800 - lift * T.lift));
-  const r = s.rot + (s.sway * 180) / Math.PI, k = s.k || 1, w = s.w / k, h = s.h / k; // design px, scaled to the card scale
+  const r = shownRot(s) + (s.sway * 180) / Math.PI, k = s.k || 1, w = s.w / k, h = s.h / k; // design px, scaled to the card scale
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(s.x - w / 2).toFixed(2)}px, ${(s.y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${(sc * k).toFixed(4)})`;
   if (s.ts !== TS) { s.ts = TS; s.el.style.setProperty('--ts', TS); } // the DOM still's captions take the same type
@@ -1337,6 +1339,7 @@ for (const s of sources) {
     if (s.flying) return;
     s.more ? deckClick(s, e) : flip(s);
   });
+  if (s.more) { hit.addEventListener('focus', () => (s.focused = hit.matches(':focus-visible'))); hit.addEventListener('blur', () => (s.focused = false)); } // a tucked box comes out for the keyboard
   hit.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : flip(s); }
     else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
@@ -1359,15 +1362,21 @@ for (const s of sources) {
       // flickers at the edge. The pile lifts a little to take it.
       const deck = pageDeck(s.region), x = deskX(m), y = deskY(m);
       s.over = !!deck && decked(s) && !s.flip && !s.flipTo && !flights.on && !turn.on && (deck.mode === 'pile' || deck.phase === 'open') && overDeck(deck, x, y, (s.over ? 28 : -10) * view.k);
+      if (deck) { // near the right edge or the deck's spot it calls a tucked box out (160 px in, 220 px to let go)
+        const r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), q = obb({ ...deck, x: deck.spot }), qx = reach(q, [1, 0]), qy = reach(q, [0, 1]);
+        const gap = Math.min((s.region + 1) * view.w - s.x - ex, Math.hypot(Math.max(0, Math.abs(s.x - deck.spot) - ex - qx), Math.max(0, Math.abs(s.y - deck.y) - ey - qy)));
+        deck.near = decked(s) && gap < (deck.near ? 220 : 160) * view.k;
+        s.downTo = deck.rot + upright(s); // face down over it, it also turns square with the pile
+      }
       for (const o of sources) if (o === deck || (o.region === s.region && o.fly?.at === Infinity)) o.welcome = s.over;
     };
     const up = (ev) => {
       hit.removeEventListener('pointermove', move);
       const deck = press.moved && pageDeck(s.region), over = s.over && !flights.on;
-      for (const o of sources) o.welcome = false;
+      for (const o of sources) { o.welcome = false; if (o.more) o.near = false; }
       s.over = false;
-      if (deck && over) { // let go over its deck: face down, it slides onto the pile
-        Object.assign(s, { dragging: false, suppressClick: true }); s.el.classList.remove('dragging');
+      if (deck && over) { // let go over its deck: face down and square with the pile already, it slides straight on
+        Object.assign(s, { dragging: false, suppressClick: true, rot: shownRot(s) }); s.el.classList.remove('dragging');
         collect(s, deck, now()); flights.on = true; stepFlights(0); return;
       }
       if (press.moved) {
@@ -1781,6 +1790,8 @@ function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOu
   if (v.want === want) return;
   Object.assign(v, { want, from: v.at, to: deckOut(d, want), t: 0, dur, ease });
 }
+// Tucked, only the box's open end and its label peek in at the edge (the lid closed over them).
+const tuckAt = (d) => DECK_SHOW * d.w - (boxSize({ lid: true })[0] + 34) * (view.cs || 1);
 function slideBox(d, to, dur, ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
 // The deck as a pile, the box off screen (a page you turn to, or one put away out of sight).
 function resetBox(d) {
@@ -1831,11 +1842,18 @@ function stepBox(d, dt) {
   const held = mine.some((s) => s.fly.at === Infinity || (!s.fly.back && flights.t < s.fly.at + 0.3 * DRAW.dur)); // in it, or only just off it
   if (d.mode === 'pile') {
     if (held || coming || d.welcome || arriving(d)) return;
-    Object.assign(d, { mode: 'box', phase: 'open', lidT: 0, z: ++topZ }); // the last card is away: the box slides out
-    slideBox(d, 0, MOTION.settle, easeOutQuart);
+    Object.assign(d, { mode: 'box', phase: 'open', lidT: 1, outFor: 0, z: ++topZ }); // the last card is away: the box slides in, tucked, lid closed
+    slideBox(d, tuckAt(d), MOTION.settle, easeOutQuart);
     d.hit.setAttribute('aria-label', DECK_LABEL.box);
   } else if (d.phase === 'open') {
-    if (held && !coming && !d.welcome) Object.assign(d, { phase: 'closing', pt: 0 }); // everything is in: close up
+    if (held && !coming && !d.welcome) { Object.assign(d, { phase: 'closing', pt: d.lidT * BOX.close }); return; } // everything is in: close up
+    // Tucked unless it is wanted: a dragged card near it, cards on their way in, a gather asked for, keyboard focus. It
+    // stays out 0.4 s after the last reason goes, then tucks back, its lid closing.
+    if (d.near || d.welcome || coming || d.gatherAsk || d.focused) d.outFor = 0.4; else d.outFor -= dt;
+    const out = d.outFor > 0, to = out ? 0 : tuckAt(d);
+    if (b.to !== to) slideBox(d, to, MOTION.respond, out ? easeOutQuart : EASES.cubic);
+    d.lidT = clamp(d.lidT + (out ? -dt : dt) / BOX.close);
+    if (d.gatherAsk && b.t >= 1 && d.lidT === 0) { d.gatherAsk = false; boxGather(d); } // out and open: in they come
   } else if (d.phase === 'closing') {
     d.pt += dt; d.lidT = clamp(d.pt / BOX.close);
     if (d.pt >= BOX.close + BOX.pause) { d.phase = 'leaving'; slideBox(d, deckOut(d, 'off'), BOX.away, EASES.cubic); }
@@ -1875,6 +1893,7 @@ function drawMore(deck, all = false) {
 // Every project card on the box's page goes back in, last dealt first.
 function boxGather(deck) {
   if (deck.phase !== 'open' || flights.on || turn.on) return;
+  if (deck.bx.at !== 0 || deck.lidT > 0) { deck.gatherAsk = true; return; } // tucked: it slides out and opens first
   const out = sources.filter((o) => o.region === deck.region && decked(o) && !o.inDeck && !o.flying && !o.dragging);
   if (out.length) gather(out, deck);
 }
@@ -2137,9 +2156,9 @@ function paintBox(x, s, S) {
   x.strokeStyle = TOK.inkLine; x.lineWidth = 1; x.strokeRect(7.5, 7.5, w - 15, h - 15);
   x.fillStyle = '#e8e4d8'; x.beginPath(); x.arc(0, h / 2, 15, -Math.PI / 2, Math.PI / 2); x.fill(); // the thumb notch at the open end
   x.strokeStyle = TOK.inkLine; x.beginPath(); x.arc(0, h / 2, 15, -Math.PI / 2, Math.PI / 2); x.stroke();
-  const show = DECK_SHOW * w, lid = boxSize({ lid: true })[0]; // the label sits in the part that shows, clear of the closed lid
+  const lid = boxSize({ lid: true })[0]; // the label sits in the part that shows, clear of the closed lid
   x.font = font(500, 26, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.translate(lid + (show - lid) / 2, h / 2); x.rotate(-Math.PI / 2); x.fillText(BOX_NAMES[s.region], 0, 2); // along the upright box, like a spine
+  x.translate(lid + 17, h / 2); x.rotate(-Math.PI / 2); x.fillText(BOX_NAMES[s.region], 0, 2); // along the upright box, like a spine, just past the closed lid so it shows when tucked
   x.restore();
 }
 function paintLid(x, s, S, outside) {
@@ -2718,7 +2737,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const fa = s.flipA ?? (tn != null ? Math.PI * (1 - easeFlip(tn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56))), fc = Math.cos(fa); // a drawn card turns on its own clock; the box's lid by its angle
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
   const lift = Math.max(s.lift, (view.phone ? 0.3 : 0.9) * up, s.flyLift); // on a phone a flip lifts less, so the card stays inside the screen
-  const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
+  const th = (shownRot(s) * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
   const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1);
@@ -2938,7 +2957,7 @@ function frame(now) {
   stepWarm();
   qualityCheck(dt);
   if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
-  for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
+  for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.down || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
   if (hud && clock.frame % 15 === 0) {
     const iv = [...stats.intervals].sort((a, b) => a - b);
