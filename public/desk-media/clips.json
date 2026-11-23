@@ -11,7 +11,6 @@
     ]
   },
   "vp2": {
-    "poster": "vp2-poster.jpg",
     "clips": [
       "vp2-01.mp4",
       "vp2-02.mp4",
@@ -20,27 +19,24 @@
     ]
   },
   "pdfr": {
-    "poster": "pdfr-poster.jpg",
     "clips": [
       "pdfr-01.mp4"
     ]
   },
   "suika": {
     "poster": "suika-poster.jpg",
+    "cover": "suika-cover.webp",
     "clips": [
       "suika-01.mp4",
       "suika-02.mp4",
       "suika-03.mp4"
-    ],
-    "cover": "suika-cover.webp"
+    ]
   },
   "ray": {
     "poster": "ray-poster.jpg",
+    "cover": "ray-cover.jpg",
     "clips": [
-      {
-        "src": "ray-01.mp4",
-        "start": 4.5083
-      },
+      "ray-01.mp4",
       "ray-02.mp4"
     ]
   },
@@ -57,22 +53,17 @@
   },
   "catapult": {
     "poster": "catapult-poster.jpg",
+    "cover": "catapult-cover.jpg",
     "clips": [
-      {
-        "src": "catapult-01.mp4",
-        "start": 4.0083
-      },
-      "catapult-02.mp4",
-      "catapult-03.mp4"
+      "catapult-01.mp4",
+      "catapult-02.mp4"
     ]
   },
   "sine": {
     "poster": "sine-poster.jpg",
+    "cover": "sine-cover.jpg",
     "clips": [
-      {
-        "src": "sine-01.mp4",
-        "start": 4.175
-      },
+      "sine-01.mp4",
       "sine-02.mp4",
       "sine-03.mp4"
     ]
