@@ -983,8 +983,11 @@ function placeDoor() {
   Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
   for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(-45 ${cx} ${cy})`]]) t.setAttribute(a, v);
 }
+// The DOM box (hit area and focus ring) follows the drawn card: the same lift scale, landing squash, and the camera's
+// perspective on a lifted card (cardUniform's f / (f - zh)); the 3D tilt is left out.
 function placeDom(s) {
-  const r = s.rot + (s.sway * 180) / Math.PI, sc = 1 + 0.035 * s.lift, w = s.w, h = s.h;
+  const lift = Math.max(s.lift, s.flyLift || 0), sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0)) * (1800 / (1800 - lift * T.lift));
+  const r = s.rot + (s.sway * 180) / Math.PI, w = s.w, h = s.h;
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(s.x - w / 2).toFixed(2)}px, ${(s.y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${sc.toFixed(4)})`;
   s.el.style.zIndex = Math.round(s.z);
@@ -2837,7 +2840,7 @@ function frame(now) {
   stepWarm();
   qualityCheck(dt);
   if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
-  for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
+  for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
   if (hud && clock.frame % 15 === 0) {
     const iv = [...stats.intervals].sort((a, b) => a - b);
