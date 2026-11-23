@@ -3154,7 +3154,13 @@ async function warm(steps) {
 async function main() {
   const t0 = performance.now(), mark = (k) => (bootLog[k] = Math.round(performance.now() - t0));
   await loadClipLists();
-  for (const s of sources) if (!s.still && clipLists[s.key]?.poster) s.img.src = '/desk-media/' + clipLists[s.key].poster; // an explicit still wins
+  // A card rests on its cover when it has one (an image not from its clips, kept like an explicit still: hover fades from
+  // it into the clip and back), else on its poster (the frame its first clip starts from); an explicit still wins.
+  for (const s of sources) {
+    const e = clipLists[s.key];
+    if (e?.cover && !s.still) { s.img.src = '/desk-media/' + e.cover; s.still = 'cover'; }
+    else if (!s.still && e?.poster) s.img.src = '/desk-media/' + e.poster;
+  }
   layout(); // the startup still uses the final layout right away
   const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
   await Promise.race([fontsReady, new Promise((r) => setTimeout(r, 3000))]);

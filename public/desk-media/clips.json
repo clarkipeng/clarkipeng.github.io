@@ -31,7 +31,8 @@
       "suika-01.mp4",
       "suika-02.mp4",
       "suika-03.mp4"
-    ]
+    ],
+    "cover": "suika-cover.webp"
   },
   "ray": {
     "poster": "ray-poster.jpg",
