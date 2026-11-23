@@ -87,6 +87,7 @@ const GROUPS = {
     ['backs', 'postcard', 0, 0, 0, 'back style (postcard; pen was the previous)'],
     ['cards', 'compact', 0, 0, 0, 'card size preset'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
+    ['cardMax', 280, 180, 400, 1, 'card max side px (desk, at 1440x900; scales with the desk)'],
     ['backTitle', 0, 0, 1, 1, 'title on the back (it is on the front)'],
     ['backTight', 1, 0, 1, 1, 'tighter back padding and link rows'],
     ['framing', 1, 0, 1, 1, 'frame thumbnails on their subject (data-focus)'],
@@ -826,7 +827,7 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, more: el.classList.contains('more'), lid: el.classList.contains('lid'),
-    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), portrait: d.orient === 'portrait', // portrait: the one card size, turned upright videoSrc: d.video,
+    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
@@ -840,7 +841,8 @@ let nameBox = null; // CSS px: { x, baseline, size }
 
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 // The card box, a little bigger than a postcard all round so a card inside it is hidden; its lid lies open beside it.
-const boxSize = (s) => [s.lid ? Math.round(view.card.w * 0.13) : view.card.h + 14, view.card.w + 12]; // upright, like the deck
+// The box fits its page's largest upright card with room all round (design px of the page's pile, d.pile).
+const boxSize = (s) => { const p = pageDeck(s.region).pile; return s.lid ? [Math.round(p.ph * 0.13), p.ph + 12] : [p.pw + 14, p.ph + 12]; };
 function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)) {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
@@ -851,8 +853,8 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
     const lines = wrapLines(s.hit.querySelector('b').textContent, w - 39, '600 16px Inter');
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small').textContent };
   }
-  if (s.kind === 'polaroid' && h) { // the one card size: the photo and the same caption strip as every project card
-    return { w, h, media: { x: 6, y: 6, w: w - 12, h: h - 6 - (14 + 18 * TS) } };
+  if (s.kind === 'polaroid' && h) { // a polaroid at its capped size: the photo, then its wide bottom strip
+    return { w, h, media: { x: 8, y: 8, w: w - 16, h: h - 8 - 36 } };
   }
   if (s.kind === 'polaroid') {
     const mw = w - 16;
@@ -868,22 +870,17 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
   const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
   return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 14 + 18 * TS : 13 + (titleLines.length + 1) * 18 * TS) }, title, titleLines, sub, oneLine };
 }
-// Every card on the desk (project, research, the photo, the note) is the one card size, landscape, or with
-// data-orient="portrait" (the photo) the same card turned upright. (Clark, TASTE.md: every card is the same size inside and outside the deck.)
-const oneSize = (s) => s.kind === 'photo' || s.kind === 'polaroid' || s.kind === 'note';
-const cardDims = (s) => (s.portrait ? [view.card.h, view.card.w] : [view.card.w, view.card.h]);
-// One postcard size for every project card, on the desk and in a deck (nothing scales when it is drawn or put back):
-// the smallest 3:2 card on which every project's back fits at the shared type scale, scaled up with the desk on big
-// screens. On a phone the screen sets the width (maxW), and if a back needs more room every card grows taller alike.
-function cardSize(k, maxW = 0) {
-  const photos = sources.filter((s) => s.kind === 'photo');
-  const fits = (w, h) => photos.every((s) => backLayout(s, cardBox(s, w, h)).need <= h);
-  if (maxW) { let h = Math.round(maxW / POSTCARD); while (h < 3 * maxW && !fits(maxW, h)) h += 2; return { w: maxW, h }; }
-  let lo = 120, hi = 360; // half widths: the card is 2 * n px wide
-  while (fits(2 * hi, Math.round((2 * hi) / POSTCARD)) === false && hi < 600) hi += 60;
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (fits(2 * mid, Math.round((2 * mid) / POSTCARD))) hi = mid; else lo = mid + 1; }
-  const w = Math.max(2 * lo, 2 * Math.round(lo * k));
-  return { w, h: Math.round(w / POSTCARD) };
+// Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
+// reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
+// the one card size.)
+const capped = (s) => s.kind === 'photo' || s.kind === 'polaroid';
+const cappedDims = (s, cap) => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
+// Each page's pile, upright: as wide as its widest card's short side and as tall as its longest long side (design px).
+function pileSizes() {
+  for (const d of sources) if (d.more) {
+    const cards = sources.filter((s) => s.region === d.region && decked(s)), k = view.cs || 1;
+    d.pile = { pw: Math.max(1, ...cards.map((s) => Math.min(s.w, s.h) / k)), ph: Math.max(1, ...cards.map((s) => Math.max(s.w, s.h) / k)) };
+  }
 }
 // The polaroid and the note keep their own shapes, one size for both faces: the front's own size when the back's copy
 // fits on it at the shared type scale; otherwise the polaroid becomes the smallest card (up to maxW wide) that fits it,
@@ -936,12 +933,16 @@ function layout() {
     // always relative to the same card; the back options only change what fits on it.
     const opts = { backTitle: T.backTitle, backTight: T.backTight };
     Object.assign(T, { backTitle: 1, backTight: 0 }); TS = 1;
-    view.card = cardSize(k);
-    const fixed = new Map(sources.filter((s) => !oneSize(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k))]));
+    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round(((s.slot?.w ?? s.baseW) * k) / c))]));
     Object.assign(T, opts); TS = Math.max(1, 12 / (TOK.fs * c)); view.cs = c;
+    // The longest side (design px) scales with the desk like the layout, but never below the smallest at which every back fits.
+    const fitsAt = (cp) => sources.every((s) => !capped(s) || !s.backEl || ((b) => backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
+    let lo = 120, hi = 900; while (hi - lo > 0.5) { const mid = (lo + hi) / 2; if (fitsAt(mid)) hi = mid; else lo = mid; }
+    const cap = Math.max((T.cardMax * k) / c, Math.ceil(hi));
+    for (const s of sources) if (s.kind !== 'deck') { const box = capped(s) ? cardBox(s, ...cappedDims(s, cap)) : fixed.get(s); Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
+    pileSizes();
     for (const s of sources) {
-      const box = oneSize(s) ? cardBox(s, ...cardDims(s)) : s.kind === 'deck' ? cardBox(s, ...boxSize(s)) : fixed.get(s);
-      Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c });
+      if (s.kind === 'deck') { const box = cardBox(s, ...boxSize(s)); Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
     placeDecks();
@@ -953,15 +954,16 @@ function layout() {
     nameBox = { x: pad, baseline: 30 + 44 * 0.8, size: 44 };
     let y = 0;
     const full = Math.min(vw - 32, 380);
-    TS = 1; view.cs = 1; for (const s of sources) s.k = 1; // phones show cards at full size
-    view.card = cardSize(1, full);
+    TS = 1; view.cs = 1; for (const s of sources) s.k = 1; // phones show cards at full size, the cap the column's width
+    for (const s of sources) if (capped(s)) Object.assign(s, cardBox(s, ...cappedDims(s, full)));
+    pileSizes();
     for (const s of sources) if (s.kind === 'deck') Object.assign(s, cardBox(s, ...boxSize(s))); // phones scroll to research: no decks
     placeDecks();
     const order = [...sources].filter((s) => s.kind !== 'deck').sort((a, b) => a.order - b.order);
     for (const [i, s] of order.entries()) {
       if (s.region && !view.labelY) { view.labelY = y + 10; y += 56; } // research becomes a section further down
       const w = Math.round(s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
-      Object.assign(s, oneSize(s) ? cardBox(s, ...cardDims(s)) : fitCard(s, w, full));
+      if (!capped(s)) Object.assign(s, fitCard(s, w, full));
       s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       s.py = y + s.h / 2; y += s.h + 30;
@@ -1676,7 +1678,7 @@ function atHome(region, fn) {
 // One card onto its way out of a deck to `to` (its home, or where it is now): it waits on the pile (card k of the n dealt
 // together, the first on top; fanned from stack.at), then is dealt at `at`.
 function deal(s, deck, at, stack = null, [x, y, r] = [s.x, s.y, s.rot]) {
-  s.fly = { at, x, y, r, deck, t0: flights.t, stack, ur: upright(s),
+  s.fly = { at, x, y, r, deck, t0: flights.t, stack, ur: upright(s), pw: Math.min(s.w, s.h),
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   s.el.classList.add('flying'); // clicks go through to the deck
   Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null,
@@ -1689,7 +1691,7 @@ function waitPose(k, t = flights.t) {
   const d = k.deck, [jx, jy, jr] = k.jit, f = k.stack;
   if (!f || f.at == null) return [d.px + jx, d.y + jy, d.rot + k.ur + jr];
   const { k: j, n } = f, a = 1 - (1 - clamp((t - f.at - j * 0.03) / DRAW.fan)) ** 3;
-  const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = view.card.h * view.cs, ph = view.card.w * view.cs; // the pile, upright
+  const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = d.pile.pw * view.cs, ph = d.pile.ph * view.cs; // the pile, upright
   const ox = -0.62 * pw, oy = -0.18 * ph; // from the pivot (outer edge, a little low) to the pile's center
   return [d.px + 0.62 * pw + ox * Math.cos(th) - oy * Math.sin(th) - (a * 30 * (n - j)) / n + jx,
     d.y + 0.18 * ph + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + k.ur + deg + jr];
@@ -1733,7 +1735,7 @@ function stepFlights(dt) {
 // in under its front (slideIn): from then on it is below the box, so the box hides what is inside.
 let boxSeq = 0;
 function entryPose(k) {
-  const [x, y, r] = waitPose(k), d = k.deck, a = (d.rot * Math.PI) / 180, off = (d.w + view.card.h * view.cs) / 2 + 6 * view.k; // the card is upright: its short side across
+  const [x, y, r] = waitPose(k), d = k.deck, a = (d.rot * Math.PI) / 180, off = (d.w + k.pw) / 2 + 6 * view.k; // the card is upright: its short side across
   return [x - off * Math.cos(a), y - off * Math.sin(a), r];
 }
 function slideIn(s, k) {
@@ -1791,7 +1793,7 @@ function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOu
   Object.assign(v, { want, from: v.at, to: deckOut(d, want), t: 0, dur, ease });
 }
 // Tucked, only the box's open end and its label peek in at the edge (the lid closed over them).
-const tuckAt = (d) => DECK_SHOW * d.w - (boxSize({ lid: true })[0] + 34) * (view.cs || 1);
+const tuckAt = (d) => DECK_SHOW * d.w - (lidOf(d).w + 34 * (view.cs || 1));
 function slideBox(d, to, dur, ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
 // The deck as a pile, the box off screen (a page you turn to, or one put away out of sight).
 function resetBox(d) {
@@ -1913,7 +1915,7 @@ function gather(cards, deck) {
 }
 function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), down: s.down || 0, dur, box: deck.mode === 'box' && deck.phase === 'open', // down: already face down; box: it goes in through the box's open end
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), pw: Math.min(s.w, s.h), down: s.down || 0, dur, box: deck.mode === 'box' && deck.phase === 'open', // down: already face down; box: it goes in through the box's open end
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0 });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
@@ -2156,7 +2158,7 @@ function paintBox(x, s, S) {
   x.strokeStyle = TOK.inkLine; x.lineWidth = 1; x.strokeRect(7.5, 7.5, w - 15, h - 15);
   x.fillStyle = '#e8e4d8'; x.beginPath(); x.arc(0, h / 2, 15, -Math.PI / 2, Math.PI / 2); x.fill(); // the thumb notch at the open end
   x.strokeStyle = TOK.inkLine; x.beginPath(); x.arc(0, h / 2, 15, -Math.PI / 2, Math.PI / 2); x.stroke();
-  const lid = boxSize({ lid: true })[0]; // the label sits in the part that shows, clear of the closed lid
+  const lid = Math.round((h - 12) * 0.13); // the lid's width (boxSize); the label sits in the part that shows, clear of the closed lid
   x.font = font(500, 26, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.translate(lid + 17, h / 2); x.rotate(-Math.PI / 2); x.fillText(BOX_NAMES[s.region], 0, 2); // along the upright box, like a spine, just past the closed lid so it shows when tucked
   x.restore();
@@ -2208,9 +2210,9 @@ function drawCard(s0, S0) {
     s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
     x.font = font(400); x.fillStyle = TOK.muted;
     x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
-  } else if (s.kind === 'polaroid') { // its caption in the project cards' strip
-    x.font = font(600); x.fillStyle = TOK.text;
-    x.fillText(s.el.querySelector('.hand').textContent, 8, s.media.y + s.media.h + 8 + 13 * TS);
+  } else if (s.kind === 'polaroid') {
+    x.font = font(500); x.fillStyle = TOK.body; x.textAlign = 'center';
+    x.fillText(s.el.querySelector('.hand').textContent, s.w / 2, s.media.y + s.media.h + 10 + 13 * TS);
   } else if (s.kind === 'note') {
     x.font = HAND; x.fillStyle = TOK.text2;
     s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
@@ -2331,7 +2333,31 @@ function postcardLayout(s, b) {
   const links = s.backLinks.map((a, i) => linkAt(a, x0, base0 + i * row, m.measureText(a.textContent).width));
   const stampBottom = pad - 2 + PC.stamp[1], wide = links.some((k) => k.tx + k.tw > x1);
   const need = wide ? Infinity : Math.max(Math.ceil(y + BK.bottom), stampBottom + 12 + 16 + (n - 1) * row + BK.bottom);
-  return { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
+  if (need <= h) return { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
+  return stackedPostcard(s, b) || { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
+}
+// A smaller card's postcard back when the columns will not hold its message: the message runs the full width (beside
+// the stamp at the top), and the links share one ruled line along the bottom (a second if they must).
+function stackedPostcard(s, b) {
+  const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK, [sw, sh] = PC.stamp, stampBottom = pad - 2 + sh;
+  const lines = []; let y = BK.first - TYPE.body.lh;
+  s.backParas.forEach((t, i) => {
+    y += i ? 8 : 0; m.font = TYPE.body.font;
+    let line = '';
+    const width = () => (y + TYPE.body.lh - 13 * TS < stampBottom + 4 ? w - 2 * pad - sw - 10 : w - 2 * pad); // beside the stamp, then full
+    for (const word of t.split(' ')) {
+      const test = line ? line + ' ' + word : word;
+      if (line && m.measureText(test).width > width()) { y += TYPE.body.lh; lines.push({ t: line, f: TYPE.body, y }); line = word; } else line = test;
+    }
+    if (line) { y += TYPE.body.lh; lines.push({ t: line, f: TYPE.body, y }); }
+  });
+  m.font = TYPE.link.font;
+  const rows = [[]]; let x = pad;
+  for (const a of s.backLinks) { const tw = m.measureText(a.textContent).width; if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; } rows.at(-1).push([a, x, tw]); x += tw + BK.gap; }
+  const base0 = h - BK.bottom - (rows.length - 1) * row;
+  const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * row, tw)));
+  const need = Math.ceil(y + row + (rows.length - 1) * row + BK.bottom);
+  return need <= h ? { st, lines, links, w, h, need, postcard: { stacked: true, base0, n: rows.length, x0: pad, x1: w - pad } } : null;
 }
 // OKLab blend of an sRGB hex toward another hex's hue at the first one's lightness and chroma (mix 0 to 1): the stamp's
 // olive ink with a cast of the project's color.
@@ -2366,7 +2392,7 @@ function paintStamp(x, x0, y0, sw, sh, ink, seed) {
 }
 function drawPostcard(x, s, L) {
   const P = L.postcard, { w, h } = L, { pad, row } = BK;
-  x.fillStyle = '#a5a9708c'; x.fillRect(P.divX, pad, 1, h - 2 * pad); // the divider, a thin olive rule
+  if (!P.stacked) { x.fillStyle = '#a5a9708c'; x.fillRect(P.divX, pad, 1, h - 2 * pad); } // the divider, a thin olive rule
   const [sw, sh] = PC.stamp;
   paintStamp(x, w - pad - sw + 2, pad - 2, sw, sh, tintHex(TOK.inkLine, s.hueHex, 0.45), s.id + 1);
   x.fillStyle = '#a5a97059'; // the address lines
@@ -2630,8 +2656,8 @@ function renderEntries(g, sm, extra = []) {
 // A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
 // on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
 // only on the desk, when it is turned over. Drawn at the card's size on the desk, landscape or portrait.
-function paintPlainBack(region, portrait, S) {
-  const cs = view.cs || 1, w = (portrait ? view.card.h : view.card.w) * cs, h = (portrait ? view.card.w : view.card.h) * cs;
+function paintPlainBack(s, S) {
+  const cs = view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
   x.scale(S, S); x.fillStyle = TOK.stock; x.fillRect(0, 0, w, h);
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -2646,9 +2672,9 @@ async function buildAtlas(g) {
   const drawn = [];
   for (const src of sources) drawn.push(drawCard(src, S));
   const backs = sources.filter((src) => src.backEl || src.lid).map((src) => ({ src, ...(src.lid ? drawLidOutside(src, S) : drawBack(src, S)) }));
-  const dc = new OffscreenCanvas(Math.ceil(view.card.w * S), Math.ceil(view.card.h * S));
+  const dc = new OffscreenCanvas(Math.ceil(sources[0].w * S), Math.ceil(sources[0].h * S));
   paintDeckBack(dc.getContext('2d'), S, dc.width, dc.height); // what a card in a deck shows with the earlier backs (backs: pen)
-  const plain = [0, 1].flatMap((r) => [false, true].map((portrait) => paintPlainBack(r, portrait, S))); // [page][portrait]
+  const plainFor = sources.filter(decked), plain = plainFor.map((s) => paintPlainBack(s, S)); // each card's plain deck back, at its own size
   // The corners' labels, in pen (transparent around the ink): one canvas size for both, the longer word's.
   const lf = font(500, T.cornerLabel * view.k * S, 'Caveat'), mc = measure();
   mc.font = lf;
@@ -2687,8 +2713,9 @@ async function buildAtlas(g) {
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     return [p.x / AW, p.y / AH, (p.x + c.width) / AW, (p.y + c.height) / AH];
   });
-  const plainUV = [rest.slice(0, 2), rest.slice(2, 4)], labelUV = rest.slice(4);
-  Object.assign(shared, { deckUV, plainUV, labelUV });
+  plainFor.forEach((s, i) => (s.puv = rest[i]));
+  const labelUV = rest.slice(plainFor.length);
+  Object.assign(shared, { deckUV, labelUV });
   shared.atlas = atlas;
 }
 
@@ -2750,7 +2777,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
-    ...((s.fly || s.down > 0) && shared.deckUV ? (backStyle(s).postcard ? shared.plainUV[s.region][s.w > s.h ? 0 : 1] : shared.deckUV) : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
+    ...((s.fly || s.down > 0) && shared.deckUV ? (backStyle(s).postcard && s.puv ? s.puv : shared.deckUV) : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
@@ -3041,7 +3068,7 @@ function tweakPanel() {
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['backs', 'cardScale', 'backTitle', 'backTight', 'framing', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
