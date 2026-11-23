@@ -248,8 +248,11 @@ const lin = (c) => Math.pow(c / 255, 2.2);
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f };
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S)
+// shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
+// card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
+// z = how much higher than a flat card its far shadow falls from (CSS px)
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, |cos flip|
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
@@ -598,7 +601,7 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
 fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let q = p - c.flat.xy - o;
   let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / vec2f(max(c.bound.w, 0.05), 1.0);
-  return 1.0 - smoothstep(-b, b, boxSd(l, c.geo.xy, c.geo.z) * c.misc.x);
+  return 1.0 - smoothstep(-b, b, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x);
 }
 
 // Bare paper in the paper style: its grain (gr) and the vignette (vq).
@@ -771,8 +774,8 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
       }
     } else {
       // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
-      let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc) * (1.0 - 0.6 * lift) * g.u.y;
-      let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift) * s, (14.0 + 22.0 * lift) * s * g.u.x) * (0.06 + 0.1 * lift) * g.u.y;
+      let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - 0.6 * lift) * g.u.y;
+      let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x) * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
       col *= (1.0 - near) * (1.0 - far);
     }
     let cov = clamp(0.5 - d / q, 0.0, 1.0);
@@ -780,7 +783,8 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
       var un = lp / (2.0 * c.geo.xy) + 0.5;
       let back = c.bound.y < 0.0;
       if (back) { un.x = 1.0 - un.x; } // seen from behind, so the back texture reads the right way round
-      var cc = pow(textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0).rgb, vec3f(2.2));
+      let tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
+      var cc = pow(tex.rgb, vec3f(2.2));
       ${video ? `if (!back && f32(k) == g.v.x && g.v.y > 0.0) {
         let mu = (un - c.media.xy) / (c.media.zw - c.media.xy);
         if (all(mu >= vec2f(0.0)) && all(mu <= vec2f(1.0))) {
@@ -811,7 +815,7 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
         let onMedia = all(un >= c.media.xy) && all(un <= c.media.zw);
         cc *= pow(inkJ(t4, gr.y, fadeIn), vec3f(mix(g.jq.x * select(0.35, 1.0, onMedia), 0.6, band) * (1.0 - lift)));
       }
-      col = mix(col, cc, cov);
+      col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5)); // a box's open end and cut corners are see-through
     }
   }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
@@ -879,7 +883,10 @@ let nameBox = null; // CSS px: { x, baseline, size }
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 // The card box, a little bigger than a postcard all round so a card inside it is hidden; its lid lies open beside it.
 // The box fits its page's largest upright card with room all round (design px of the page's pile, d.pile).
-const boxSize = (s) => { const p = pageDeck(s.region).pile; return s.lid ? [Math.round(p.ph * 0.13), p.ph + 12] : [p.pw + 14, p.ph + 12]; };
+// The box has walls BOX_T deep: its front panel sits that much up and right of its base (seen from above the page's
+// middle, its open end and the wall facing down the page show), and its lid is that deep end wall plus the tuck flap.
+const BOX_T = 26;
+const boxSize = (s) => { const p = pageDeck(s.region).pile; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
 function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)) {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
@@ -1737,8 +1744,12 @@ function deal(s, deck, at, stack = null, [x, y, r] = [s.x, s.y, s.rot]) {
 }
 // Where a waiting card sits: squared on its upright deck like a real pile (a pixel or two and a degree or two off), then,
 // once its deal begins, fanned toward the page around the pile's outer edge, top card first, still upright.
+// Each card sits PILE_STEP up and to the right of the one below it, so the pile's edges show along its left and bottom,
+// a stack with thickness, seen the way the box's walls are.
+const PILE_STEP = 1.4;
 function waitPose(k, t = flights.t) {
-  const d = k.deck, [jx, jy, jr] = k.jit, f = k.stack;
+  const d = k.deck, [jx0, jy0, jr] = k.jit, f = k.stack, a0 = (d.rot * Math.PI) / 180, up = (k.h ?? d.pileN ?? 0) * PILE_STEP * view.k;
+  const jx = jx0 + up * (Math.cos(a0) + Math.sin(a0)), jy = jy0 + up * (Math.sin(a0) - Math.cos(a0));
   if (!f || f.at == null) return [d.px + jx, d.y + jy, d.rot + k.ur + jr];
   const { k: j, n } = f, a = 1 - (1 - clamp((t - f.at - j * 0.03) / DRAW.fan)) ** 3;
   const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = d.pile.pw * view.cs, ph = d.pile.ph * view.cs; // the pile, upright
@@ -1862,15 +1873,19 @@ function arriveDeck(region, delay) {
 }
 // The deck's pile to its slide's offset, the box to its own, and the lid on its hinge (the box's open end): open, it lies
 // flat beside the box, inside up; closing, it turns over about the hinge (its free edge rising) onto the box's front.
+const LID_OPEN = 0.22 * Math.PI; // open, the lid stands up off the desk at about 40 degrees, the way a paper hinge springs back
 function moveDeck(d) {
   d.px = d.spot + d.slide.at;
   d.x = d.mode === 'box' ? d.spot + d.bx.at : d.px;
   d.gone = d.mode !== 'box';
   placeDom(d);
+  // Each card on the pile, bottom up, takes its height in it (a card on its way back aims for the top).
+  const pile = sources.filter((s) => s.fly?.deck === d && !s.fly.back && s.fly.at > flights.t).sort((p, q) => p.z - q.z);
+  pile.forEach((s, i) => (s.fly.h = i)); d.pileN = pile.length;
   for (const s of sources) if (s.fly?.deck === d && s.fly.at === Infinity) { [s.x, s.y, s.rot] = waitPose(s.fly); placeDom(s); }
   const lid = lidOf(d);
   if (!lid) return;
-  const a = (d.rot * Math.PI) / 180, th = Math.PI * EASES.cubic(d.lidT || 0), hx = d.x - (d.w / 2) * Math.cos(a), hy = d.y - (d.w / 2) * Math.sin(a);
+  const a = (d.rot * Math.PI) / 180, th = LID_OPEN + (Math.PI - LID_OPEN) * EASES.cubic(d.lidT || 0), hx = d.x - (d.w / 2) * Math.cos(a), hy = d.y - (d.w / 2) * Math.sin(a);
   Object.assign(lid, { x: hx - (lid.w / 2) * Math.cos(th) * Math.cos(a), y: hy - (lid.w / 2) * Math.cos(th) * Math.sin(a), rot: d.rot, flipA: th, gone: d.gone,
     flyLift: Math.max(((lid.w / 2) * Math.sin(th)) / T.lift, d.lift), z: th > Math.PI / 2 ? d.z + 0.5 : -1 }); // open: under every card; closed: on the box
 }
@@ -2171,35 +2186,70 @@ function paintDeckBack(x, S, cw, ch) {
 // pen outline). The box's open end is its left edge, toward the page; the lid is hinged there.
 const BOX_NAMES = ['projects', 'research'];
 function paintBox(x, s, S) {
-  const w = s.w, h = s.h;
-  x.save(); x.scale(S, S);
-  x.fillStyle = TOK.stock; x.fillRect(0, 0, w, h);
-  x.save(); x.beginPath(); x.rect(7, 7, w - 14, h - 14); x.clip();
-  const r = rng(31 + s.region * 7), pts = Array.from({ length: 14 }, () => [7 + r() * (w - 14), 7 + r() * (h - 14)]);
+  const w = s.w, h = s.h, t = BOX_T, fh = h - t, lid = Math.round((h - 12 - t) * 0.13); // the tuck flap's width (boxSize)
+  x.save(); x.scale(S, S); x.clearRect(0, 0, w, h);
+  const poly = (...p) => { x.beginPath(); x.moveTo(...p[0]); for (const q of p.slice(1)) x.lineTo(...q); x.closePath(); };
+  const line = (a, b, color, width = 1) => { x.strokeStyle = color; x.lineWidth = width; x.beginPath(); x.moveTo(...a); x.lineTo(...b); x.stroke(); };
+  // The wall facing down the page, in the shade of the light from the upper left; darker toward the desk.
+  let g = x.createLinearGradient(0, fh, 0, h); g.addColorStop(0, '#d3ccbb'); g.addColorStop(1, '#ada48f');
+  poly([t, fh], [w, fh], [w - t, h], [0, h]); x.fillStyle = g; x.fill();
+  // The open end: the inside, in the front panel's shadow (deepest under its edge), drawn see-through so a card going in
+  // shows in it.
+  g = x.createLinearGradient(t, 0, 0, 0); g.addColorStop(0, 'rgba(38, 33, 26, 0.84)'); g.addColorStop(0.55, 'rgba(38, 33, 26, 0.62)'); g.addColorStop(1, 'rgba(38, 33, 26, 0.4)');
+  poly([t, 0], [t, fh], [0, h], [0, t]); x.fillStyle = g; x.fill();
+  // The front panel: card stock, lit a little more toward the light, a few faint veins inside a fine inset frame.
+  g = x.createLinearGradient(t, 0, w, fh); g.addColorStop(0, '#fbf9f3'); g.addColorStop(1, TOK.stock);
+  x.fillStyle = g; x.fillRect(t, 0, w - t, fh);
+  x.save(); x.beginPath(); x.rect(t + 7, 7, w - t - 14, fh - 14); x.clip();
+  const r = rng(31 + s.region * 7), pts = Array.from({ length: 14 }, () => [t + 7 + r() * (w - t - 14), 7 + r() * (fh - 14)]);
   x.strokeStyle = TOK.ink; x.globalAlpha = 0.28; x.lineCap = 'round';
   for (const [i, p] of pts.entries()) {
     const near = pts.map((q, j) => [Math.hypot(q[0] - p[0], q[1] - p[1]), j]).filter(([, j]) => j > i).sort((a, b) => a[0] - b[0]).slice(0, 2);
     for (const [d, j] of near) { const q = pts[j]; x.lineWidth = Math.max(0.6, 2 - d / 60); x.beginPath(); x.moveTo(p[0], p[1]); x.quadraticCurveTo((p[0] + q[0]) / 2 + (r() - 0.5) * 0.3 * d, (p[1] + q[1]) / 2 + (r() - 0.5) * 0.3 * d, q[0], q[1]); x.stroke(); }
   }
   x.restore(); x.globalAlpha = 1;
-  x.strokeStyle = TOK.inkLine; x.lineWidth = 1; x.strokeRect(7.5, 7.5, w - 15, h - 15);
-  x.fillStyle = '#e8e4d8'; x.beginPath(); x.arc(0, h / 2, 15, -Math.PI / 2, Math.PI / 2); x.fill(); // the thumb notch at the open end
-  x.strokeStyle = TOK.inkLine; x.beginPath(); x.arc(0, h / 2, 15, -Math.PI / 2, Math.PI / 2); x.stroke();
-  const lid = Math.round((h - 12) * 0.13); // the lid's width (boxSize); the label sits in the part that shows, clear of the closed lid
+  x.strokeStyle = TOK.inkLine; x.lineWidth = 1; x.strokeRect(t + 7.5, 7.5, w - t - 15, fh - 15);
+  // The thumb notch at the open end, cut out of the front panel: the inside shows through it.
+  x.save(); x.beginPath(); x.arc(t, fh / 2, 15, -Math.PI / 2, Math.PI / 2); x.closePath(); x.clip(); x.clearRect(t, fh / 2 - 15, 15, 30);
+  g = x.createLinearGradient(t, 0, t + 15, 0); g.addColorStop(0, 'rgba(38, 33, 26, 0.7)'); g.addColorStop(1, 'rgba(38, 33, 26, 0.84)');
+  x.fillStyle = g; x.fillRect(t, fh / 2 - 15, 15, 30); x.restore();
+  x.strokeStyle = 'rgba(255, 253, 246, 0.95)'; x.lineWidth = 1.2; x.beginPath(); x.arc(t, fh / 2, 15, -Math.PI / 2, Math.PI / 2); x.stroke();
+  // Edges: the paper's cut edges catch the light (the front panel's top and open end, the walls' ends at the opening); the
+  // crease into the shaded wall and the base's edges on the desk are dark.
+  line([t, 0.6], [w, 0.6], 'rgba(255, 253, 246, 0.95)', 1.2);
+  line([t + 0.6, 0], [t + 0.6, fh / 2 - 15], 'rgba(255, 253, 246, 0.95)', 1.2); line([t + 0.6, fh / 2 + 15], [t + 0.6, fh], 'rgba(255, 253, 246, 0.95)', 1.2);
+  line([t, 0.6], [0.6, t], 'rgba(255, 253, 246, 0.8)', 1.2);
+  line([t, fh], [0.6, h - 0.6], 'rgba(255, 253, 246, 0.55)', 1);
+  line([t, fh], [w, fh], 'rgba(60, 54, 44, 0.35)', 1);
+  line([0.5, t], [0.5, h], 'rgba(40, 36, 30, 0.45)', 1); line([0, h - 0.5], [w - t, h - 0.5], 'rgba(40, 36, 30, 0.5)', 1);
+  // The page's name, handwritten along the upright box like a spine, just past the closed lid so it shows when tucked.
   x.font = font(500, 26, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.translate(lid + 17, h / 2); x.rotate(-Math.PI / 2); x.fillText(BOX_NAMES[s.region], 0, 2); // along the upright box, like a spine, just past the closed lid so it shows when tucked
+  x.translate(t + lid + 17, fh / 2); x.rotate(-Math.PI / 2); x.fillText(BOX_NAMES[s.region], 0, 2);
   x.restore();
 }
+// The lid: the deep end wall (BOX_T, at the hinge) and the tuck flap. Inside (open, lying on the desk beside the open end,
+// hinged on its right): plain stock, on the base's span below the clear strip. Outside (closed over the open end, seen
+// mirrored, hinged on its left): the end wall, lit, standing between the base's edge and the front panel's, then the flap
+// lying on the front panel, its rounded corners in pen.
 function paintLid(x, s, S, outside) {
-  const w = s.w, h = s.h, fold = 12; // the lid's top panel (the box's depth), then its tuck flap
-  x.save(); x.scale(S, S);
-  x.fillStyle = outside ? TOK.stock : '#f1ede3'; x.fillRect(0, 0, w, h);
-  const f = outside ? fold : w - fold, tip = outside ? w - 1.5 : 1.5; // inside up, the hinge is its right edge; the outside is seen mirrored, the hinge on its left
-  x.strokeStyle = TOK.inkLine; x.lineWidth = 1; x.globalAlpha = outside ? 1 : 0.7;
-  x.beginPath(); x.moveTo(f, 4); x.lineTo(f, h - 4); x.stroke(); // the fold between the top panel and the flap
-  const rr = Math.min(18, (w - fold) * 0.6), dir = outside ? 1 : -1; // the tuck flap's rounded corners, in pen
-  x.beginPath(); x.moveTo(f + dir * 3, 5); x.lineTo(tip - dir * rr, 5); x.quadraticCurveTo(tip, 5, tip, 5 + rr); x.lineTo(tip, h - 5 - rr); x.quadraticCurveTo(tip, h - 5, tip - dir * rr, h - 5); x.lineTo(f + dir * 3, h - 5); x.stroke();
-  x.globalAlpha = 1;
+  const w = s.w, h = s.h, t = BOX_T, fh = h - t;
+  x.save(); x.scale(S, S); x.clearRect(0, 0, w, h);
+  x.strokeStyle = TOK.inkLine; x.lineWidth = 1;
+  const rr = Math.min(18, (w - t) * 0.6);
+  if (outside) {
+    x.beginPath(); x.moveTo(0, t); x.lineTo(t, 0); x.lineTo(t, fh); x.lineTo(0, h); x.closePath(); x.fillStyle = '#f7f4ec'; x.fill();
+    x.strokeStyle = 'rgba(40, 36, 30, 0.45)'; x.beginPath(); x.moveTo(0.5, t); x.lineTo(0.5, h); x.stroke();
+    x.fillStyle = TOK.stock; x.fillRect(t, 0, w - t, fh);
+    x.strokeStyle = 'rgba(255, 253, 246, 0.95)'; x.lineWidth = 1.2; x.beginPath(); x.moveTo(t + 0.6, 0); x.lineTo(t + 0.6, fh); x.moveTo(t, 0.6); x.lineTo(w, 0.6); x.stroke();
+    x.strokeStyle = TOK.inkLine; x.lineWidth = 1; const tip = w - 1.5;
+    x.beginPath(); x.moveTo(t + 3, 5); x.lineTo(tip - rr, 5); x.quadraticCurveTo(tip, 5, tip, 5 + rr); x.lineTo(tip, fh - 5 - rr); x.quadraticCurveTo(tip, fh - 5, tip - rr, fh - 5); x.lineTo(t + 3, fh - 5); x.stroke();
+  } else {
+    x.fillStyle = '#efeadf'; x.fillRect(0, t, w, fh);
+    x.fillStyle = 'rgba(60, 54, 44, 0.06)'; x.fillRect(w - t, t, t, fh); // the end wall's inside, a touch shaded
+    x.globalAlpha = 0.7; x.beginPath(); x.moveTo(w - t, t + 4); x.lineTo(w - t, h - 4); x.stroke(); // the fold between the end wall and the flap
+    x.beginPath(); x.moveTo(w - t - 3, t + 5); x.lineTo(1.5 + rr, t + 5); x.quadraticCurveTo(1.5, t + 5, 1.5, t + 5 + rr); x.lineTo(1.5, h - 5 - rr); x.quadraticCurveTo(1.5, h - 5, 1.5 + rr, h - 5); x.lineTo(w - t - 3, h - 5); x.stroke();
+    x.globalAlpha = 1;
+  }
   x.restore();
 }
 function drawCard(s0, S0) {
@@ -2753,7 +2803,7 @@ async function buildAtlas(g) {
 // ---------- uniforms ----------
 
 // Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 13;
+const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -2812,9 +2862,17 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
-    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2, 0] : [0, 0, 0, 0])], o);
+    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2, 0] : [0, 0, 0, 0]),
+    ...boxShadow(s, dpr, hw, hh)], o);
 }
 
+// The card box stands on its base (its shadow falls from there, not from the front panel raised above it), and its
+// texture's alpha is part of its shape; its lid lies on the desk's level the same way. Every other card: its whole face.
+function boxShadow(s, dpr, hw, hh) {
+  if (s.kind !== 'deck') return [0, 0, hw, hh, 0, 0, 0, 0];
+  const t = (BOX_T * (s.k || 1) * dpr) / 2;
+  return s.lid ? [0, t, hw, hh - t, 1, 0.04, 0, 0] : [-t, t, hw - t, hh - t, 1, 0.12, 9, 0]; // obj.z: how much higher than a card its far shadow falls from (CSS px)
+}
 // Paper: an open card emits its full ink; a closed one a tint share of its mild ink. Blends between them as it opens.
 function inkOn(s, tint, base, hueMix = 1) {
   const full = absorbance(hexRGB(s.inkHex));
