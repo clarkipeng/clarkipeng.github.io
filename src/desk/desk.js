@@ -1356,7 +1356,7 @@ function flip(s) {
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
   // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
-  s.rotFrom = s.rot; s.rotTo = clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle);
+  s.rotFrom = s.rot; s.rotTo = view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
     if (!gpu && s.flipTo) paintDomBack(s);
     s.flip = s.emit = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
@@ -2642,7 +2642,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const tn = s.turn ?? (s.down > 0 ? 1 - s.down : null); // turned face down by its own clock: a draw, or over a deck
   const fa = s.flipA ?? (tn != null ? Math.PI * (1 - easeFlip(tn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56))), fc = Math.cos(fa); // a drawn card turns on its own clock; the box's lid by its angle
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
-  const lift = Math.max(s.lift, 0.9 * up, s.flyLift);
+  const lift = Math.max(s.lift, (view.phone ? 0.3 : 0.9) * up, s.flyLift); // on a phone a flip lifts less, so the card stays inside the screen
   const th = (s.rot * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
