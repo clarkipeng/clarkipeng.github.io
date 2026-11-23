@@ -908,10 +908,7 @@ function layout() {
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
     placeDecks();
-    for (const s of sources) if (!s.slot && s.kind !== 'deck') { // a card without a slot waits on its deck...
-      if (!dealing) { const [x, y, r] = freeSlot(s); s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r }; Object.assign(s, { x, y, rot: r, home: r, inDeck: false }); } // ...unless decks cannot deal: then it lies on the desk
-      else { const d = pageDeck(s.region); Object.assign(s, { x: d.x, y: d.y, rot: d.rot }); }
-    }
+    for (const s of sources) if (!s.slot && s.kind !== 'deck' && dealing) { const d = pageDeck(s.region); Object.assign(s, { x: d.x, y: d.y, rot: d.rot }); } // a card without a slot waits on its deck
     for (const r of [0, 1]) pileUp(r); // each deck holds its page's cards that are not on the desk
   } else {
     const pad = 22;
@@ -949,6 +946,14 @@ function layout() {
   } else {
     Object.assign(linksEl.style, { left: '', top: '', maxWidth: '' });
     root.querySelector('#page').style.height = '';
+  }
+  // Without the deal (no WebGPU, reduced motion) a card that would wait on its deck lies in the best free spot instead,
+  // found once everything else (cards, name, tagline, links, corner) is in its final place on this layout.
+  if (!phone && !dealing) for (const s of sources) if (s.overflow) {
+    s.inDeck = false; s.slot = null;
+    const [x, y, r] = freeSlot(s);
+    s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
+    Object.assign(s, { x, y, rot: r, home: r });
   }
   turn.on = false; clipLinks(); // a turn in progress just ends
   cam.x = view.phone ? 0 : regionFromUrl() * view.w; placePage(); setInert(regionFromUrl()); placeDoor();
@@ -1815,16 +1820,17 @@ function overDeck(deck, x, y, pad = 0) {
 function freeSlot(s) {
   const x0 = s.region * view.w, gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
   const r = clamp(gauss * T.flipJitter, -T.maxAngle, T.maxAngle), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
-  const pad = 24 * view.k, m = 32 * view.k, step = 16;
-  const boxes = keepOut(x0).concat(sources.filter((o) => o !== s && o.region === s.region && !o.inDeck && !o.gone).map((o) => {
-    const q = obb(o), qx = reach(q, [1, 0]) + pad, qy = reach(q, [0, 1]) + pad;
+  const pad = 24 * view.k, m = 32 * view.k, step = 16, deck = dealing && pageDeck(s.region);
+  const near = sources.filter((o) => o !== s && o.region === s.region && !o.inDeck && o.kind !== 'deck').concat(deck ? [{ ...deck, x: deck.spot }] : []);
+  const boxes = keepOut(x0).concat(near.map((o) => {
+    const q = obb(o), qx = reach(q, [1, 0]), qy = reach(q, [0, 1]);
     return { l: o.x - qx, r: o.x + qx, t: o.y - qy, b: o.y + qy };
   }));
+  const over = (x, y, p) => boxes.reduce((sum, q) => sum + Math.max(0, Math.min(x + ex, q.r + p) - Math.max(x - ex, q.l - p)) * Math.max(0, Math.min(y + ey, q.b + p) - Math.max(y - ey, q.t - p)), 0);
   let best = [Infinity, x0 + view.w / 2, view.h / 2];
   for (let y = m + ey; y <= view.h - m - ey; y += step) for (let x = x0 + m + ex; x <= x0 + view.w - m - ex; x += step) {
-    let over = 0;
-    for (const q of boxes) over += Math.max(0, Math.min(x + ex, q.r) - Math.max(x - ex, q.l)) * Math.max(0, Math.min(y + ey, q.b) - Math.max(y - ey, q.t));
-    const score = over * 1e3 + Math.hypot(x - x0 - view.w / 2, y - view.h / 2);
+    // touching anything is far worse than coming within 24 px of it, which is worse than being off center
+    const score = over(x, y, 0) * 1e4 + over(x, y, pad) * 10 + Math.hypot(x - x0 - view.w / 2, y - view.h / 2);
     if (score < best[0]) best = [score, x, y];
   }
   return [best[1], best[2], r];
