@@ -976,7 +976,8 @@ function placeDoor() {
   const m = 3, tip = S - ((2 * T.cornerSize - Math.PI * DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
   const svg = doorEl.querySelector('svg'), set = (sel, d) => svg.querySelector(sel).setAttribute('d', d);
   for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(a, v);
-  set('.hit', `M${S} 0V${S}H0Z`); set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
+  const ch = (T.cornerSize + T.cornerLift) * k * Math.SQRT2, tipH = S - ((2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * k) / Math.SQRT2;
+  set('.hit', `M${S} ${S - ch}L${tipH} ${tipH}L${S - ch} ${S}H${S}Z`); // the pointer's area: the fold as drawn when hovered (the sliver and the flap), not the larger triangle set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
   set('.sliver', `M${S} ${S - c}V${S}H${S - c}Z`); set('.flap', `M${S} ${S - c}L${S - c} ${S}V${S - c}Z`);
   const t = svg.querySelector('text'), cx = S - (2 * c) / 3, cy = S - (2 * c) / 3;
   Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
@@ -1383,7 +1384,8 @@ function stepCards(dt) {
     s.burst *= Math.exp(-dt * 7);
     if (s.imp && (s.imp.t += dt) >= IMPRINT_S) s.imp = null; // the veins have reclaimed it
     if (s.released && !s.kb && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
-      s.released = false; land(s, s.bounced ? Math.min(s.dropS, 0.45) : s.dropS); s.bounced = false; shove(s); } // touched down, shoving the cards under it
+      const k = s.bounced ? Math.min(s.dropS, 0.45) : s.dropS; s.released = false; s.bounced = false;
+      if (!offCorner(s)) { land(s, k); shove(s); } } // touched down, shoving the cards under it (or sliding off the corner first)
   }
 }
 
@@ -1463,9 +1465,21 @@ function keepOut(x0) {
   const p = 10 * view.k, out = [nameEl, taglineEl].map((el) => ({ l: el.offsetLeft, t: el.offsetTop, r: el.offsetLeft + el.offsetWidth, b: el.offsetTop + el.offsetHeight }));
   const lb = linksEl.getBoundingClientRect();
   out.push({ l: x0 + lb.left, t: lb.top, r: x0 + lb.right, b: lb.bottom });
-  const c = (2 * T.cornerSize - Math.PI * DOOR.R) * view.k; // the page corner, about to its fold's tip
-  out.push({ l: x0 + view.w - c, t: view.h - c, r: x0 + view.w, b: view.h });
+  out.push(cornerBox(x0, 0));
   return out.map((b) => ({ l: b.l - p, t: b.t - p, r: b.r + p, b: b.b + p }));
+}
+// The page corner's square, out to its hovered fold's tip, padded by p.
+function cornerBox(x0, p = 10 * view.k) {
+  const c = (2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * view.k / Math.SQRT2 + p;
+  return { l: x0 + view.w - c, t: view.h - c, r: x0 + view.w, b: view.h };
+}
+// A card that comes to rest over the page corner slides off it (the corner would fold over it and take its pointer).
+function offCorner(s) {
+  if (view.phone || s.kind === 'deck') return false;
+  const x0 = s.region * view.w, [tx, ty] = placeable(s, s.x, s.y, x0, [cornerBox(x0)]), dist = Math.hypot(tx - s.x, ty - s.y);
+  if (dist < 0.5) return false;
+  s.shove = { fx: s.x, fy: s.y, tx, ty, dist, t: 0, dur: MOTION.settle };
+  return true;
 }
 // A shoved card's spot, moved fully on screen (unless it already hung off) and then out of the text the shortest way.
 function placeable(s, x, y, x0, boxes) {
