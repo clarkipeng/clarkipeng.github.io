@@ -841,19 +841,18 @@ let nameBox = null; // CSS px: { x, baseline, size }
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 // The card box, a little bigger than a postcard all round so a card inside it is hidden; its lid lies open beside it.
 const boxSize = (s) => [s.lid ? Math.round(view.card.w * 0.13) : view.card.h + 14, view.card.w + 12]; // upright, like the deck
-function cardBox(s, w, h = s.kind === 'polaroid' ? 0 : Math.round(w / POSTCARD)) {
+function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)) {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
-    return { w, h: 28 + lines.length * 26.5, media: null, lines };
+    return { w, h: h || 28 + lines.length * 26.5, media: null, lines }; // the one card size, or (phones) as tall as its words
   }
   if (s.kind === 'paper') {
     const lines = wrapLines(s.hit.querySelector('b').textContent, w - 39, '600 16px Inter');
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small').textContent };
   }
-  if (s.kind === 'polaroid' && h) { // the one card size: the photo takes what its caption strip leaves
-    const mh = h - 8 - 36;
-    return { w, h, media: { x: 8, y: 8, w: w - 16, h: mh } };
+  if (s.kind === 'polaroid' && h) { // the one card size: the photo and the same caption strip as every project card
+    return { w, h, media: { x: 6, y: 6, w: w - 12, h: h - 6 - (14 + 18 * TS) } };
   }
   if (s.kind === 'polaroid') {
     const mw = w - 16;
@@ -869,8 +868,9 @@ function cardBox(s, w, h = s.kind === 'polaroid' ? 0 : Math.round(w / POSTCARD))
   const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
   return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 14 + 18 * TS : 13 + (titleLines.length + 1) * 18 * TS) }, title, titleLines, sub, oneLine };
 }
-// Every project card and the polaroid share the one card size, landscape or (data-orient="portrait") turned upright.
-const oneSize = (s) => s.kind === 'photo' || s.kind === 'polaroid';
+// Every card on the desk (project, research, the photo, the note) is the one card size, landscape, or with
+// data-orient="portrait" (none now) turned upright. (Clark, TASTE.md: every card is the same size inside and outside the deck.)
+const oneSize = (s) => s.kind === 'photo' || s.kind === 'polaroid' || s.kind === 'note';
 const cardDims = (s) => (s.portrait ? [view.card.h, view.card.w] : [view.card.w, view.card.h]);
 // One postcard size for every project card, on the desk and in a deck (nothing scales when it is drawn or put back):
 // the smallest 3:2 card on which every project's back fits at the shared type scale, scaled up with the desk on big
@@ -2189,9 +2189,9 @@ function drawCard(s0, S0) {
     s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
     x.font = font(400); x.fillStyle = TOK.muted;
     x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
-  } else if (s.kind === 'polaroid') {
-    x.font = font(500); x.fillStyle = TOK.body; x.textAlign = 'center';
-    x.fillText(s.el.querySelector('.hand').textContent, s.w / 2, s.media.y + s.media.h + 10 + 13 * TS);
+  } else if (s.kind === 'polaroid') { // its caption in the project cards' strip
+    x.font = font(600); x.fillStyle = TOK.text;
+    x.fillText(s.el.querySelector('.hand').textContent, 8, s.media.y + s.media.h + 8 + 13 * TS);
   } else if (s.kind === 'note') {
     x.font = HAND; x.fillStyle = TOK.text2;
     s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
