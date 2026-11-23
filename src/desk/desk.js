@@ -1051,6 +1051,7 @@ const restD = (hover) => view.k * (T.cornerSize + (hover ? T.cornerLift : 0));
 const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
 function stepDoor(dt) {
   if (!turn.on) door.amt = Math.min(1, door.amt + dt / 0.5); // a page's corner folds back once it is shown
+  doorEl.classList.toggle('folding', turn.on || door.amt < 1); // no focus ring around a fold that is not there (mid-turn, folding back)
   const e = 1 - Math.exp(-dt / 0.12);
   door.d += (restD(door.hover) * smooth(door.amt) - door.d) * e;
   door.a += ((door.hover && door.at ? leanTo(door.at.x, door.at.y) : Math.PI / 4) - door.a) * e;

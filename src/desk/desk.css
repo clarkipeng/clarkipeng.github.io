@@ -67,6 +67,7 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk .door .hit { fill: transparent; pointer-events: visiblePainted; cursor: pointer; touch-action: none; }
 #desk .door .ring { fill: none; }
 #desk .door:focus-visible .ring { stroke: var(--ink-deep); stroke-width: 2px; }
+#desk .door.folding .ring { stroke: none; }
 #desk .door :is(.sliver, .flap, text) { display: none; }
 #desk.nogpu .door :is(.sliver, .flap, text) { display: inline; }
 #desk .door .sliver { fill: #e6e2d6; }
