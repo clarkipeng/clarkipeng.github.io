@@ -1133,7 +1133,7 @@ function freeze(sm = sim) {
   const enc = gpu.device.createCommandEncoder();
   encodeRender(enc, shared.frozenTex[1 - shared.fz].createView(), null, sm);
   gpu.device.queue.submit([enc.finish()]);
-  shared.fz = 1 - shared.fz;
+  shared.fz = 1 - shared.fz; redraw = true;
 }
 function show(region) {
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
@@ -2104,7 +2104,7 @@ async function matchThumbnail(s) {
   const c = new OffscreenCanvas(v.videoWidth, v.videoHeight);
   c.getContext('2d').drawImage(v, 0, 0);
   s.thumb = c;
-  if (shared?.atlas && s.atlasAt) { const { canvas: cc } = drawCard(s, shared.dev); gpu.device.queue.copyExternalImageToTexture({ source: cc }, { texture: shared.atlas, origin: s.atlasAt }, [cc.width, cc.height]); }
+  if (shared?.atlas && s.atlasAt) { const { canvas: cc } = drawCard(s, shared.dev); gpu.device.queue.copyExternalImageToTexture({ source: cc }, { texture: shared.atlas, origin: s.atlasAt }, [cc.width, cc.height]); redraw = true; }
   if (qs.has('mlog')) console.log('[media] thumbnail for', s.key, 'is its first frame (poster differs by', diff.toFixed(2) + ')');
 }
 
@@ -2912,7 +2912,7 @@ function resizeSims() {
   const enc = gpu.device.createCommandEncoder();
   encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
   gpu.device.queue.submit([enc.finish()]);
-  shared.fz = 1 - shared.fz;
+  shared.fz = 1 - shared.fz; redraw = true;
   sims.forEach(destroySim);
   sims = (view.phone ? [0] : [0, 1]).map((pg) => Object.assign(createSim(gpu, pg), { t: 4.5, warm: WARM_STEPS, warmN: pg === page ? 25 : 1 }));
   sim = sims[page];
@@ -2921,6 +2921,11 @@ function resizeSims() {
 
 let last = 0, acc = 0, running = true;
 const stats = { intervals: [] };
+// The uniforms the last drawn frame showed; redraw: a texture it reads has changed since.
+const drawnU = new Float32Array(U.length);
+let redraw = true;
+// The cursor's stir (G.e.xyz) only moves the sim, which redraws when it steps.
+const sameU = () => { const a = drawnU; for (let i = 0; i < U.length; i++) if (U[i] !== a[i] && (i < 16 || i > 18)) return false; return true; };
 function frame(now) {
   if (!running || dead) return;
   requestAnimationFrame(frame);
@@ -2969,10 +2974,16 @@ function frame(now) {
   const landing = turn.on && sources.some((s) => s.region === turn.from && s.fly && s.fly.at !== Infinity);
   if (landing) freeze(sims[turn.from]);
   if (!steps || landing) writeUniforms(gpu);
-  const enc = gpu.device.createCommandEncoder();
+  // Draw only when the picture can change: the sim stepped (60 times a second, which also shows every video frame), something
+  // drawn moved (the uniforms differ), or a texture it reads changed. On a display faster than the sim (120 Hz) the frames
+  // between steps are otherwise the same picture, and drawing them doubled the GPU's work.
   const timed = ts && steps ? ts : null;
-  encodeRender(enc, gpu.ctx.getCurrentTexture().createView(), timed);
-  gpu.device.queue.submit([enc.finish()]);
+  if (steps || redraw || trans.fade > 0 || !sameU()) {
+    const enc = gpu.device.createCommandEncoder();
+    encodeRender(enc, gpu.ctx.getCurrentTexture().createView(), timed);
+    gpu.device.queue.submit([enc.finish()]);
+    drawnU.set(U); redraw = false;
+  }
   if (timed) {
     timed.busy = true;
     timed.read.mapAsync(1).then(() => {
@@ -2981,7 +2992,7 @@ function frame(now) {
       timed.read.unmap(); timed.busy = false;
     }).catch(() => { timed.busy = false; });
   }
-  stepWarm();
+  if (steps) stepWarm(); // at the sim's pace, whatever the display's
   qualityCheck(dt);
   if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
   for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.down || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
@@ -3025,6 +3036,7 @@ async function rebuild(first) {
   if (shared) for (const t of [shared.paper, ...shared.frozenTex, shared.atlas]) t?.destroy();
   shared = createShared(gpu);
   await buildAtlas(gpu);
+  redraw = true;
   // Phones scroll one long page; desktops get a main page and a research page, each with its own sim.
   sims = (view.phone ? [0] : [0, 1]).map((pg) => createSim(gpu, pg));
   page = view.phone ? 0 : regionFromUrl();
