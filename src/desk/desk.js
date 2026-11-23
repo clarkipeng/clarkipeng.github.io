@@ -85,9 +85,11 @@ const GROUPS = {
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
     ['backs', 'postcard', 0, 0, 0, 'back style (postcard; pen was the previous)'],
+    ['cards', 'as-is', 0, 0, 0, 'card size preset'],
     ['cardScale', 1, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
     ['backTitle', 1, 0, 1, 1, 'title on the back (it is on the front)'],
     ['backTight', 0, 0, 1, 1, 'tighter back padding and link rows'],
+    ['framing', 0, 0, 1, 1, 'frame thumbnails on their subject (data-focus)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
@@ -171,7 +173,13 @@ const LOOKS = {
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
     main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
 };
-const CHOICES = { backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
+// Card size presets (options; as-is is today's card): compact is the smallest scale at which every back still fits,
+// with the title on the front only, tighter backs, and thumbnails framed on their subject.
+const CARD_PRESETS = {
+  'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
+  compact: { cardScale: 0.85, backTitle: 0, backTight: 1, framing: 1 },
+};
+const CHOICES = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 const T = { ...DEFAULTS };
@@ -181,6 +189,7 @@ for (const k of Object.keys(DEFAULTS)) {
 }
 for (const [k, list] of Object.entries(CHOICES)) if (!list.includes(T[k])) T[k] = DEFAULTS[k];
 for (const [k, v] of Object.entries(PRINTS[T.print])) if (!qs.has(k)) T[k] = v;
+for (const [k, v] of Object.entries(CARD_PRESETS[T.cards])) if (!qs.has(k)) T[k] = v;
 const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
 // Per-page styles: each page has its own surface and ink, tuned under Style in the panel (URL keys main.gain, research.mode,
 // ...). paper: light paper, one muted ink that darkens like dye. spectrum: a dark surface where each card's veins glow
@@ -813,6 +822,9 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0,
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
+    // focus: the framing option's zoom and crop on the picture's subject, for the poster and the clips alike (so the
+    // hover fade stays seamless)
+    baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, more: el.classList.contains('more'), lid: el.classList.contains('lid'),
     overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
@@ -900,6 +912,7 @@ function wrapLines(text, maxW, font) {
 
 function layout() {
   endFlights(true); // a new layout puts every card in its slot (piles are made again below)
+  for (const s of sources) s.frame = T.framing && s.focus ? s.focus : s.baseFrame;
   const vw = document.documentElement.clientWidth, vh = innerHeight;
   const phone = vw < PHONE;
   body.classList.toggle('phone', phone);
@@ -2978,13 +2991,14 @@ function tweakPanel() {
   const set = (k, v) => {
     T[k] = v;
     if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
+    if (k === 'cards') { Object.assign(T, CARD_PRESETS[v]); sync(); if (gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } }
     if (k === 'look') {
       const before = RESEED.map((r) => T[r]).join();
       applyLook(v); sync();
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['backs', 'cardScale', 'backTitle', 'backTight', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'backTitle', 'backTight', 'framing', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
