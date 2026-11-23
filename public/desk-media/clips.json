@@ -34,9 +34,11 @@
   },
   "ray": {
     "poster": "ray-poster.jpg",
-    "cover": "ray-thumb.jpg",
     "clips": [
-      "ray-01.mp4",
+      {
+        "src": "ray-01.mp4",
+        "start": 4.5083
+      },
       "ray-02.mp4"
     ]
   },
