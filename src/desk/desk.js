@@ -1059,6 +1059,7 @@ const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y,
 function stepDoor(dt) {
   if (!turn.on) door.amt = Math.min(1, door.amt + dt / 0.5); // a page's corner folds back once it is shown
   doorEl.classList.toggle('folding', turn.on || door.amt < 1); // no focus ring around a fold that is not there (mid-turn, folding back)
+  doorEl.classList.toggle('flat', (turn.on && turn.mode !== 'drag') || (!turn.on && door.amt < 0.5)); // no pointer, and clicks pass through, while no corner is drawn
   const e = 1 - Math.exp(-dt / 0.12);
   door.d += (restD(door.hover) * smooth(door.amt) - door.d) * e;
   door.a += ((door.hover && door.at ? leanTo(door.at.x, door.at.y) : Math.PI / 4) - door.a) * e;
