@@ -826,7 +826,7 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, more: el.classList.contains('more'), lid: el.classList.contains('lid'),
-    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), videoSrc: d.video,
+    overflow: !d.slot && !el.classList.contains('deck'), inDeck: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), portrait: d.orient === 'portrait', // portrait: the one card size, turned upright videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
@@ -841,7 +841,7 @@ let nameBox = null; // CSS px: { x, baseline, size }
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 // The card box, a little bigger than a postcard all round so a card inside it is hidden; its lid lies open beside it.
 const boxSize = (s) => [s.lid ? Math.round(view.card.w * 0.13) : view.card.h + 14, view.card.w + 12]; // upright, like the deck
-function cardBox(s, w, h = Math.round(w / POSTCARD)) {
+function cardBox(s, w, h = s.kind === 'polaroid' ? 0 : Math.round(w / POSTCARD)) {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
@@ -850,6 +850,10 @@ function cardBox(s, w, h = Math.round(w / POSTCARD)) {
   if (s.kind === 'paper') {
     const lines = wrapLines(s.hit.querySelector('b').textContent, w - 39, '600 16px Inter');
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small').textContent };
+  }
+  if (s.kind === 'polaroid' && h) { // the one card size: the photo takes what its caption strip leaves
+    const mh = h - 8 - 36;
+    return { w, h, media: { x: 8, y: 8, w: w - 16, h: mh } };
   }
   if (s.kind === 'polaroid') {
     const mw = w - 16;
@@ -865,6 +869,9 @@ function cardBox(s, w, h = Math.round(w / POSTCARD)) {
   const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
   return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 14 + 18 * TS : 13 + (titleLines.length + 1) * 18 * TS) }, title, titleLines, sub, oneLine };
 }
+// Every project card and the polaroid share the one card size, landscape or (data-orient="portrait") turned upright.
+const oneSize = (s) => s.kind === 'photo' || s.kind === 'polaroid';
+const cardDims = (s) => (s.portrait ? [view.card.h, view.card.w] : [view.card.w, view.card.h]);
 // One postcard size for every project card, on the desk and in a deck (nothing scales when it is drawn or put back):
 // the smallest 3:2 card on which every project's back fits at the shared type scale, scaled up with the desk on big
 // screens. On a phone the screen sets the width (maxW), and if a back needs more room every card grows taller alike.
@@ -930,10 +937,10 @@ function layout() {
     const opts = { backTitle: T.backTitle, backTight: T.backTight };
     Object.assign(T, { backTitle: 1, backTight: 0 }); TS = 1;
     view.card = cardSize(k);
-    const fixed = new Map(sources.filter((s) => s.kind !== 'photo' && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k))]));
+    const fixed = new Map(sources.filter((s) => !oneSize(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k))]));
     Object.assign(T, opts); TS = Math.max(1, 12 / (TOK.fs * c)); view.cs = c;
     for (const s of sources) {
-      const box = s.kind === 'photo' ? cardBox(s, view.card.w, view.card.h) : s.kind === 'deck' ? cardBox(s, ...boxSize(s)) : fixed.get(s);
+      const box = oneSize(s) ? cardBox(s, ...cardDims(s)) : s.kind === 'deck' ? cardBox(s, ...boxSize(s)) : fixed.get(s);
       Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c });
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
@@ -953,8 +960,8 @@ function layout() {
     const order = [...sources].filter((s) => s.kind !== 'deck').sort((a, b) => a.order - b.order);
     for (const [i, s] of order.entries()) {
       if (s.region && !view.labelY) { view.labelY = y + 10; y += 56; } // research becomes a section further down
-      const w = Math.round(s.kind === 'polaroid' ? full * 0.56 : s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
-      Object.assign(s, s.kind === 'photo' ? cardBox(s, view.card.w, view.card.h) : fitCard(s, w, full));
+      const w = Math.round(s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
+      Object.assign(s, oneSize(s) ? cardBox(s, ...cardDims(s)) : fitCard(s, w, full));
       s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       s.py = y + s.h / 2; y += s.h + 30;
@@ -1610,7 +1617,7 @@ const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H
 // face down and back upright, square with the pile, and slides on. The first visit, a deep link, and every page turn
 // deal this way.
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, rotA: 0.06, rotB: 0.6, fan: 0.26 }; // s, then fractions of the travel, s to fan open
-const UPRIGHT = 90; // deg: a postcard in a deck lies portrait
+const upright = (s) => (s.w > s.h ? 90 : 0); // deg: a card in a deck lies upright; a landscape one turns a quarter turn
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's deck fans: it slides in first
 // One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
@@ -1660,7 +1667,7 @@ function atHome(region, fn) {
 // One card onto its way out of a deck to `to` (its home, or where it is now): it waits on the pile (card k of the n dealt
 // together, the first on top; fanned from stack.at), then is dealt at `at`.
 function deal(s, deck, at, stack = null, [x, y, r] = [s.x, s.y, s.rot]) {
-  s.fly = { at, x, y, r, deck, t0: flights.t, stack,
+  s.fly = { at, x, y, r, deck, t0: flights.t, stack, ur: upright(s),
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   s.el.classList.add('flying'); // clicks go through to the deck
   Object.assign(s, { flying: true, turn: 0, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null,
@@ -1671,12 +1678,12 @@ function deal(s, deck, at, stack = null, [x, y, r] = [s.x, s.y, s.rot]) {
 // once its deal begins, fanned toward the page around the pile's outer edge, top card first, still upright.
 function waitPose(k, t = flights.t) {
   const d = k.deck, [jx, jy, jr] = k.jit, f = k.stack;
-  if (!f || f.at == null) return [d.px + jx, d.y + jy, d.rot + UPRIGHT + jr];
+  if (!f || f.at == null) return [d.px + jx, d.y + jy, d.rot + k.ur + jr];
   const { k: j, n } = f, a = 1 - (1 - clamp((t - f.at - j * 0.03) / DRAW.fan)) ** 3;
   const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = view.card.h * view.cs, ph = view.card.w * view.cs; // the pile, upright
   const ox = -0.62 * pw, oy = -0.18 * ph; // from the pivot (outer edge, a little low) to the pile's center
   return [d.px + 0.62 * pw + ox * Math.cos(th) - oy * Math.sin(th) - (a * 30 * (n - j)) / n + jx,
-    d.y + 0.18 * ph + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + UPRIGHT + deg + jr];
+    d.y + 0.18 * ph + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + k.ur + deg + jr];
 }
 // A page's deck holds its cards that are not on the desk: every card of a page you do not see (its featured cards come
 // out as you turn to it), and those put back or never dealt.
@@ -1887,7 +1894,7 @@ function gather(cards, deck) {
 }
 function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, down: s.down || 0, dur, box: deck.mode === 'box' && deck.phase === 'open', // down: already face down; box: it goes in through the box's open end
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), down: s.down || 0, dur, box: deck.mode === 'box' && deck.phase === 'open', // down: already face down; box: it goes in through the box's open end
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0 });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
