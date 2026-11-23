@@ -2610,11 +2610,12 @@ function createSim(g, page) {
   // Scatter the agents; each carries the hue of the nearest card on this page.
   const origin = page * view.w, mine = sources.filter((x) => view.phone || x.region === page);
   const init = new Float32Array(n * 4);
-  for (let i = 0; i < n; i++) {
+  const cx = mine.map((c) => (c.x - origin) * dpr), cy = mine.map((c) => c.y * dpr);
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
     const x = Math.random() * W, y = Math.random() * H;
     let best = 0, bd = Infinity;
-    for (const c of mine) { const d = Math.hypot(x - (c.x - origin) * dpr, y - c.y * dpr); if (d < bd) { bd = d; best = c.id; } }
-    init.set([x, y, Math.random() * 6.2832, best * 8], i * 4);
+    for (let j = 0; j < cx.length; j++) { const dx = x - cx[j], dy = y - cy[j], d = dx * dx + dy * dy; if (d < bd) { bd = d; best = mine[j].id; } } // nearest by squared distance
+    init[o] = x; init[o + 1] = y; init[o + 2] = Math.random() * 6.2832; init[o + 3] = best * 8;
   }
   const agents = device.createBuffer({ size: init.byteLength, usage: SB.STORAGE | SB.COPY_DST });
   device.queue.writeBuffer(agents, 0, init);
