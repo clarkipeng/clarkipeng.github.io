@@ -1917,7 +1917,7 @@ const arriving = (d) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait 
 // or deals them all out when none are on the desk; a card dropped on it goes back on the pile. Enter draws,
 // Shift+Enter gathers or deals.
 const pageDeck = (r) => sources.find((s) => s.more && s.region === r);
-const decked = (s) => s.kind === 'photo'; // project cards go in decks; the polaroid and the note never do
+const decked = (s) => s.kind !== 'deck'; // every card on a page goes in its deck: the projects, the polaroid and the note
 const pileOf = (r) => sources.filter((o) => o.region === r && o.inDeck).sort((a, b) => b.pileZ - a.pileZ); // top first
 let deckTimer = 0, dealSeq = 0, pileSeq = 0;
 function deckClick(deck, e) {
@@ -2690,7 +2690,7 @@ function renderEntries(g, sm, extra = []) {
 function paintPlainBack(s, S) {
   const cs = view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
-  x.scale(S, S); x.fillStyle = TOK.stock; x.fillRect(0, 0, w, h);
+  x.scale(S, S); x.fillStyle = STOCK[s.kind] || TOK.stock; x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
   // shows and the name is written upside down there; a portrait card's left part shows, the name turned to read up.
