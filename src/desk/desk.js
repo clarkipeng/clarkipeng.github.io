@@ -979,10 +979,26 @@ function placeDoor() {
   const ch = (T.cornerSize + T.cornerLift) * k * Math.SQRT2, tipH = S - ((2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * k) / Math.SQRT2;
   set('.hit', `M${S} ${S - ch}L${tipH} ${tipH}L${S - ch} ${S}H${S}Z`); // the pointer's area: the fold as drawn when hovered (the sliver and the flap), not the larger triangle
   set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
-  set('.sliver', `M${S} ${S - c}V${S}H${S - c}Z`); set('.flap', `M${S} ${S - c}L${S - c} ${S}V${S - c}Z`);
-  const t = svg.querySelector('text'), cx = S - (2 * c) / 3, cy = S - (2 * c) / 3;
+  // Without WebGPU the fold itself, flat, from the corner's state: it lifts and leans toward the pointer like the drawn one
+  // (the sliver under it, the flap reflected over the fold, the label printed on the flap).
+  const d = door.d || T.cornerSize * k, a = door.a, [dx, dy] = dirOf(a), far = 2 * d - Math.PI * DOOR.R * k;
+  const B = [S - d / Math.cos(a), S], Rt = [S, S - d / Math.sin(a)], tipF = [S + far * dx, S + far * dy], P = (q) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`;
+  set('.sliver', `M${P(Rt)}L${S} ${S}L${P(B)}Z`); set('.flap', `M${P(Rt)}L${P(tipF)}L${P(B)}Z`);
+  const t = svg.querySelector('text'), at = far - (T.cornerSize - Math.PI * DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
   Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
-  for (const [a, v] of [['x', cx], ['y', cy], ['transform', `rotate(-45 ${cx} ${cy})`]]) t.setAttribute(a, v);
+  for (const [n, v] of [['x', cx], ['y', cy], ['transform', `rotate(${(-45 - (2 * (a - Math.PI / 4) * 180) / Math.PI).toFixed(2)} ${cx} ${cy})`]]) t.setAttribute(n, v);
+}
+// No frame loop without WebGPU: the flat corner runs its own while it moves.
+let flatDoor = 0;
+function animateFlatDoor() {
+  if (gpu || flatDoor || !body.classList.contains('nogpu')) return;
+  let last = performance.now();
+  const tick = (now) => {
+    const d0 = door.d, a0 = door.a;
+    stepDoor(Math.min(0.05, (now - last) / 1000)); last = now; placeDoor();
+    flatDoor = Math.abs(door.d - d0) + Math.abs(door.a - a0) > 1e-3 ? requestAnimationFrame(tick) : 0;
+  };
+  flatDoor = requestAnimationFrame(tick);
 }
 // The DOM box (hit area and focus ring) follows the drawn card: the same lift scale, landing squash, and the camera's
 // perspective on a lifted card (cardUniform's f / (f - zh)); the 3D tilt is left out.
@@ -1150,8 +1166,9 @@ function clipLinks() {
 }
 // The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
 const hitEl = doorEl.querySelector('.hit');
-hitEl.addEventListener('pointerenter', () => { door.hover = true; prewarm(1 - page); });
-hitEl.addEventListener('pointerleave', () => (door.hover = false));
+hitEl.addEventListener('pointerenter', () => { door.hover = true; prewarm(1 - page); animateFlatDoor(); });
+hitEl.addEventListener('pointermove', animateFlatDoor);
+hitEl.addEventListener('pointerleave', () => { door.hover = false; animateFlatDoor(); });
 hitEl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || !turns() || busy() || sources.some((s) => s.dragging)) return;
   door.press = { x: e.clientX, y: e.clientY, d: door.d, moved: false };
@@ -3076,7 +3093,7 @@ async function main() {
   gpu = await initGpu();
   if (dead) { gpu?.device.destroy(); return; }
   mark('pipelines');
-  if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); dealing = false; layout(); return; }
+  if (!gpu) { clearTimeout(showStill); body.classList.remove('intro'); body.classList.add('nogpu', 'ready'); dealing = false; Object.assign(door, { amt: 1, d: restD(false) }); layout(); return; }
   await rebuild(true);
   if (introOn()) { arriveDeck(page, INTRO_DELAY - MOTION.settle); drawFrom(page, { delay: INTRO_DELAY }); } // the first visit (or a deep link): the deck comes in, then deals
   pileUp(0); pileUp(1); // each deck holds its page's cards that are not on the desk
