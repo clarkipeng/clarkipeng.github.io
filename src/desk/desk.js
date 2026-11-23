@@ -86,6 +86,8 @@ const GROUPS = {
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
     ['backs', 'postcard', 0, 0, 0, 'back style (postcard; pen was the previous)'],
     ['cardScale', 1, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
+    ['backTitle', 1, 0, 1, 1, 'title on the back (it is on the front)'],
+    ['backTight', 0, 0, 1, 1, 'tighter back padding and link rows'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
@@ -910,10 +912,13 @@ function layout() {
     // Sizes are set at full scale (design px); a smaller card scale shows every card that much smaller, the same in a
     // deck and on the desk, and keeps the layout's composition (slots are fractions of the desk).
     const c = clamp(T.cardScale, 0.6, 1);
-    TS = 1;
+    // The sizes are the full-scale ones with the backs as they are by default (title on, usual spacing), so the scale is
+    // always relative to the same card; the back options only change what fits on it.
+    const opts = { backTitle: T.backTitle, backTight: T.backTight };
+    Object.assign(T, { backTitle: 1, backTight: 0 }); TS = 1;
     view.card = cardSize(k);
     const fixed = new Map(sources.filter((s) => s.kind !== 'photo' && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) * k))]));
-    TS = Math.max(1, 12 / (TOK.fs * c)); view.cs = c;
+    Object.assign(T, opts); TS = Math.max(1, 12 / (TOK.fs * c)); view.cs = c;
     for (const s of sources) {
       const box = s.kind === 'photo' ? cardBox(s, view.card.w, view.card.h) : s.kind === 'deck' ? cardBox(s, ...boxSize(s)) : fixed.get(s);
       Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c });
@@ -2201,7 +2206,11 @@ const TYPE = { // read when drawn: the type follows TS
   get noteLink() { return { font: font(500), color: NOTE_INK }; },
   noteHand: { font: HAND, color: NOTE_INK },
 };
-const BK = { pad: 16, get first() { return 16 + 16 * TS; }, get row() { return 24 * TS; }, get gap() { return 16 * TS; }, get bottom() { return 9 + 13 * TS; }, strip: 32 };
+// Back spacing in design px; T.backTight (an option) takes 4 px off the padding and the space between link rows.
+const BK = {
+  get pad() { return T.backTight ? 12 : 16; }, get first() { return BK.pad + 16 * TS; }, get row() { return (T.backTight ? 22 : 24) * TS; },
+  get gap() { return (T.backTight ? 12 : 16) * TS; }, get bottom() { return BK.pad - 7 + 13 * TS; }, strip: 32,
+};
 // Small monochrome marks for the note's links (quiet), by link text; 24-unit boxes except GitHub (16).
 const ICONS = {
   GitHub: [16, 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z'],
@@ -2214,7 +2223,7 @@ const ICONS = {
 const backStyle = (s) => { const st = BACK_STYLES[T.backs] || BACK_STYLES.postcard; return st.postcard && s?.kind !== 'photo' ? BACK_STYLES.pen : st; };
 // The postcard back: where the divider sits (a share of the width), the gap either side of it, the stamp (w, h), and how
 // many ruled address lines it has (at least one per link).
-const PC = { split: 0.62, gutter: 14, stamp: [40, 48], lines: 3 };
+const PC = { split: 0.62, get gutter() { return T.backTight ? 10 : 14; }, get stamp() { return T.backTight ? [34, 40] : [40, 48]; }, get lines() { return T.backTight ? 1 : 3; } };
 
 // A link: its text at (x, base) and its hit area (a 24px row, 4px wider than the text on each side).
 const linkAt = (a, x, base, tw, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
@@ -2226,11 +2235,13 @@ function backLayout(s, b = s) {
     // A tidy list, one link per line, from the same first baseline as every other back.
     const hand = st.note !== 'icons', f = hand ? TYPE.noteHand : TYPE.noteLink, x0 = pad + (hand ? 0 : 20);
     m.font = f.font;
-    const links = s.backLinks.map((a, i) => linkAt(a, x0, BK.first + i * row, m.measureText(a.textContent).width));
-    return { st, lines: [], links, w, h: b.h, need: BK.first + (links.length - 1) * row + BK.bottom };
+    // Tighter backs set the list in two columns when one would not fit.
+    const n = s.backLinks.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom > b.h, per = two ? Math.ceil(n / 2) : n;
+    const links = s.backLinks.map((a, i) => linkAt(a, x0 + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), BK.first + (i % per) * row, m.measureText(a.textContent).width));
+    return { st, lines: [], links, w, h: b.h, need: BK.first + (per - 1) * row + BK.bottom };
   }
   // No label line: it only repeated the front's caption (Clark: no redundancy).
-  const title = s.backTitle ?? (b.title || b.lines?.join(' ') || ''), label = '';
+  const title = T.backTitle ? s.backTitle ?? (b.title || b.lines?.join(' ') || '') : '', label = ''; // the title can stay on the front only
   const strip = st.ruled && label && s.kind !== 'polaroid'; // index: the label gets its own strip along the top
   const lines = [];
   let y = BK.first + (strip ? BK.strip : 0) - TYPE.title.lh, gapNext = 0;
@@ -2268,10 +2279,11 @@ function backLayout(s, b = s) {
 // the links on the address lines, which sit at the bottom of the right column, the last 22px above the bottom edge.
 function postcardLayout(s, b) {
   const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK;
-  const divX = Math.round(w * PC.split), colW = divX - pad - PC.gutter, lines = [];
+  m.font = TYPE.link.font; // the divider moves left if a link would not fit on its address line
+  const divX = Math.min(Math.round(w * PC.split), Math.floor(w - pad - PC.gutter - Math.max(...s.backLinks.map((a) => m.measureText(a.textContent).width)))), colW = divX - pad - PC.gutter, lines = [];
   let y = BK.first - TYPE.title.lh;
   const add = (t, kind, gap) => { y += gap; wrapLines(t, colW, TYPE[kind].font).forEach((l) => { y += TYPE[kind].lh; lines.push({ t: l, f: TYPE[kind], y }); }); };
-  const title = s.backTitle ?? b.title ?? '';
+  const title = T.backTitle ? s.backTitle ?? b.title ?? '' : ''; // the title can stay on the front only
   if (title) add(title, 'title', 0);
   s.backParas.forEach((t, i) => add(t, 'body', title || i ? 8 : 0));
   m.font = TYPE.link.font;
@@ -2972,7 +2984,7 @@ function tweakPanel() {
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || k === 'backs' || k === 'cardScale' || k === 'cornerLabel') && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'backTitle', 'backTight', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
