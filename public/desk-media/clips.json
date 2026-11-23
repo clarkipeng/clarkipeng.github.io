@@ -34,7 +34,7 @@
   },
   "ray": {
     "poster": "ray-poster.jpg",
-    "cover": "ray-cover.jpg",
+    "cover": "ray-thumb.jpg",
     "clips": [
       "ray-01.mp4",
       "ray-02.mp4"
@@ -53,7 +53,7 @@
   },
   "catapult": {
     "poster": "catapult-poster.jpg",
-    "cover": "catapult-cover.jpg",
+    "cover": "catapult-thumb.jpg",
     "clips": [
       "catapult-01.mp4",
       "catapult-02.mp4"
@@ -61,7 +61,7 @@
   },
   "sine": {
     "poster": "sine-poster.jpg",
-    "cover": "sine-cover.jpg",
+    "cover": "sine-thumb.jpg",
     "clips": [
       "sine-01.mp4",
       "sine-02.mp4",
