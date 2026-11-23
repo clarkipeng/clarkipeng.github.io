@@ -11,7 +11,7 @@ Read `~/.agentworld/lab/taste.md` first; this file refines it for this repo.
 ## Look
 
 - The default is the tuned minimal "K" slime look with mild colours.
-- Every card is the same size inside and outside the deck.
+- Every card keeps its own shape with its longest side at one shared cap, and the same size inside and outside the deck (it only turns upright to stack); the sticky note keeps its own small size.
 - Transitions are continuous in time and space.
 - On hover, the thumbnail fades into the video.
 - No sound.
