@@ -1321,20 +1321,24 @@ function next() {
 // corner, during the gather, and once after the first visit's deal for a page never shown (its network forms from
 // scattered agents, about 3 s of sim time). Otherwise only the page you see steps.
 const WARM = { fresh: 180, again: 30 };
-function prewarm(region) {
+// parts: frames each warm-up step is spread over (see stepWarm): 4 for the warm-up after the first visit's deal, with no
+// hurry; 2 once a turn may be coming (the corner hovered, a gather), which also hurries one already under way.
+function prewarm(region, parts = 2) {
   const sm = sims[region];
-  if (!turns() || !sm || sm === sim || sm.ready || sm.pre) return;
-  Object.assign(sm, { pre: true, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
+  if (!turns() || !sm || sm === sim || sm.ready) return;
+  if (sm.pre) { sm.nextParts = Math.min(sm.nextParts || parts, parts); return; }
+  Object.assign(sm, { pre: true, parts, nextParts: parts, part: 0, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
 }
-// Each warm-up step is spread over WARM_PARTS frames, its agents run in that many parts (the E pass with the first, the
+// Each warm-up step is spread over sm.parts frames, its agents run in that many parts (the E pass with the first, the
 // diffuse with the last; nothing else touches the hidden page between them, so it is the same step), so the hidden page
 // adds a fraction of a step's GPU work to a frame instead of doubling the sim's.
-const WARM_PARTS = 2;
 function stepWarm() {
   const sm = sims.find((x) => x !== sim && x.pre);
   if (!sm) return;
   const part = sm.part || 0;
+  if (!part) sm.parts = sm.nextParts || sm.parts || 2; // a hurry starts with the next step
   if (!part && sm.warm-- <= 0) { Object.assign(sm, { pre: false, ready: true, warm: 0 }); return; }
+  const WARM_PARTS = sm.parts;
   atHome(sm.page, () => writeUniforms(gpu, sm));
   const n = activeAgents(sm), from = Math.round((n * part) / WARM_PARTS), to = Math.round((n * (part + 1)) / WARM_PARTS);
   U[2] = to; U[78] = from; // G.a.z, G.pq.z
@@ -3292,7 +3296,7 @@ async function main() {
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
   setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
-  setTimeout(() => dead || prewarm(1 - page), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // the other page, once
+  setTimeout(() => dead || prewarm(1 - page, 4), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // the other page, once
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
