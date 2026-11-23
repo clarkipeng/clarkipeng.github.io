@@ -267,7 +267,7 @@ struct G {
   y: vec4f,   // landing burst speed-up, burst decay, hover excitation, cursor excitation
   z: vec4f,   // ink softness (texels), ink grain, unused, on-screen card count
   w: vec4f,   // second ring on, second ring at (x ridge distance), corner emphasis, ink opacity
-  u: vec4f,   // shadow softness, shadow strength, release window (s), unused
+  u: vec4f,   // shadow softness, shadow strength, release window (s), tiles per row (TILE device px each)
   st: vec4f,  // style (0 paper, 1 spectrum, 2 j), glow, halo, page clock (s)
   bg: vec4f,  // page background, linear rgb
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
@@ -508,6 +508,35 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
   textureStore(dst, p, v);
 }`;
 
+// Which cards can touch each 16x16 tile of the screen, so the render visits only those: bit j of x for the j-th on-screen
+// card (its shadow's reach, the render's own test), bit k of y for card k's pickup imprint. Both tests only ever widen the
+// render's own per-pixel tests, so the picture is the same; a pixel just skips cards that cannot reach it.
+const TILE = 16;
+const TILE_WGSL = COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read_write> tiles: array<vec2u>;
+fn rectDist(c: vec2f, lo: vec2f, hi: vec2f) -> f32 { return length(max(max(lo - c, c - hi), vec2f(0.0))); }
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = u32(g.u.w);
+  let ty = (u32(g.pg.y) + ${TILE}u - 1u) / ${TILE}u;
+  if (gid.x >= tx * ty) { return; }
+  let q = g.n.w; let s = g.a.w;
+  let lo = vec2f(f32(gid.x % tx), f32(gid.x / tx)) * ${TILE}.0 * q;
+  let hi = lo + vec2f(${TILE}.0 * q);
+  var m = vec2u(0u);
+  for (var j = 0u; j < u32(g.z.w); j++) {
+    let k = u32(g.ord[j / 4u][j % 4u]);
+    let reach = g.cards[k].bound.x + (40.0 + 60.0 * g.cards[k].geo.w) * s * max(g.u.x, 1.0);
+    if (rectDist(g.cards[k].flat.xy, lo, hi) <= reach + 1.0) { m.x |= 1u << j; }
+  }
+  for (var k = 0u; k < u32(g.d.z); k++) {
+    let im = g.cards[k].imp;
+    if (im.z < 0.002) { continue; }
+    if (rectDist(im.xy, lo, hi) <= length(g.cards[k].geo.xy) + 6.0 * s + 1.0) { m.y |= 1u << k; } // the rounded box lies inside its corners' circle
+  }
+  tiles[gid.x] = m;
+}`;
+
 // Fullscreen triangle and the paper's grain. Grain is static, so it is baked once per layout into a desk-sized texture.
 const PAPER_FNS = /* wgsl */ `
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -539,6 +568,7 @@ const renderWGSL = (video) => COMMON + /* wgsl */ `
 @group(0) @binding(5) var paper: texture_2d<f32>;
 @group(0) @binding(6) var frozen: texture_2d<f32>;
 ${video ? '@group(0) @binding(7) var vidA: texture_external;\n@group(0) @binding(8) var vidB: texture_external;' : ''}
+@group(0) @binding(9) var<storage, read> tiles: array<vec2u>;
 
 const PAPER = vec3f(${PAPER.map(lin).map((x) => x.toFixed(5)).join(', ')});
 
@@ -671,7 +701,10 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
   // Pickup imprint (trial): where a card was just lifted, the ink in its old footprint sits a little darker and fades
   // back as the veins reclaim it. Render only; the agents are untouched.
   var stamp = 0.0;
-  for (var k = 0u; k < u32(g.d.z); k++) {
+  let tm = tiles[(u32(fp.y) / ${TILE}u) * u32(g.u.w) + u32(fp.x) / ${TILE}u]; // the cards that can reach this tile
+  var ims = tm.y;
+  while (ims != 0u) {
+    let k = firstTrailingBit(ims); ims &= ims - 1u;
     let im = g.cards[k].imp; // read only what it needs: copying the whole card per pixel is not free
     if (im.z < 0.002) { continue; }
     let fl = g.cards[k].flat; let ge = g.cards[k].geo; let r = p - im.xy;
@@ -716,7 +749,9 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
     col = inked(col, DARK, m.g); // the tagline
   }
 
-  for (var j = 0u; j < u32(g.z.w); j++) { // on-screen cards only, bottom to top
+  var cards = tm.x;
+  while (cards != 0u) { // on-screen cards that can reach this tile, bottom to top
+    let j = firstTrailingBit(cards); cards &= cards - 1u;
     let k = u32(g.ord[j / 4u][j % 4u]);
     let c = g.cards[k];
     let lift = c.geo.w;
@@ -2538,11 +2573,11 @@ async function initGpu() {
     const rend = (video) => { const m = mod(renderWGSL(video)); return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' }, fragment: { module: m, entryPoint: 'fs', targets: [{ format }] } }); };
     const grainMod = mod(GRAIN_WGSL);
     const grainPipe = device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: grainMod, entryPoint: 'vs' }, fragment: { module: grainMod, entryPoint: 'fs', targets: [{ format: 'rg8unorm' }] } });
-    const [ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainP] = await Promise.all([comp(E_WGSL), comp(AGENT_WGSL), comp(DIFFUSE_WGSL), rend(false), rend(true), grainPipe]);
+    const [ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainP, tilePipe] = await Promise.all([comp(E_WGSL), comp(AGENT_WGSL), comp(DIFFUSE_WGSL), rend(false), rend(true), grainPipe, comp(TILE_WGSL)]);
     const uniform = device.createBuffer({ size: U.byteLength, usage: SB.UNIFORM | SB.COPY_DST });
     const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     device.lost.then((i) => { console.warn('WebGPU device lost', i.message); });
-    return { device, ctx, format, ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainPipe: grainP, uniform, sampler, ts };
+    return { device, ctx, format, ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainPipe: grainP, tilePipe, uniform, sampler, ts };
   } catch (err) {
     console.warn('WebGPU unavailable', err);
     return null;
@@ -2564,7 +2599,10 @@ function createShared(g) {
   canvas.style.height = cssH + 'px';
   const tex = (format, usage) => device.createTexture({ size: [CW, CH], format, usage });
   // Two frozen textures alternate, so the pass that captures the outgoing page never samples the one it writes.
-  return { CW, CH, dev, cssH, paper: tex('rg8unorm', 0x04 | 0x10), frozenTex: [tex(g.format, 0x04 | 0x10), tex(g.format, 0x04 | 0x10)], fz: 0 };
+  const TX = Math.ceil(CW / TILE), nTiles = TX * Math.ceil(CH / TILE);
+  const tiles = device.createBuffer({ size: nTiles * 8, usage: SB.STORAGE });
+  const tileBG = device.createBindGroup({ layout: g.tilePipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: { buffer: tiles } }] });
+  return { CW, CH, dev, cssH, paper: tex('rg8unorm', 0x04 | 0x10), frozenTex: [tex(g.format, 0x04 | 0x10), tex(g.format, 0x04 | 0x10)], fz: 0, TX, nTiles, tiles, tileBG };
 }
 
 // One page (main desk or research) gets its own viewport-sized sim; only the active page steps and renders.
@@ -2651,7 +2689,7 @@ function renderEntries(g, sm, extra = []) {
   return [
     { binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: sm.trail[sm.parity].createView() },
     { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared.atlas.createView() }, { binding: 4, resource: g.sampler },
-    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, ...extra];
+    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } }, ...extra];
 }
 // A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
 // on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
@@ -2829,7 +2867,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
     st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, 0, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
-    T.shadowSoft, T.shadow, T.landRelease, 0,
+    T.shadowSoft, T.shadow, T.landRelease, shared.TX,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     shared.CW, shared.CH, trans.fade, turn.on && !capturing ? 1 : 0,
@@ -2870,6 +2908,8 @@ function encodeRender(enc, target, ts = null, s = sim) {
       bg = gpu.device.createBindGroup({ layout: gpu.videoPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s, [{ binding: 7, resource: ext }, { binding: 8, resource: extB }]) });
     } catch { /* frame not ready yet: draw the poster */ }
   }
+  const tp = enc.beginComputePass();
+  tp.setPipeline(gpu.tilePipe); tp.setBindGroup(0, shared.tileBG); tp.dispatchWorkgroups(Math.ceil(shared.nTiles / 64)); tp.end();
   const pass = enc.beginRenderPass({ colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
     ...(ts ? { timestampWrites: { querySet: gpu.ts.set, endOfPassWriteIndex: 1 } } : {}) });
   pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.draw(3); pass.end();
@@ -3033,7 +3073,7 @@ async function rebuild(first) {
   layout();
   if (!gpu) return;
   sims.forEach(destroySim);
-  if (shared) for (const t of [shared.paper, ...shared.frozenTex, shared.atlas]) t?.destroy();
+  if (shared) for (const t of [shared.paper, ...shared.frozenTex, shared.atlas, shared.tiles]) t?.destroy();
   shared = createShared(gpu);
   await buildAtlas(gpu);
   redraw = true;
