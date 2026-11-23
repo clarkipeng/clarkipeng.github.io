@@ -1099,20 +1099,37 @@ function stepTurn(dt) {
   next();
 }
 // The links (DOM, on the main page) turn with it: while a turn shows the main page they stay put on screen, clipped to
-// where it shows: ahead of the flap as it leaves, behind the roll as it comes back.
+// where its paper shows. As it leaves: past the fold, but not under the flap (the sheet's corner, turned over the fold);
+// as it comes back: behind the roll.
+const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
+  const out = [];
+  poly.forEach((p, i) => {
+    const q = poly[(i + 1) % poly.length], a = f(p), b = f(q);
+    if (a >= 0) out.push(p);
+    if ((a >= 0) !== (b >= 0)) { const t = a / (a - b); out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
+  });
+  return out;
+};
 function clipLinks() {
   const st = linksEl.style;
   if (!turn.on || view.phone || (turn.from && turn.to)) { st.clipPath = st.translate = ''; return; }
-  const out = turn.from === 0, [dx, dy] = dirOf(turn.a), R = rollR(turn.d), { left: L, top: Tp, width: w, height: h } = turn.links;
-  const edge = out ? 2 * turn.d - Math.PI * R : turn.d - R, side = (u, v) => (out ? 1 : -1) * (dx * (L + u - view.w) + dy * (Tp + v - view.h) - edge);
-  const poly = [], box = [[0, 0], [w, 0], [w, h], [0, h]];
-  box.forEach((p, i) => { // the box cut by the edge's line (Sutherland-Hodgman, one plane)
-    const q = box[(i + 1) % 4], a = side(...p), b = side(...q);
-    if (a >= 0) poly.push(p);
-    if ((a >= 0) !== (b >= 0)) { const t = a / (a - b); poly.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
-  });
+  const out = turn.from === 0, [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d, { left: L, top: Tp, width: w, height: h } = turn.links;
+  const X = ([u, v]) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
+  const box = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
+  let path;
+  if (!out) path = clipPoly(box, (p) => d - R - X(p));
+  else {
+    const shown = clipPoly(box, (p) => X(p) - d), page = [[-L, -Tp], [view.w - L, -Tp], [view.w - L, view.h - Tp], [-L, view.h - Tp]];
+    // the flap: the part of the page within d - pi R of the corner, mirrored across the fold (x to 2d - pi R - x)
+    const flap = clipPoly(page, (p) => d - Math.PI * R - X(p)).map((p) => { const m = 2 * d - Math.PI * R - 2 * X(p); return [p[0] + m * dx, p[1] + m * dy]; });
+    let under = flap; // the flap over what shows: clipped by each edge of the convex region
+    const area = shown.reduce((s2, p, i) => { const q = shown[(i + 1) % shown.length]; return s2 + p[0] * q[1] - q[0] * p[1]; }, 0);
+    shown.forEach((p, i) => { const q = shown[(i + 1) % shown.length]; under = clipPoly(under, (r) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]))); });
+    path = shown.length > 2 ? [shown, under] : [];
+  }
   st.translate = out ? `${view.w}px 0` : '';
-  st.clipPath = `polygon(${(poly.length ? poly : [[0, 0], [0, 0], [0, 0]]).map(([u, v]) => `${u.toFixed(1)}px ${v.toFixed(1)}px`).join(', ')})`;
+  const polys = (out ? path : [path]).filter((poly) => poly.length > 2);
+  st.clipPath = polys.length ? `path(evenodd, '${polys.map((poly) => `M ${fmt(poly)} Z`).join(' ')}')` : 'polygon(0 0, 0 0, 0 0)';
 }
 // The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
 const hitEl = doorEl.querySelector('.hit');
