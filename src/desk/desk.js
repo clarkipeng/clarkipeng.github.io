@@ -589,7 +589,9 @@ fn rollLight(dir: vec2f, th: f32, back: bool) -> f32 {
 // One sheet rolling up off the page from its bottom-right corner, like a notebook page: it wraps around a cylinder of
 // radius R whose foot (the fold) lies d from the corner along dir, and lies flipped over beyond it, back side up. top is
 // the sheet's front at p (from the frozen frame when turning, sampled where the paper came from); below is what it
-// uncovers. The back is the paper's back, with the label written near the corner. Device px; antialiased edges.
+// uncovers. The back is the paper's back, with the label written on it near the corner: printed on the sheet, in the
+// paper's own axes (the fold's rest direction), so it turns, foreshortens and curls with the paper however the fold
+// leans, and takes the roll's light and shade like the paper under it. Device px; antialiased edges.
 fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec4f) -> vec3f {
   let dir = cu.xy; let d = cu.z; let R = max(cu.w, 0.5);
   if (d <= 0.0) { return top; }
@@ -621,11 +623,12 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
   }
   if (ba > 0.0) {
     let bg2 = grainAt(bp);
-    var bc = g.bg.rgb * (1.0 + ((bg2.x - 0.5) * 0.06 + (bg2.y - 0.5) * 0.045) * g.z.y / 0.16) * 0.97 * rollLight(dir, bth, true);
-    let lx = dot(bp - C, dir); let ly = dot(bp - C, N);
+    var bc = g.bg.rgb * (1.0 + ((bg2.x - 0.5) * 0.06 + (bg2.y - 0.5) * 0.045) * g.z.y / 0.16) * 0.97;
+    let D0 = vec2f(-0.70710678, -0.70710678); let N0 = vec2f(0.70710678, -0.70710678); // the fold's direction at rest, fixed on the paper
+    let lx = dot(bp - C, D0); let ly = dot(bp - C, N0);
     let lu = vec2f(ly / (2.0 * g.lb.y) + 0.5, (lx - g.lb.x) / (2.0 * g.lb.z) + 0.5);
     if (all(lu > vec2f(0.0)) && all(lu < vec2f(1.0))) { bc = inked(bc, DARK, 0.92 * textureSampleLevel(atlas, samp, mix(lab.xy, lab.zw, lu), 0.0).a); }
-    c = mix(c, bc, ba);
+    c = mix(c, bc * rollLight(dir, bth, true), ba);
   }
   return c;
 }
