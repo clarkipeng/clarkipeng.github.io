@@ -869,7 +869,7 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
   return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 14 + 18 * TS : 13 + (titleLines.length + 1) * 18 * TS) }, title, titleLines, sub, oneLine };
 }
 // Every card on the desk (project, research, the photo, the note) is the one card size, landscape, or with
-// data-orient="portrait" (none now) turned upright. (Clark, TASTE.md: every card is the same size inside and outside the deck.)
+// data-orient="portrait" (the photo) the same card turned upright. (Clark, TASTE.md: every card is the same size inside and outside the deck.)
 const oneSize = (s) => s.kind === 'photo' || s.kind === 'polaroid' || s.kind === 'note';
 const cardDims = (s) => (s.portrait ? [view.card.h, view.card.w] : [view.card.w, view.card.h]);
 // One postcard size for every project card, on the desk and in a deck (nothing scales when it is drawn or put back):
