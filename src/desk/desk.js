@@ -275,7 +275,7 @@ struct G {
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
   jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px); hold (1: clear the ink, hold the agents), unused
   pr: vec4f,  // prints: desaturate, white balance to paper, black lift, duotone at rest
-  pq: vec4f,  // prints: paper grain, matte edge (CSS px), unused, unused
+  pq: vec4f,  // prints: paper grain, matte edge (CSS px); the first agent this pass runs (a warm-up step's later part), unused
   cu: vec4f,  // page turn: the outgoing page's roll (direction from the corner xy, fold distance, roll radius; device px)
   dr: vec4f,  // the page corner of the page you see, the same way
   lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
@@ -395,7 +395,7 @@ fn sense(p: vec2f, edgy: bool) -> f32 {
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + u32(g.pq.z); // agents from g.pq.z up to g.a.z run in this pass
   if (i >= arrayLength(&agents) || f32(i) >= g.a.z) { return; } // auto quality runs only the first g.a.z agents
   rs = pcg(i * 1664525u + pcg(u32(g.d.w) + 17u));
   let a = agents[i];
@@ -1177,7 +1177,7 @@ function show(region) {
   videoSrc = null; videoMix = 0;
   if (sim) sim.ready = false; // the page you leave stops; it is warmed again before it next shows
   page = region; if (gpu) sim = sims[page];
-  if (sim) sim.pre = false;
+  if (sim) sim.pre = false, sim.part = 0;
   cam.x = view.phone ? 0 : region * view.w; placePage(); setInert(region);
   tweakSync?.();
 }
@@ -1326,14 +1326,23 @@ function prewarm(region) {
   if (!turns() || !sm || sm === sim || sm.ready || sm.pre) return;
   Object.assign(sm, { pre: true, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
 }
+// Each warm-up step is spread over WARM_PARTS frames, its agents run in that many parts (the E pass with the first, the
+// diffuse with the last; nothing else touches the hidden page between them, so it is the same step), so the hidden page
+// adds a fraction of a step's GPU work to a frame instead of doubling the sim's.
+const WARM_PARTS = 2;
 function stepWarm() {
   const sm = sims.find((x) => x !== sim && x.pre);
   if (!sm) return;
-  if (sm.warm-- <= 0) { Object.assign(sm, { pre: false, ready: true, warm: 0 }); return; }
+  const part = sm.part || 0;
+  if (!part && sm.warm-- <= 0) { Object.assign(sm, { pre: false, ready: true, warm: 0 }); return; }
   atHome(sm.page, () => writeUniforms(gpu, sm));
+  const n = activeAgents(sm), from = Math.round((n * part) / WARM_PARTS), to = Math.round((n * (part + 1)) / WARM_PARTS);
+  U[2] = to; U[78] = from; // G.a.z, G.pq.z
+  gpu.device.queue.writeBuffer(gpu.uniform, 0, U);
   const enc = gpu.device.createCommandEncoder();
-  encodeStep(enc, 'ead', null, sm);
+  encodeStep(enc, (part ? '' : 'e') + 'a' + (part === WARM_PARTS - 1 ? 'd' : ''), null, sm, to - from);
   gpu.device.queue.submit([enc.finish()]);
+  sm.part = (part + 1) % WARM_PARTS;
 }
 // Without the turn the other page is just there, and the cards of the page you leave go home.
 function jump(region) {
@@ -2865,6 +2874,8 @@ function writeUniforms(g, sm = sim, hold = false) {
 
 // ---------- frame ----------
 
+// A step is the E pass, the agents, then the diffuse; a step spread over frames runs its agents in parts (see stepWarm), and
+// only the part with the diffuse completes it.
 function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents(sm)) {
   const s = sm, p = s.parity;
   const pass = enc.beginComputePass(ts ? { timestampWrites: { querySet: gpu.ts.set, beginningOfPassWriteIndex: 0 } } : undefined);
@@ -2872,8 +2883,7 @@ function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents
   if (only.includes('a')) { pass.setPipeline(gpu.agentPipe); pass.setBindGroup(0, s.agentBG[p]); pass.dispatchWorkgroups(Math.ceil(count / 64)); }
   if (only.includes('d')) { pass.setPipeline(gpu.diffusePipe); pass.setBindGroup(0, s.diffuseBG[p]); pass.dispatchWorkgroups(Math.ceil(s.W / 16), Math.ceil(s.H / 16)); }
   pass.end();
-  s.parity = 1 - p;
-  s.t += STEP;
+  if (only.includes('d')) { s.parity = 1 - p; s.t += STEP; }
 }
 function encodeRender(enc, target, ts = null, s = sim) {
   let pipe = gpu.renderPipe, bg = gpu.device.createBindGroup({ layout: gpu.renderPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s) });
