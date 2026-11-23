@@ -2029,7 +2029,7 @@ const halt = (v, clip) => chain(v, () => {
 const playFromStart = (v) => chain(v, () => { if (v.ended || v.currentTime < v.clipStart) v.currentTime = v.clipStart; }).then(() => play(v));
 
 // A card's player: two video elements; the first clip loads now, the next only once this card's video starts.
-function makePlayer(s) { s.player = new Player(s.playlist); if (!s.still) matchThumbnail(s); }
+function makePlayer(s) { s.player = new Player(s.playlist); }
 const wake = (v) => chain(v, () => { v.preload = 'auto'; v.load(); v.currentTime = v.clipStart || 0; });
 const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 200));
 // Preload: once the intro is over and the page is idle, each card's first clip loads, one at a time, the page you are on
@@ -2122,26 +2122,6 @@ function stepMedia(dt) {
   if (videoSrc && videoSrc.player.state === 'rest' && videoSrc !== hov) videoSrc = null;
 }
 
-// The resting thumbnail should match the video's first frame, so the fade-in reads as the image coming alive. If the
-// poster does not (mean difference above about 10%), the card rests on the decoded first frame instead.
-async function matchThumbnail(s) {
-  const v = s.player.v[0];
-  if (v.readyState < 2) await new Promise((r) => v.addEventListener('loadeddata', r, { once: true }));
-  await v.op;
-  if (v.seeking) await new Promise((r) => v.addEventListener('seeked', r, { once: true }));
-  const grab = (src) => { const c = new OffscreenCanvas(32, 18), x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(src, 0, 0, 32, 18); return x.getImageData(0, 0, 32, 18).data; };
-  const fa = grab(v), fb = grab(s.img);
-  let diff = 0;
-  for (let k = 0; k < fa.length; k += 4) diff += Math.abs(fa[k] - fb[k]) + Math.abs(fa[k + 1] - fb[k + 1]) + Math.abs(fa[k + 2] - fb[k + 2]);
-  diff /= (fa.length / 4) * 3 * 255;
-  if (diff < 0.1) return;
-  const c = new OffscreenCanvas(v.videoWidth, v.videoHeight);
-  c.getContext('2d').drawImage(v, 0, 0);
-  s.thumb = c;
-  if (shared?.atlas && s.atlasAt) { const { canvas: cc } = drawCard(s, shared.dev); gpu.device.queue.copyExternalImageToTexture({ source: cc }, { texture: shared.atlas, origin: s.atlasAt }, [cc.width, cc.height]); redraw = true; }
-  if (qs.has('mlog')) console.log('[media] thumbnail for', s.key, 'is its first frame (poster differs by', diff.toFixed(2) + ')');
-}
-
 // ---------- card textures ----------
 
 // The part of an image (fractions) that covers a media area of aspect ma, zoomed by the card's framing [zoom, x, y].
@@ -2220,7 +2200,7 @@ function drawCard(s0, S0) {
   if (s.media) {
     const m = s.media;
     mediaPx = { x: Math.round(m.x * S), y: Math.round(m.y * S), w: Math.round(m.w * S), h: Math.round(m.h * S) };
-    const src = s.thumb || s.img;
+    const src = s.img;
     const iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
     const [fx, fy, fw, fh] = coverRect(iw / ih, mediaPx.w / mediaPx.h, s.frame);
     x.imageSmoothingQuality = 'high';
