@@ -762,8 +762,10 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
   }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
   col = rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la);
-  // A page turn: the page you left (its frozen last frame) rolls away over this one.
-  if (g.pg.w > 0.5) { col = rolled(pd, col * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt); }
+  // A page turn: the page you left (its frozen last frame) rolls away over this one. What it uncovers fades from the bare
+  // paper the resting corner shows to this page as the fold opens (the same 250 px as the stacked edges), so the sliver
+  // never switches in one frame, at the start or when a turn by hand falls back.
+  if (g.pg.w > 0.5) { col = rolled(pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt); }
   var outc = vec4f(pow(clamp(col, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), 1.0);
   if (g.pg.z > 0.0) { outc = mix(outc, textureLoad(frozen, ip, 0), g.pg.z); } // crossfade from the frame before a sim resolution change
   return outc;
