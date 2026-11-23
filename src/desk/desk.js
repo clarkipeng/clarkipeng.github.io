@@ -2218,10 +2218,11 @@ const BACK_STYLES = {
 };
 const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
 const STOCK = { photo: TOK.stock, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note };
+const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
-  get title() { return { font: font(600), lh: TOK.lhBody * TS, color: TOK.text }; },
+  get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
   get label() { return { font: font(400), lh: 16 * TS, color: TOK.muted }; },
-  get body() { return { font: font(400), lh: TOK.lhBody * TS, color: TOK.body }; },
+  get body() { return { font: font(400), lh: lhBody(), color: TOK.body }; },
   get link() { return { font: font(500), color: INK_DEEP }; },
   get noteLink() { return { font: font(500), color: NOTE_INK }; },
   noteHand: { font: HAND, color: NOTE_INK },
