@@ -7,6 +7,7 @@
 import { CN, NCH, FEED } from './chips.js';
 
 const BODY_VEC4 = 14, HEAD_VEC4 = 6, G = 40; // a chip's mesh: G x G quads
+const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell
 // A shadow falls this far right and down per px of height, like the cards' far shadows.
 const LS = [0.15, 0.6];
 
@@ -34,16 +35,16 @@ struct CU {
 @group(0) @binding(0) var<uniform> u: CU;
 @group(0) @binding(1) var mask: texture_2d_array<f32>;
 @group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var noiseTex: texture_2d<f32>;
+@group(0) @binding(4) var wrap: sampler;
 var<private> bi: u32; // the chip being drawn: read in place from the uniforms, never copied
 
 const LS = vec2f(${LS.join(', ')});
 
 fn hash(p: vec2f) -> f32 { var q = fract(vec3f(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 fn hash2(p: vec2f) -> vec2f { return vec2f(hash(p), hash(p + vec2f(17.3, 5.1))); }
-fn vnoise(p: vec2f) -> f32 {
-  let i = floor(p); let f = p - i; let s = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), s.x), mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), s.x), s.y);
-}
+// Smooth value noise, from a small wrapping texture made once (valueNoise below): one tap instead of four hashes.
+fn vnoise(p: vec2f) -> f32 { return textureSampleLevel(noiseTex, wrap, p / ${NP}.0, 0.0).r; }
 
 // Height of the mid-surface over p (the shape's frame), and its slope: chips.js's surf().
 fn surf(p: vec2f) -> vec3f {
@@ -213,6 +214,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   out[(gid.z * ${FEED}u + gid.y) * ${FEED}u + gid.x] = clamp(a * 0.25 * fu.n.y, 0.0, 1.0);
 }`;
 
+// Smooth value noise over a wrapping NP-cell lattice, sampled NT times a cell (r8, row by row).
+function valueNoise() {
+  const lat = Float32Array.from({ length: NP * NP }, () => Math.random()), at = (i, j) => lat[((j + NP) % NP) * NP + ((i + NP) % NP)];
+  const out = new Uint8Array(NP * NT * NP * NT), n = NP * NT, sm = (f) => f * f * (3 - 2 * f);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const px = (x + 0.5) / NT, py = (y + 0.5) / NT, i = Math.floor(px), j = Math.floor(py), sx = sm(px - i), sy = sm(py - j);
+    const a = at(i, j) + (at(i + 1, j) - at(i, j)) * sx, b = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * sx;
+    out[y * n + x] = Math.round((a + (b - a) * sy) * 255);
+  }
+  return out;
+}
+
 export async function createChipRenderer(device) {
   const mod = (code) => device.createShaderModule({ code });
   const cm = mod(CHIP_WGSL), over = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, max = { operation: 'max', srcFactor: 'one', dstFactor: 'one' };
@@ -230,7 +243,11 @@ export async function createChipRenderer(device) {
   const ubuf = device.createBuffer({ size: U.byteLength, usage: 0x40 | 0x08 });
   const masks = device.createTexture({ size: [CN, CN, NCH], format: 'rgba8unorm', usage: 0x04 | 0x02 });
   const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
-  const bgOf = (p) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }, { binding: 1, resource: masks.createView({ dimension: '2d-array' }) }, { binding: 2, resource: sampler }] });
+  const noise = device.createTexture({ size: [NP * NT, NP * NT], format: 'r8unorm', usage: 0x04 | 0x02 });
+  device.queue.writeTexture({ texture: noise }, valueNoise(), { bytesPerRow: NP * NT }, [NP * NT, NP * NT]);
+  const wrap = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
+  const bgOf = (p) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }, { binding: 1, resource: masks.createView({ dimension: '2d-array' }) }, { binding: 2, resource: sampler },
+    { binding: 3, resource: noise.createView() }, { binding: 4, resource: wrap }] });
   const bg = bgOf(pipe), sbg = bgOf(shadowPipe);
   const blank = device.createTexture({ size: [1, 1, 1], format: 'rgba8unorm-srgb', usage: 0x04 });
   let layers = null, depth = null, side = 0, look0 = '', pending = [], tiles = [];
