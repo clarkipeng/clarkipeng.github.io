@@ -67,11 +67,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
 
   // Fixed steps up to time t; poses in between are interpolated (alpha).
   world.advance = (t) => {
-    const S = world.surface;
-    for (const b of bodies) {
-      if (b.sleep && S.moving(b.x[0], b.x[1], b.bound)) wake(b);
-      b.moved = !b.sleep;
-    }
+    for (const b of bodies) b.moved = !b.sleep;
     let k = 0;
     while (time + h <= t + 1e-9 && k++ < 240) { step(); time += h; }
     if (time + h <= t) time = t - h * 0.999; // far behind (a hidden tab): the backlog is dropped, not caught up
@@ -103,7 +99,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     S.prepare(time);
     for (const b of bodies) {
       b.px.set(b.x); b.pq.set(b.q);
-      if (b.sleep) continue;
+      if (b.sleep) { if (!S.moving(b.x[0], b.x[1], b.bound)) continue; wake(b); b.moved = true; } // the paper moves under it
       const o = b.id * V;
       vel[o + 2] -= world.g * h;
       vel.fill(0, o + 6, o + 12);
