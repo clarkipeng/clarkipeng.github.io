@@ -135,7 +135,7 @@ const GROUPS = {
     ['cornerSize', 70, 40, 120, 1, 'corner size px'],
     ['cornerLabel', 19, 12, 30, 0.5, 'corner label px'],
     ['cornerLift', 10, 0, 40, 1, 'hover lift px'],
-    ['turnS', 0.9, 0.3, 2.5, 0.05, 'page turn s'],
+    ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
     ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
   ],
   // Desk: what the desk does with cards you move.
@@ -1180,10 +1180,10 @@ const ARRIVE_AT = 0.1, DEAL_AT = 0.35; // the box comes in this far into the tur
 const busy = () => turn.on || flights.on || !!door.press || sources.some((s) => s.dragging); // a card in hand holds a page change until it is let go
 const turns = () => !!gpu && !reduced && !view.phone && sims.length > 1; // phones, reduced motion, and no WebGPU just show the other page
 // The page you see, frozen as it was last drawn, but without its corner: the turn draws that, from the same fold.
-function freeze(sm = sim) {
-  capturing = true; writeUniforms(gpu, sm); capturing = false;
+function freeze() {
+  capturing = true; writeUniforms(gpu); capturing = false;
   const enc = gpu.device.createCommandEncoder();
-  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView(), null, sm);
+  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
   gpu.device.queue.submit([enc.finish()]);
   shared.fz = 1 - shared.fz; redraw = true;
 }
@@ -1322,8 +1322,7 @@ function go(region) {
   prewarm(region, 3); // a turn is coming: hurry
   const out = sources.filter((s) => s.region === page && decked(s) && !s.deck && !s.dragging);
   if (!out.length) { startTurn(region, 'auto'); return; }
-  // The turn starts while the last cards are still landing (the page keeps drawing them as it turns).
-  Object.assign(flights, { thenAt: gather(out, pageDeck(page)), then: () => startTurn(region, 'auto') }); // as the last card starts back
+  gather(out, pageDeck(page)); flights.then = () => startTurn(region, 'auto'); // the page turns once every card is in its box
 }
 function next() {
   if (busy() || pendingNav == null) return;
@@ -1696,8 +1695,8 @@ const upright = (s) => (s.w > s.h ? 90 : 0); // deg: a card in a box stands upri
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's box fans: it slides in first
 // One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
-// follows at thenAt (or once every card is down): the page turn after a gather.
-const flights = { on: false, t: 0, then: null, thenAt: Infinity };
+// follows once every card is down: the page turn after a gather.
+const flights = { on: false, t: 0, then: null };
 const now = () => (flights.on ? flights.t : (flights.t = 0));
 const easeOutQuart = (u) => 1 - (1 - u) ** 4;
 function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
@@ -1804,7 +1803,7 @@ function stepFlights(dt) {
   }
   flights.on = busy;
   const then = flights.then;
-  if (then && (!busy || flights.t >= flights.thenAt)) { flights.then = null; then(); }
+  if (then && !busy) { flights.then = null; then(); }
   else if (!busy) next();
 }
 // A card dealt: it waits in the fan, then lifts off (8% of the draw) and travels home, so it rises up and over the cards
@@ -1991,12 +1990,11 @@ function deckDouble(deck) {
   if (out.length) gather(out, deck); else drawMore(deck, true);
 }
 // Gather: the deal played backward: last in order first, so the first in order goes in last, on top, and is dealt
-// first again. Returns when the last card starts back.
+// first again.
 function gather(cards, deck) {
   cards.sort((a, b) => b.order - a.order).forEach((s, i) => collect(s, deck, now() + i * GATHER.stagger));
   flights.on = true;
   stepFlights(0);
-  return (cards.length - 1) * GATHER.stagger;
 }
 // One card into a box, on top: from where it shows (mid-flip, mid-deal, or waiting at the open end), face as it is.
 function collect(s, deck, at, dur = GATHER.dur, say = '') {
@@ -3089,10 +3087,7 @@ function frame(now) {
     gpu.device.queue.submit([enc.finish()]);
   }
   if (trans.fade > 0) trans.fade = Math.max(0, trans.fade - dt / 0.8); // crossfade from the frame before a resolution change
-  // The page turning away keeps drawing its last gathered cards until they are down on its pile.
-  const landing = turn.on && sources.some((s) => s.region === turn.from && s.fly);
-  if (landing) freeze(sims[turn.from]);
-  if (!steps || landing) writeUniforms(gpu);
+  if (!steps) writeUniforms(gpu);
   // Draw only when the picture can change: the sim stepped (60 times a second, which also shows every video frame), something
   // drawn moved (the uniforms differ), or a texture it reads changed. On a display faster than the sim (120 Hz) the frames
   // between steps are otherwise the same picture, and drawing them doubled the GPU's work.
