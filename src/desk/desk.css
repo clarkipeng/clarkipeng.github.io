@@ -52,7 +52,7 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk .paper b { display: block; font-size: 16px; line-height: 1.35; font-weight: 600; }
 #desk .paper small { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; }
 /* Back of a flipped card: the WebGPU pass draws it; the DOM keeps the text and the real links (hit areas) in the same spots. */
-#desk .back { position: absolute; inset: 0; visibility: hidden; pointer-events: none; padding: 16px; font-size: 13px; line-height: 20px; }
+#desk .back { position: absolute; inset: 0; visibility: hidden; pointer-events: none; user-select: none; padding: 16px; font-size: 13px; line-height: 20px; }
 #desk .back p + p { margin-top: 8px; }
 #desk .region-label { display: none; position: absolute; font: 600 18px Inter, sans-serif; font-optical-sizing: none; letter-spacing: -0.01em; color: #1e2228; }
 #desk.phone .region-label { display: block; }
