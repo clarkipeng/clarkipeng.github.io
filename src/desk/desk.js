@@ -2647,6 +2647,7 @@ function createShared(g) {
   let dev = Math.min(devicePixelRatio || 1, 2);
   const cssH = view.phone ? view.docH : view.h;
   if (view.w * cssH * dev * dev > cap) dev = Math.sqrt(cap / (view.w * cssH));
+  dev = Math.min(dev, device.limits.maxTextureDimension2D / Math.max(view.w, cssH)); // a long phone page stays within the GPU's largest texture
   const CW = Math.round(view.w * dev), CH = Math.round(cssH * dev);
   dev = CW / view.w;
   view.dpr = dev;
