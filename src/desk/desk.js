@@ -3375,9 +3375,11 @@ function frame(now) {
   if (!running || dead) return;
   requestAnimationFrame(frame);
   if (document.hidden) { last = now; return; }
-  const dt = last ? Math.min(0.05, (now - last) / 1000) : STEP;
+  let dt = last ? Math.min(0.05, (now - last) / 1000) : STEP;
   if (last) { stats.intervals.push(now - last); if (stats.intervals.length > 240) stats.intervals.shift(); }
   last = now;
+  const j = window.__j;
+  if (j?.hold != null) { dt = Math.min(dt, j.hold); j.hold -= dt; if (!dt) return; } // test hook: time moves only as far as a test lets it (s)
   stepDecks(dt); // first: cards waiting on a deck follow it this frame
   stepFlights(dt);
   syncInert();
