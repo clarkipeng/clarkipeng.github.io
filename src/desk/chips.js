@@ -539,7 +539,9 @@ export function createWorld(P) {
   function maskBytes(b, out) {
     const m = new Float32Array(CN * CN);
     for (let ci = 0; ci < CN * CN; ci++) { let s = 0; for (let l = 0; l < CL; l++) s += b.d[ci * CL + l]; m[ci] = s / CL; }
-    const inside = (ci) => b.px.length && outlineR(b.S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0;
+    const S = b.S;
+    if (!S.inside) { S.inside = new Uint8Array(CN * CN); for (let ci = 0; ci < CN * CN; ci++) S.inside[ci] = outlineR(S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0 ? 1 : 0; } // the outline never changes
+    const inside = (ci) => S.inside[ci];
     for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
       const ci = j * CN + i;
       let v = m[ci];

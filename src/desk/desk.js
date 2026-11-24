@@ -183,6 +183,8 @@ const GROUPS = {
     ['chipLift', 0.8, 0, 2, 0.01, 'lifted rims glow'],
     ['chipShadow', 0.6, 0, 1.5, 0.01, 'shadow'],
     ['chipSoft', 0.5, 0, 2, 0.01, 'shadow softens per px of height'],
+    ['chipShadowH', 80, 20, 300, 1, 'shadow fades out by height px'],
+    ['chipRedraws', 3, 1, 12, 1, 'chip redraws per frame at most'],
     ['chipContact', 1, 0, 2, 0.01, 'contact shadow'],
     ['chipNibble', 0.6, 0, 1.5, 0.01, 'nibbled edges'],
     ['chipStain', 0.4, 0, 1, 0.01, 'slime stain'],

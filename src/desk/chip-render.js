@@ -23,7 +23,7 @@ struct Body {
   tile: vec4f,  // its tile's corner on the canvas (device px)
 };
 struct CU {
-  a: vec4f,  // device px per CSS px, tile size (device px), the shadow's margin past the rim (px)
+  a: vec4f,  // device px per CSS px, tile size (device px), the shadow's margin past the rim, the height it fades out by (px)
   l0: vec4f, // gold, browned rim, ripples, salt
   l1: vec4f, // translucent edges, oil sheen, shadow, nibbled edges
   l2: vec4f, // slime stain, light (x, y toward it), light contrast
@@ -139,7 +139,8 @@ struct VO { @builtin(position) pos: vec4f, @location(0) p: vec2f, @location(1) z
   let ws = min(1.0 + u.l4.x * h, u.a.z);
   let soft = smoothstep(-ws, ws, s) / (1.0 + h / 20.0);
   let room = smoothstep(-u.a.z, 0.0, s) * exp(-h / 30.0); // the room's light, blocked a little all round it
-  return vec4f(0.0, 0.0, 0.0, clamp(u.l1.z * (0.55 * u.l4.y * contact + 0.6 * soft + 0.2 * room * room), 0.0, 1.0));
+  let fade = 1.0 - smoothstep(0.5, 1.0, h / u.a.w);
+  return vec4f(0.0, 0.0, 0.0, clamp(u.l1.z * (0.55 * u.l4.y * contact + 0.6 * soft + 0.2 * room * room) * fade, 0.0, 1.0));
 }
 
 const GOLD0 = vec3f(0.90, 0.74, 0.30); const GOLD1 = vec3f(0.80, 0.55, 0.14); // pale and deep gold (linear)
@@ -262,42 +263,49 @@ export async function createChipRenderer(device) {
     assign(bodies);
     for (const id of drawn.keys()) if (!slots.has(id)) drawn.delete(id);
     const F = T.chipCam, M = 3 + T.chipSize * 0.3; // the camera's height, the shadow's margin past the rim
+    const HS = T.chipShadowH; // the shadow fades out by this height, so a chip high in the air needs no larger tile
     const boxes = bodies.map((b) => {
       const [rx0, ry0, rx1, ry1] = world.rect(b), [lo, hi] = world.zspan(b), m = F / Math.max(F - hi, F * 0.25), pad = 2;
       const r = [b.x[0] + (rx0 - b.x[0]) * m - x0 - pad, b.x[1] + (ry0 - b.x[1]) * m - pad, b.x[0] + (rx1 - b.x[0]) * m - x0 + pad, b.x[1] + (ry1 - b.x[1]) * m + pad];
       // The shadow: its box, widened by the margin, laid along the light.
       const R = world.qmat(b.q), [blo, bhi] = b.box, sr = [Infinity, Infinity, -Infinity, -Infinity];
       for (const X of [blo[0] - M, bhi[0] + M]) for (const Y of [blo[1] - M, bhi[1] + M]) for (const Z of [blo[2], bhi[2]]) {
-        const p = b.toWorld(R, [X, Y, Z]), h = Math.max(0, p[2]), sx = p[0] + LS[0] * h - x0, sy = p[1] + LS[1] * h;
+        const p = b.toWorld(R, [X, Y, Z]), h = Math.min(HS, Math.max(0, p[2])), sx = p[0] + LS[0] * h - x0, sy = p[1] + LS[1] * h;
         sr[0] = Math.min(sr[0], sx - pad); sr[1] = Math.min(sr[1], sy - pad); sr[2] = Math.max(sr[2], sx + pad); sr[3] = Math.max(sr[3], sy + pad);
       }
       const c = [Math.floor(Math.min(r[0], sr[0]) * dev), Math.floor(Math.min(r[1], sr[1]) * dev)];
-      return { b, lo, hi, c, size: Math.max(Math.ceil(Math.max(r[2], sr[2]) * dev) - c[0], Math.ceil(Math.max(r[3], sr[3]) * dev) - c[1]) };
+      return { b, lo, hi, c, o: b.toWorld(R, [0, 0, 0]), size: Math.max(Math.ceil(Math.max(r[2], sr[2]) * dev) - c[0], Math.ceil(Math.max(r[3], sr[3]) * dev) - c[1]) };
     });
-    // Every layer the size of the largest tile, in steps; it shrinks only once every chip lies still, so drops and
-    // landings never reallocate (and redraw) the whole pile.
+    // Every layer the size of the largest tile, in steps; it shrinks only once every chip is down, so drops never
+    // reallocate (and redraw) the whole pile.
     const need = Math.min(1024, Math.max(192, Math.ceil(Math.max(0, ...boxes.map((x) => x.size)) / 64) * 64));
     let all = `${x0} ${dev} ${look}` !== look0;
     look0 = `${x0} ${dev} ${look}`;
-    if (need > side || (need < side / 2 && bodies.every((b) => b.sleep))) {
+    if (need > side || (need < side / 2 && bodies.every((b) => b.sleep || b.landed))) {
       layers?.destroy(); depth?.destroy(); side = need; all = true;
       layers = device.createTexture({ size: [side, side, NCH], format: 'rgba8unorm-srgb', usage: 0x04 | 0x10 });
       depth = device.createTexture({ size: [side, side], format: 'depth16unorm', usage: 0x10 });
     }
     const L = Math.hypot(LS[0], LS[1]);
-    U.set([dev, side, M, 0, ...look.slice(0, 9), -LS[0] / L, -LS[1] / L, ...look.slice(9)]);
-    const moved = (b, d) => {
+    U.set([dev, side, M, HS, ...look.slice(0, 9), -LS[0] / L, -LS[1] / L, ...look.slice(9)]);
+    // How far its shape moved since it was drawn (px, its rim's travel included). Its shape's origin, not its centre of
+    // mass, which shifts as it is eaten.
+    const moved = ({ b, o }, d) => {
       const dq = Math.abs(b.q[0] * d.q[0] + b.q[1] * d.q[1] + b.q[2] * d.q[2] + b.q[3] * d.q[3]);
-      return Math.abs(b.x[0] - d.x[0]) + Math.abs(b.x[1] - d.x[1]) + Math.abs(b.x[2] - d.x[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq))) > 0.12;
+      return Math.abs(o[0] - d.o[0]) + Math.abs(o[1] - d.o[1]) + Math.abs(o[2] - d.o[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq)));
     };
-    // Eaten edges redraw at most two chips a frame, the longest waiting first, so a pile being eaten never lands in one frame.
-    const eaten = new Set(boxes.filter(({ b }) => { const d = drawn.get(b.id); return d && b.dirty && t - d.at > 0.3; })
-      .sort((p, q) => drawn.get(p.b.id).at - drawn.get(q.b.id).at).slice(0, 2).map(({ b }) => b));
-    for (const { b, lo, hi, c, size } of boxes) {
-      const d = drawn.get(b.id), sl = slots.get(b.id);
-      if (!all && d && !eaten.has(b) && !moved(b, d)) continue;
+    // Redraws a frame are capped, the longest waiting first, so many chips moving at once (or a pile being eaten) never
+    // land in one frame. A chip in motion is due at once and a little ahead of the queue; one that only creeps (sinking
+    // as it is eaten) or whose edge was eaten waits a few frames, since it changes by less than a px.
+    const fast = (b) => Math.hypot(...b.v) + Math.hypot(...b.w) * b.S.B > 6;
+    const due = (x) => { const { b } = x, d = drawn.get(b.id); return fast(b) ? moved(x, d) > 0.12 : t - d.at > (b.dirty ? 0.3 : 0.1) && (b.dirty || moved(x, d) > 0.12); };
+    const wait = (x) => drawn.get(x.b.id).at - (fast(x.b) ? 0.1 : 0);
+    const turn = new Set(all ? boxes : [...boxes.filter((x) => !drawn.has(x.b.id)), ...boxes.filter((x) => drawn.has(x.b.id) && due(x)).sort((p, q) => wait(p) - wait(q)).slice(0, T.chipRedraws)]);
+    for (const x of boxes) {
+      if (!turn.has(x)) continue;
+      const { b, lo, hi, c, o, size } = x, sl = slots.get(b.id);
       if (b.dirty) { device.queue.writeTexture({ texture: masks, origin: [0, 0, sl] }, world.maskBytes(b, bytes), { bytesPerRow: CN * 4 }, [CN, CN, 1]); b.dirty = false; }
-      drawn.set(b.id, { x: [...b.x], q: [...b.q], at: t, c, n: Math.min(size, side) });
+      drawn.set(b.id, { o, q: [...b.q], at: t, c, n: Math.min(size, side) });
       const R = world.qmat(b.q), S = b.S;
       U.set([R[0], R[1], R[2], b.x[0] - x0, R[3], R[4], R[5], b.x[1], R[6], R[7], R[8], b.x[2], ...b.c, sl,
         S.R, S.B, S.t, S.sag, S.bowl, S.ca, S.sa, S.tone, ...S.harm, ...S.warp, ...S.folds, lo, hi, b.cell, (S.seed % 997) * 0.137,
