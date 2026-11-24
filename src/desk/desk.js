@@ -1757,14 +1757,13 @@ function shove(p) {
     b.vx = b.vy = 0;
   }
 }
-// A shoved (or tidied) card slides out with an ease-out (chained cards a beat later) and lands, harder the further it went.
+// A shoved card slides out with an ease-out (chained cards a beat later) and just stops: only the card you drop bursts.
 function stepShove(s, dt) {
   const v = s.shove;
   v.t += dt;
   const e = easeOutQuart(clamp(v.t / v.dur));
   s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
-  if (v.tr !== undefined) s.rot = v.fr + (v.tr - v.fr) * e; // tidy turns it home too
-  if (v.t >= v.dur) { s.shove = null; land(s, clamp(0.15 + v.dist / (300 * view.k), 0.1, 0.7)); placeDom(s); }
+  if (v.t >= v.dur) { s.shove = null; if (s.rel < 0) s.rel = 0; placeDom(s); }
 }
 
 
