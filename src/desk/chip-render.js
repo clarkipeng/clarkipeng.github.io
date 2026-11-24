@@ -258,19 +258,24 @@ export async function createChipRenderer(device) {
       const c = [Math.floor(Math.min(r[0], sr[0]) * dev), Math.floor(Math.min(r[1], sr[1]) * dev)];
       return { b, r, sr, lo, hi, c, size: Math.max(Math.ceil(Math.max(r[2], sr[2]) * dev) - c[0], Math.ceil(Math.max(r[3], sr[3]) * dev) - c[1]) };
     });
-    // Every layer the size of the largest tile, in steps so a falling chip does not reallocate them each frame.
+    // Every layer the size of the largest tile, in steps; it shrinks only once every chip lies still, so drops and
+    // landings never reallocate (and redraw) the whole pile.
     const need = Math.min(1024, Math.max(192, Math.ceil(Math.max(0, ...boxes.map((x) => x.size)) / 64) * 64));
     let all = `${x0} ${dev} ${look}` !== look0;
     look0 = `${x0} ${dev} ${look}`;
-    if (need > side || need < side / 2) { layers?.destroy(); side = need; layers = device.createTexture({ size: [side, side, NCH], format: 'rgba8unorm-srgb', usage: 0x04 | 0x10 }); all = true; }
+    if (need > side || (need < side / 2 && bodies.every((b) => b.sleep))) { layers?.destroy(); side = need; layers = device.createTexture({ size: [side, side, NCH], format: 'rgba8unorm-srgb', usage: 0x04 | 0x10 }); all = true; }
     const L = Math.hypot(LS[0], LS[1]);
     U.set([dev, side, 0, 0, ...look, -LS[0] / L, -LS[1] / L, 0]);
+    const moved = (b, d) => {
+      const dq = Math.abs(b.q[0] * d.q[0] + b.q[1] * d.q[1] + b.q[2] * d.q[2] + b.q[3] * d.q[3]);
+      return Math.abs(b.x[0] - d.x[0]) + Math.abs(b.x[1] - d.x[1]) + Math.abs(b.x[2] - d.x[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq))) > 0.12;
+    };
+    // Eaten edges redraw at most two chips a frame, the longest waiting first, so a pile being eaten never lands in one frame.
+    const eaten = new Set(boxes.filter(({ b }) => { const d = drawn.get(b.id); return d && b.dirty && t - d.at > 0.3; })
+      .sort((p, q) => drawn.get(p.b.id).at - drawn.get(q.b.id).at).slice(0, 2).map(({ b }) => b));
     for (const { b, r, sr, lo, hi, c, size } of boxes) {
       const d = drawn.get(b.id), sl = slots.get(b.id);
-      if (!all && d && !(b.dirty && t - d.at > 0.15)) {
-        const dq = Math.abs(b.q[0] * d.q[0] + b.q[1] * d.q[1] + b.q[2] * d.q[2] + b.q[3] * d.q[3]);
-        if (Math.abs(b.x[0] - d.x[0]) + Math.abs(b.x[1] - d.x[1]) + Math.abs(b.x[2] - d.x[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq))) <= 0.12) continue;
-      }
+      if (!all && d && !eaten.has(b) && !moved(b, d)) continue;
       if (b.dirty) { device.queue.writeTexture({ texture: masks, origin: [0, 0, sl] }, world.maskBytes(b, bytes), { bytesPerRow: CN * 4 }, [CN, CN, 1]); b.dirty = false; }
       drawn.set(b.id, { x: [...b.x], q: [...b.q], at: t, c, n: Math.min(size, side) });
       const R = world.qmat(b.q), S = b.S;

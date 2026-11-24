@@ -3129,7 +3129,7 @@ function stepChips(dt) {
   }
   const moved = chips.step(dt, { pushers, bounds: [x0, 0, x0 + view.w, view.phone ? view.docH : view.h] });
   if (moved || chips.bodies.some((b) => b.dirty)) redraw = true;
-  if (clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.1; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
+  if (clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
 }
 // Over the cap the oldest chip is eaten faster; with every slot taken the click does nothing.
 function dropChip(x, y) {
