@@ -148,19 +148,19 @@ const GROUPS = {
   Tape: [
     ['tape', 1, 0, 1, 1, 'washi tape on the photo'],
     ['tapeColor', 'c9c3a4', 0, 0, 0, 'color'],
-    ['tapeOpacity', 0.5, 0, 1, 0.01, 'opacity'],
+    ['tapeOpacity', 0.66, 0, 1, 0.01, 'opacity'],
     ['tapeDye', 0.3, 0, 1, 0.01, 'tint on what shows through'],
     ['tapeFiber', 0.6, 0, 1.5, 0.01, 'fibers'],
     ['tapeTear', 2.4, 0, 5, 0.1, 'torn ends px'],
     ['tapeSheen', 0.25, 0, 1, 0.01, 'sheen'],
-    ['tapeLen', 100, 40, 200, 1, 'length px'],
-    ['tapeW', 30, 12, 60, 0.5, 'width px'],
-    ['tapeX', 0.05, -0.35, 0.35, 0.01, 'along the top edge (of the width)'],
-    ['tapeOn', 0.5, 0.2, 0.8, 0.01, 'share on the photo'],
-    ['tapeAngle', -8, -20, 20, 0.5, 'angle deg (on the photo)'],
-    ['tapeShade', 0.35, 0, 1, 0.01, 'lifted flap shadow on the photo'],
-    ['tapeLift', 20, -30, 80, 1, 'peeled: angle at the edge deg'],
-    ['tapeCurl', 70, 0, 200, 1, 'peeled: curl deg'],
+    ['tapeLen', 88, 40, 200, 1, 'length px'],
+    ['tapeW', 34, 12, 60, 0.5, 'width px'],
+    ['tapeX', 0.04, -0.4, 0.4, 0.01, 'along the top edge (of the width)'],
+    ['tapeOn', 0.5, 0.2, 0.8, 0.01, 'share of its length on the photo'],
+    ['tapeAngle', -8, -30, 30, 0.5, 'askew deg (off square to the edge)'],
+    ['tapeShade', 0.6, 0, 1, 0.01, 'lifted flap shadow on the photo'],
+    ['tapeLift', 10, -30, 80, 1, 'peeled: angle at the edge deg'],
+    ['tapeCurl', 140, 0, 240, 1, 'peeled: curl deg'],
     ['tapePeel', 0.5, 0.1, 0.63, 0.01, 'lets go at a height of (x flap)'],
     ['tapePop', 8, 0, 30, 0.5, 'snap on letting go rad/s'],
     ['tapeHz', 6, 2, 20, 0.5, 'spring Hz'],
@@ -317,7 +317,7 @@ struct G {
   ta: vec4f,  // card index, the view ray's step per unit z (b, see layTape)
   tb: vec4f,  // the strip's center, its axis (cos, sin)
   tc: vec4f,  // half length, half width, the flap's longest reach past the top edge, torn-end roughness
-  td: vec4f,  // the flap's angle at the edge (rad, + toward the front), its curl over its reach (rad), unused, sheen
+  td: vec4f,  // the flap's angle at the edge (rad, + toward the front), its curl over its reach (rad), the edge's height over the desk, sheen
   te: vec4f,  // color (linear), opacity
   tf: vec4f,  // light direction, fibers
   tg: vec4f,  // view direction, tint on what shows through
@@ -803,17 +803,19 @@ fn tapeUV(fl: vec2f) -> vec2f { let r = fl - g.tb.xy; return vec2f(dot(r, g.tb.z
 fn tapeCover(uv: vec2f, aa: f32) -> vec2f {
   let s = g.a.w; let q = uv / s; // CSS px on the strip
   let e = select(0.0, 1.0, uv.x < 0.0); let end = e * 41.0; // each torn end its own tear, at its own slant
-  let tear = (vnoise(vec2f(q.y * 0.21, end)) - 0.5) * 2.0 + (vnoise(vec2f(q.y * 0.8, end + 9.0)) - 0.5) * 0.9
-           + (vnoise(vec2f(q.y * 2.6, end + 23.0)) - 0.5) * 0.6 + (vnoise(vec2f(q.y * 7.0, end + 31.0)) - 0.5) * 0.35 + q.y * mix(0.16, -0.11, e) / max(g.tc.y / s, 1.0) * 2.0;
-  // Fibers: long, thin, wandering (contour lines of warped noise), and a mottled cloud of denser and thinner paper.
-  let w = q + 2.0 * vec2f(vnoise(q * 0.05 + 3.0), vnoise(q * 0.05 + 11.0));
-  let r1 = 1.0 - abs(2.0 * vnoise(w * vec2f(0.05, 0.42)) - 1.0); // long wisps, mostly along the strip
-  let r2 = 1.0 - abs(2.0 * vnoise(w * vec2f(0.12, 0.3) + 19.0) - 1.0); // shorter ones across it
-  let fib = 0.6 * smoothstep(0.955, 0.995, r1) + 0.35 * smoothstep(0.965, 0.997, r2);
+  let tear = (vnoise(vec2f(q.y * 0.18, end)) - 0.5) * 2.0 + (vnoise(vec2f(q.y * 0.7, end + 9.0)) - 0.5) * 0.8
+           + (vnoise(vec2f(q.y * 2.2, end + 23.0)) - 0.5) * 0.35 + q.y * mix(0.16, -0.11, e) / max(g.tc.y / s, 1.0) * 2.0;
+  // Fibers: long, thin, faintly wandering (contour lines of warped noise), and a mottled cloud of denser and thinner paper.
+  let w = q + vec2f(vnoise(q * 0.06 + 3.0), vnoise(q * 0.06 + 11.0));
+  let r1 = 1.0 - abs(2.0 * vnoise(w * vec2f(0.04, 0.45)) - 1.0); // long, mostly along the strip
+  let r2 = 1.0 - abs(2.0 * vnoise(w * vec2f(0.45, 0.06) + 19.0) - 1.0); // and across it
+  let fib = 0.45 * smoothstep(0.965, 0.995, r1) + 0.3 * smoothstep(0.97, 0.997, r2);
   let cloud = vnoise(q * 0.09 + 5.0) * 0.55 + vnoise(q * 0.27 + 2.0) * 0.3 + vnoise(q * 0.9 + 8.0) * 0.15;
-  let fray = vnoise(q * vec2f(0.9, 3.0) + end); // torn ends feather out along their fibers
-  let toEnd = g.tc.x / s + tear * g.tc.w / s - abs(q.x) + (fray - 0.5) * 1.6 * min(g.tc.w / s, 2.0) + fib * 0.8;
-  let a = smoothstep(-0.8, 0.5, toEnd * s / max(aa, 0.5 * s)) * (0.55 + 0.45 * smoothstep(-0.2, 1.6, toEnd)) * clamp(0.5 + (g.tc.y - abs(uv.y)) / aa, 0.0, 1.0);
+  // A torn end: a soft wavy line, with thinner paper just inside it.
+  let toEnd = g.tc.x / s + tear * g.tc.w / s - abs(q.x); // CSS px
+  let ew = max(aa / s, 0.6);
+  let body = smoothstep(-0.5 * ew, 0.5 * ew, toEnd);
+  let a = body * (0.6 + 0.4 * smoothstep(0.0, 1.8, toEnd)) * clamp(0.5 + (g.tc.y - abs(uv.y)) / aa, 0.0, 1.0);
   return vec2f(a * (0.8 + 0.35 * cloud), clamp(fib + 0.5 * (cloud - 0.5), 0.0, 1.0));
 }
 // Arc length along the flap (from the edge) of its point (n, z) (n: past the edge), or -1 off the flap.
@@ -823,10 +825,10 @@ fn flapSigma(n: f32, z: f32, t0: f32, k: f32) -> f32 {
   if (abs(k) > 1e-5) {
     var dl = atan2(k * n + sin(t0), cos(t0) - k * z) - t0;
     dl -= 6.2831853 * round(dl / 6.2831853);
-    if (dl * k < 0.0) { dl += 6.2831853 * sign(k); }
+    if (dl * k < 0.0 && abs(dl / k) > 0.25 * g.a.w) { dl += 6.2831853 * sign(k); }
     sg = dl / k;
   }
-  return select(-1.0, sg, sg >= 0.0 && sg <= g.tc.z);
+  return select(-1.0, max(sg, 0.0), sg >= -0.25 * g.a.w && sg <= g.tc.z); // a hair of slack at the edge: no gap
 }
 // Where the line (n0 + m z, z) meets the flap: (z, arc length) twice; arc length < 0: no crossing. The circle equation
 // times the curvature, so it stays exact as the flap flattens (a straight flap is the k -> 0 limit, one root).
@@ -841,19 +843,46 @@ fn flapHits(n0: f32, m: f32) -> vec4f {
   }
   return vec4f(z1, flapSigma(n0 + m * z1, z1, t0, k), z2, flapSigma(n0 + m * z2, z2, t0, k));
 }
-// One layer of tape over under: N its normal (card frame), lit: light reaching it, air: how far it is off any surface.
-fn tapeLayer(under: vec3f, cov: vec2f, N0: vec3f, lit: f32, air: f32) -> vec3f {
+// How much of the flap shades the point (x, n, z) of the card's frame (n: past the top edge at -hh) from the light, soft
+// by the flap's height over it; side: the face the light falls on.
+fn flapShadow(x: f32, n: f32, z: f32, hh: f32, side: f32) -> f32 {
+  let L = g.tf.xyz; let m = -L.y / L.z;
+  let hs = flapHits(n - m * z, m);
+  var sh = 0.0;
+  for (var i = 0; i < 2; i++) {
+    let zh = select(hs.z, hs.x, i == 0); let sg = select(hs.w, hs.y, i == 0);
+    let h = (zh - z) * side;
+    if (sg < 0.0 || h <= 0.0) { continue; }
+    // The strip's outline without its tear (a torn end's shadow is a soft blur), as dark as the paper is opaque.
+    let uv = tapeUV(vec2f(x + (zh - z) * L.x / L.z, -hh - sg)); let bl = 2.0 * g.a.w + 0.35 * h;
+    let cv = clamp(0.5 + (g.tc.x - abs(uv.x)) / bl, 0.0, 1.0) * clamp(0.5 + (g.tc.y - abs(uv.y)) / bl, 0.0, 1.0) * g.te.w;
+    sh = max(sh, cv * smoothstep(0.0, 3.0 * g.a.w, h) / (1.0 + h / (60.0 * g.a.w)));
+  }
+  return sh;
+}
+// One layer of tape over under: N its normal (card frame), lit: light reaching it, air: how far it is off any surface,
+// e: CSS px along the strip from the card's edge (+ past it).
+fn tapeLayer(under: vec3f, cov: vec2f, N0: vec3f, lit: f32, air: f32, e: f32) -> vec3f {
   let V = g.tg.xyz; let L = g.tf.xyz;
   let back = dot(N0, V) < 0.0; // its sticky side faces us
   let N = select(N0, -N0, back);
-  let dl = dot(N, L);
-  let Ct = g.te.rgb * select(1.0, 1.04, back) * (1.0 + 0.22 * cov.y * g.tf.w); // fibers scatter whiter
-  let shade = (0.55 + 0.45 * max(dl, 0.0)) / 0.9 + 0.35 * max(-dl, 0.0); // room light all round; light from behind shows through
+  let dl = dot(N, L); let nv = max(abs(dot(N, V)), 0.12);
+  let Ct = g.te.rgb * select(1.0, 1.05, back) * (1.0 + 0.22 * cov.y * g.tf.w); // fibers scatter whiter
+  // Lit from the front like the face of the card we see; lit from behind, the light comes through the paper (thinner between fibers).
+  var shade = 1.0 + 0.85 * (max(dl, 0.0) - L.z * select(-1.0, 1.0, V.z >= 0.0)) + 0.4 * max(-dl, 0.0) * (1.0 - 0.35 * cov.y * g.tf.w);
+  // Pressed down over the photo's edge: a faint ridge of light on the edge, a hair of shadow just past it.
+  let flat = 1.0 - air;
+  shade *= 1.0 + flat * (0.07 * exp(-pow((e + 0.3) / 0.55, 2.0)) - 0.05 * exp(-pow((e - 0.9) / 0.45, 2.0)));
+  shade *= 1.0 + air * 0.15 * exp(-pow(e / 0.6, 2.0)); // peeled: the crease where it leaves the edge catches the light
   let Hh = normalize(L + V);
-  let sp = pow(max(dot(N, Hh), 0.0), 14.0) * g.td.w * (0.5 + 0.7 * cov.y) * select(1.0, 1.5, back);
-  let a = clamp(cov.x * (g.te.w * (1.0 + 0.6 * (cov.y - 0.4) * g.tf.w) + 0.2 * air), 0.0, 1.0);
+  let sp = pow(max(dot(N, Hh), 0.0), 14.0) * g.td.w * (0.5 + 0.7 * cov.y) * select(1.0, 1.6, back) * 0.35
+         + pow(max(dot(N, Hh), 0.0), 70.0) * g.td.w * select(0.5, 1.0, back); // the glue side is glossier
+  // Seen at a slant (a bend turning away), the eye looks through more paper: denser, and a rim of sheen along the bend.
+  let a0 = clamp(cov.x * (g.te.w * (1.0 + 0.6 * (cov.y - 0.4) * g.tf.w) + 0.2 * air), 0.0, 0.98);
+  let a = 1.0 - pow(1.0 - a0, 1.0 / nv);
+  let rim = air * pow(1.0 - nv, 2.0) * 0.22;
   let thru = under * mix(vec3f(1.0), Ct / max(max(Ct.r, Ct.g), Ct.b), g.tg.w * cov.x);
-  return mix(thru, Ct * shade * lit, a) + vec3f(sp * lit * cov.x * 0.35);
+  return mix(thru, Ct * shade * lit, a) + vec3f((sp + rim) * lit * cov.x);
 }
 fn layTape(col0: vec3f, k: u32, p: vec2f) -> vec3f {
   let c = g.cards[k];
@@ -864,34 +893,32 @@ fn layTape(col0: vec3f, k: u32, p: vec2f) -> vec3f {
   let P0 = a3.xy / a3.z; // where the view ray meets the card's plane
   let b = g.ta.yzw;
   let D = vec2f(b.z * P0.x - b.x, b.z * P0.y - b.y); // and its step in the plane per unit z off it
-  let reach = g.tc.z;
-  if (length(P0 - g.tb.xy) > g.tc.x + g.tc.y + 3.0 * g.tc.w + reach * (2.0 + length(D))) { return col0; }
+  let reach = g.tc.z; let L = g.tf.xyz;
+  let zd = -g.td.z * select(-1.0, 1.0, g.tg.z >= 0.0); // the desk under the top edge
+  if (length(P0 - g.tb.xy) > g.tc.x + g.tc.y + 3.0 * g.tc.w + reach * (2.0 + length(D)) + abs(zd) * (length(D) + length(L.xy) / max(abs(L.z), 0.05))) { return col0; }
   let hh = c.geo.y;
   let side = select(-1.0, 1.0, g.tg.z >= 0.0); // the face we see: front (+1) or back
   let onCard = clamp(0.5 - boxSd(P0, c.geo.xy, c.geo.z) * c.misc.x / q, 0.0, 1.0);
   let n0 = -(P0.y + hh);
   var col = col0;
-  // A lifted flap's soft shadow on the face, sharper where the flap is close.
-  let L = g.tf.xyz;
+  // A lifted flap's soft shadow, on the face and on the desk around it, wider and fainter the higher the flap.
   var lit = 1.0;
-  if (onCard > 0.0 && L.z * side > 0.05 && g.th.x > 0.0) {
-    let hs = flapHits(n0, -L.y / L.z);
-    var sh = 0.0;
-    for (var i = 0; i < 2; i++) {
-      let z = select(hs.z, hs.x, i == 0); let sg = select(hs.w, hs.y, i == 0);
-      if (sg < 0.0 || z * side < 0.0) { continue; }
-      let cv = tapeCover(tapeUV(vec2f(P0.x + z * L.x / L.z, -hh - sg)), 0.6 * s + 0.45 * abs(z)).x;
-      sh = max(sh, cv * smoothstep(0.0, 4.0 * s, abs(z)));
+  if (g.th.x > 0.0 && g.th.y > 0.0 && abs(L.z) > 0.05) {
+    if (onCard > 0.0 && L.z * side > 0.0) { lit = 1.0 - g.th.x * flapShadow(P0.x, n0, 0.0, hh, side) * onCard; }
+    if (onCard < 1.0) {
+      let Pd = P0 + zd * D;
+      lit = mix(1.0 - g.th.x * flapShadow(Pd.x, -(Pd.y + hh), zd, hh, side), lit, onCard);
     }
-    lit = 1.0 - g.th.x * sh * onCard;
     col *= lit;
   }
   // Up to three layers, far to near: the half on the face (z = 0, seen only from the front) and the flap's crossings.
+  // The face's half ends exactly where the flap begins (no edge blur between them): one strip across the edge.
   var lz = array<f32, 3>(0.0, 1e9, 1e9);  // depth toward the eye
   var lf = array<vec2f, 3>(P0, vec2f(0.0), vec2f(0.0)); // flat place on the strip
   var lt = array<f32, 3>(0.0, 0.0, 0.0);  // bend angle
-  var lm = array<f32, 3>(select(0.0, onCard, side > 0.0 && n0 < 0.0), 0.0, 0.0); // visible share
-  var la = array<f32, 3>(0.0, 0.0, 0.0);  // off the surface
+  var lm = array<f32, 3>(select(0.0, 1.0, side > 0.0 && n0 < 0.0), 0.0, 0.0); // visible share
+  var le = array<f32, 3>(n0 / s, 0.0, 0.0); // CSS px from the edge
+  var ll = array<f32, 3>(lit, 1.0, 1.0);    // light reaching it (a curl shades itself)
   let hs = flapHits(n0, -D.y);
   let t0 = g.td.x; let kk = g.td.y / max(reach, 1e-3);
   for (var i = 0; i < 2; i++) {
@@ -901,16 +928,19 @@ fn layTape(col0: vec3f, k: u32, p: vec2f) -> vec3f {
     let ze = z + 0.6 * s * sign(th) * (1.0 - cos(th)) * 0.5; // folded around the edge: on the far side of the card's thickness
     lz[i + 1] = ze * side; lf[i + 1] = vec2f(P0.x + z * D.x, -hh - sg); lt[i + 1] = th;
     lm[i + 1] = select(1.0, 1.0 - onCard, ze * side < 0.0); // behind the card: hidden where the card is
-    la[i + 1] = g.th.y;
+    le[i + 1] = sg / s;
+    if (g.th.x > 0.0 && L.z * side > 0.0) { ll[i + 1] = 1.0 - g.th.x * flapShadow(lf[i + 1].x, n0 - z * D.y, z, hh, side); }
   }
   for (var i = 0; i < 2; i++) { for (var j = 0; j < 2 - i; j++) { if (lz[j] > lz[j + 1]) {
     let z = lz[j]; lz[j] = lz[j + 1]; lz[j + 1] = z; let f = lf[j]; lf[j] = lf[j + 1]; lf[j + 1] = f;
-    let t = lt[j]; lt[j] = lt[j + 1]; lt[j + 1] = t; let m = lm[j]; lm[j] = lm[j + 1]; lm[j + 1] = m; let w = la[j]; la[j] = la[j + 1]; la[j + 1] = w; } } }
+    let t = lt[j]; lt[j] = lt[j + 1]; lt[j + 1] = t; let m = lm[j]; lm[j] = lm[j + 1]; lm[j + 1] = m; let w = le[j]; le[j] = le[j + 1]; le[j + 1] = w; let o = ll[j]; ll[j] = ll[j + 1]; ll[j + 1] = o; } } }
   for (var i = 0; i < 3; i++) {
     if (lm[i] < 0.001) { continue; }
-    let cv = tapeCover(tapeUV(lf[i]), q);
+    let N = vec3f(0.0, sin(lt[i]), cos(lt[i]));
+    let cv = tapeCover(tapeUV(lf[i]), q / max(abs(dot(N, g.tg.xyz)), 0.15)); // edges as soft on screen where it turns away
     if (cv.x * lm[i] < 0.002) { continue; }
-    col = tapeLayer(col, vec2f(cv.x * lm[i], cv.y), vec3f(0.0, sin(lt[i]), cos(lt[i])), select(1.0, lit, lt[i] == 0.0 && lz[i] == 0.0), la[i]);
+    let on = lt[i] == 0.0 && lz[i] == 0.0; // the half on the face
+    col = tapeLayer(col, vec2f(cv.x * lm[i], cv.y), N, ll[i], select(g.th.y, 0.0, on), le[i]);
   }
   return col;
 }
@@ -3136,10 +3166,11 @@ const tapeCard = sources.find((s) => s.kind === 'polaroid');
 if (tapeCard) tapeCard.tape = { mode: 'stuck', th: 0, ph: 0, thV: 0, phV: 0, from: null, z: 0, vz: 0, az: 0, out: null, vo: 0, ao: 0 };
 // The strip on its card: center, axis, half sizes, and its longest reach past the top edge (the flap).
 function tapeShape(s) {
-  const k = s.k || 1, hl = (T.tapeLen * k) / 2, hw = (T.tapeW * k) / 2, a = (T.tapeAngle * Math.PI) / 180, c = Math.cos(a), n = Math.sin(a);
-  const cx = T.tapeX * s.w, cy = -s.h / 2 + (T.tapeOn - 0.5) * 2 * hw;
+  const k = s.k || 1, hl = (T.tapeLen * k) / 2, hw = (T.tapeW * k) / 2, a = ((90 + T.tapeAngle) * Math.PI) / 180, c = Math.cos(a), n = Math.sin(a);
+  const cx = T.tapeX * s.w, cy = -s.h / 2 + (T.tapeOn - 0.5) * 2 * hl * n; // across the edge, its length down the photo
   const far = Math.max(...[-1, 1].flatMap((i) => [-1, 1].map((j) => -(cy + i * hl * n + j * hw * c) - s.h / 2)));
-  return { cx, cy, c, n, hl, hw, reach: Math.max(1, far + 2.5 * T.tapeTear * k * Math.abs(n) + 1) };
+  // len: the flap's length down its middle (its bend and curl span this); reach: as far as any of it goes, torn fibers too.
+  return { cx, cy, c, n, hl, hw, len: Math.max(1, 2 * hl * n * (1 - T.tapeOn)), reach: Math.max(1, far + 2.5 * T.tapeTear * k * Math.abs(n) + 1) };
 }
 // The angle (rad, below flat) at which a flap of reach L, bent in one arc, comes down z onto the desk and lies flat there;
 // it reaches the desk from at most 2/pi of its reach up.
@@ -3153,7 +3184,7 @@ function stuckAngle(z, L) {
 function stepTape(dt) {
   const s = tapeCard, t = s?.tape;
   if (!t || dt <= 0) return;
-  const L = tapeShape(s).reach, z = Math.max(0, s.tapeZ || 0), ts = stuckAngle(z, L);
+  const L = tapeShape(s).len, z = Math.max(0, s.tapeZ || 0), ts = stuckAngle(z, L);
   const free = [(T.tapeLift * Math.PI) / 180, (T.tapeCurl * Math.PI) / 180];
   // The edge's motion (CSS px/s, smoothed): up off the desk, and out along the flap. A jump (a new layout) is no motion.
   const [x, y, r] = shown(s), a = (r * Math.PI) / 180, out = x * Math.sin(a) - y * Math.cos(a), f = 1 - Math.exp(-dt / 0.03);
@@ -3213,7 +3244,7 @@ function tapeUniform(d) {
   if (!s || !T.tape || !s.tapeB) return [-1, ...Array(TAPE_VEC4 * 4 - 1).fill(0)];
   const sh = tapeShape(s), t = s.tape, k = s.k || 1;
   return [s.id, ...s.tapeB, sh.cx * d, sh.cy * d, sh.c, sh.n, sh.hl * d, sh.hw * d, sh.reach * d, T.tapeTear * k * d,
-    t.th, t.ph, 0, T.tapeSheen, ...hexRGB(T.tapeColor).map(lin), T.tapeOpacity, ...s.tapeL, T.tapeFiber, ...s.tapeV, T.tapeDye,
+    t.th, (t.ph * sh.reach) / sh.len, Math.max(0, s.tapeZ || 0) * d, T.tapeSheen, ...hexRGB(T.tapeColor).map(lin), T.tapeOpacity, ...s.tapeL, T.tapeFiber, ...s.tapeV, T.tapeDye,
     T.tapeShade, t.mode === 'stuck' ? 0 : 1, 0, 0];
 }
 
