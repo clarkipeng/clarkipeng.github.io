@@ -183,6 +183,7 @@ const GROUPS = {
     ['chipCam', 1200, 400, 4000, 10, 'camera height px (nearer looks larger)'],
     ['chipE', 0.3, 0, 0.8, 0.01, 'bounce'],
     ['chipMu', 0.5, 0, 1.5, 0.01, 'friction'],
+    ['chipDamp', 16, 0, 40, 0.5, 'rocking dies at x/s on the desk'],
     ['chipEat', 1.2, 0.05, 3, 0.01, 'eating speed'],
     ['chipBand', 1, 0.2, 4, 0.05, 'eaten within px of the desk'],
     ['chipTaste', 1.5, 0.2, 6, 0.05, 'slime under it counts x'],

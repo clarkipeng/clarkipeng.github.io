@@ -12,6 +12,7 @@
 //     sdf,             // optional (io) => void: io[0..2] a body-frame point in; out, its outward normal (io[0..2]) and
 //                      //   signed distance to the surface (io[3]); other bodies' points hit this one only if it has one
 //     friction, bounce, // Coulomb mu; restitution
+//     damp,            // optional: angular velocity decays as exp(-damp t) while it touches something (0: none)
 //     x, q, v, w,      // position, rotation quaternion [w, x, y, z] (body to world), velocity, angular velocity
 //     render,          // optional (b) => void, after each advance it moved in: read world.pose(b, pos, rot)
 //   });
@@ -43,7 +44,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     const n = o.points.length / 3, I = o.inertia;
     const b = {
       points: Float64Array.from(o.points), n, bound: o.bound, sdf: o.sdf || null,
-      friction: o.friction ?? 0.5, bounce: o.bounce ?? 0.2, render: o.render || null,
+      friction: o.friction ?? 0.5, bounce: o.bounce ?? 0.2, keep: Math.exp(-(o.damp || 0) * h), render: o.render || null,
       im: 1 / o.mass, Ib: Float64Array.of(1 / I[0], 0, 0, 0, 1 / I[1], 0, 0, 0, 1 / I[2]), Iw: new Float64Array(9), R: new Float64Array(9),
       x: Float64Array.from(o.x || [0, 0, 0]), q: Float64Array.from(o.q || [1, 0, 0, 0]), v: null, w: null,
       px: new Float64Array(3), pq: new Float64Array(4),
@@ -112,6 +113,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     for (const b of bodies) {
       if (b.sleep) continue;
       const o = b.id * V, q = b.q;
+      if (b.touch) for (let i = 3; i < 6; i++) vel[o + i] *= b.keep;
       for (let i = 0; i < 3; i++) b.x[i] += (vel[o + i] + vel[o + 6 + i]) * h;
       const wx = (vel[o + 3] + vel[o + 9]) * h * 0.5, wy = (vel[o + 4] + vel[o + 10]) * h * 0.5, wz = (vel[o + 5] + vel[o + 11]) * h * 0.5;
       const a = q[0] - wx * q[1] - wy * q[2] - wz * q[3], x = q[1] + wx * q[0] + wy * q[3] - wz * q[2], y = q[2] - wx * q[3] + wy * q[0] + wz * q[1], z = q[3] + wx * q[2] - wy * q[1] + wz * q[0];

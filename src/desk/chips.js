@@ -108,7 +108,7 @@ class Body {
     this.c = c;
     const s = P.chipMass / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
     this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(lo[i] - c[i]), Math.abs(hi[i] - c[i])))) + this.cell, sdf: (io) => this.sdf(io),
-      mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.chipMu, bounce: P.chipE, x, q: from.q, v: from.v, w: from.w });
+      mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.chipMu, bounce: P.chipE, damp: P.chipDamp, x, q: from.q, v: from.v, w: from.w });
     for (const o of world.bodies) if (o !== this.p && o.sleep && Math.hypot(o.x[0] - x[0], o.x[1] - x[1], o.x[2] - x[2]) < o.bound + this.p.bound + 2) { o.sleep = false; o.still = 0; } // what rests on it follows it down
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
@@ -136,8 +136,9 @@ class Body {
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
 // ---------- the chips ----------
-// P: the tunables (desk.js T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipEat eating
-// speed, chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the oldest chip over the cap.
+// P: the tunables (desk.js T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipDamp how fast
+// it stops rocking, chipEat eating speed, chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the
+// oldest chip over the cap.
 // world: () => the shared sim (physics.js) they fall, tumble and are thrown in.
 export function createChips(P, world) {
   const bodies = [];
