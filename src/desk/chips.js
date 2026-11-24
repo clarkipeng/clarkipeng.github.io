@@ -14,7 +14,7 @@ export function rng(seed) {
 }
 // A chip's outline (radius by angle, a slightly oval, wavy rim) and its surface (a saddle, a little bowl, two slow warps,
 // one or two edges folded up).
-export function makeShape(seed, R, thick, curl, fold = 1, bend = 0.8) {
+function makeShape(seed, R, thick, curl, fold = 1, bend = 0.8) {
   const r = rng(seed), u = (a, b) => a + (b - a) * r(), ph = () => r() * 6.2832;
   const harm = [u(0.06, 0.13), ph(), u(0.03, 0.06), ph(), u(0.015, 0.035), ph(), u(0.008, 0.02), ph()];
   const sag = u(0.1, 0.16) * R * curl, bowl = u(-0.03, 0.03) * R * curl, ax = ph();
@@ -27,12 +27,12 @@ export function makeShape(seed, R, thick, curl, fold = 1, bend = 0.8) {
   const hb = sag + Math.abs(bowl) + warp[2] + warp[6] + folds[3] + folds[7] + thick;
   return { seed, R, B, t: thick, sag, bowl, ca: Math.cos(ax), sa: Math.sin(ax), harm, warp, folds, bend, tone, hb };
 }
-export function outlineR(S, x, y) {
+function outlineR(S, x, y) {
   const th = Math.atan2(y, x), h = S.harm;
   return S.R * (1 + h[0] * Math.cos(2 * th + h[1]) + h[2] * Math.cos(3 * th + h[3]) + h[4] * Math.cos(4 * th + h[5]) + h[6] * Math.cos(5 * th + h[7]));
 }
 // Height of the mid-surface over (x, y), and its slope.
-export function surf(S, x, y) {
+function surf(S, x, y) {
   const u = S.ca * x + S.sa * y, v = -S.sa * x + S.ca * y, R2 = S.R * S.R, w = S.warp;
   const p1 = w[0] * x + w[1] * y + w[3], p2 = w[4] * x + w[5] * y + w[7];
   const h = (S.sag * (u * u - v * v) + S.bowl * (x * x + y * y)) / R2 + w[2] * Math.sin(p1) + w[6] * Math.sin(p2);
@@ -575,5 +575,5 @@ export function createWorld(P) {
     for (const X of [lo[0], hi[0]]) for (const Y of [lo[1], hi[1]]) for (const Z of [lo[2] - pad, hi[2] + pad]) { const z = b.toWorld(R, [X, Y, Z])[2]; z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
     return [Math.max(0, z0), z1];
   }
-  return { bodies, drop, step, settle, maskBytes, rect, zspan, qmat, clear: () => { bodies.length = 0; } };
+  return { bodies, drop, step, maskBytes, rect, zspan, qmat, clear: () => { bodies.length = 0; } };
 }
