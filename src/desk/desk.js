@@ -130,6 +130,21 @@ const GROUPS = {
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
+  // Develop: each time the polaroid is dealt, its picture comes up out of blank instant film. Times after the first two are
+  // fractions of the develop time.
+  Develop: [
+    ['develop', 1, 0, 1, 1, 'the polaroid develops when dealt'],
+    ['devS', 5, 2, 10, 0.1, 'develop time s'],
+    ['devDelay', -0.2, -0.7, 1.5, 0.05, 'starts after landing s'],
+    ['devMilk', 'c3cbc2', 0, 0, 0, 'blank film'],
+    ['devStart', 0.06, 0, 0.4, 0.01, 'first shapes at'],
+    ['devClear', 0.8, 0.3, 1, 0.01, 'milk cleared by'],
+    ['devTone', 0.45, 0, 1, 0.01, 'highlights lag shadows by'],
+    ['devCool', 0.3, 0, 0.6, 0.01, 'warm dye lags cool by'],
+    ['devBlur', 5, 0, 16, 0.25, 'first shapes soft px'],
+    ['devUneven', 0.14, 0, 0.4, 0.01, 'uneven across the frame'],
+    ['devFlow', 0.08, 0, 0.3, 0.01, 'top lags bottom by'],
+  ],
   // Notebook: each page's folded corner, the way to the other page, and the page turn.
   Notebook: [
     ['cornerSize', 70, 40, 120, 1, 'corner size px'],
@@ -248,7 +263,7 @@ const lin = (c) => Math.pow(c / 255, 2.2);
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f, dv: vec4f };
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S); w: how far its shadow has faded (a box flying off)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
@@ -259,6 +274,7 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
+// dv: its picture developing (the polaroid): how far (0 blank film, 1 and up done), this develop's seed
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -285,6 +301,9 @@ struct G {
   lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
   la: vec4f,  // the corner label's atlas rect
   lt: vec4f,  // the turning page's label's atlas rect
+  dg: vec4f,  // developing: first shapes at, milk cleared by, warm dye lag, first shapes' blur (CSS px)
+  dh: vec4f,  // developing: blank film (linear rgb), unevenness
+  di: vec4f,  // developing: top lag, highlight lag, unused, unused
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
@@ -598,6 +617,38 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
   c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
   return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
 }
+// Instant film developing (the polaroid, each time it is dealt), in linear light. The picture's dyes rise under a milky
+// opacifier that clears: dark shapes show first and soft, then midtones, highlights last; the cyan dye arrives first and
+// the yellow last, so colors come up cool and warm as they fill in. A little uneven: mottled, and a beat later toward
+// the top, away from the reagent spread from the wide bottom strip. Done (t = 1) is exactly the picture.
+// cc: the picture here; mu: where in the picture (0 to 1); ms: the picture's size (CSS px); t: how far along.
+fn develop(c: Card, cc: vec3f, mu: vec2f, ms: vec2f, t: f32) -> vec3f {
+  let sp = mu * ms / 70.0 + vec2f(c.dv.y, 0.618 * c.dv.y); // blotches about 70 CSS px across, new ones each time
+  let n = 0.65 * vnoise(sp) + 0.35 * vnoise(sp * 2.4 + 31.0);
+  let lag = g.dh.w * n + g.di.x * (1.0 - mu.y);
+  let tl = clamp(t * (1.0 + g.dh.w + g.di.x) - lag, 0.0, 1.0); // this spot's own progress; everywhere 1 when t is
+  // The first shapes are soft: a disc blur that sharpens as the milk clears.
+  let r = g.dg.w * (1.0 - smoothstep(g.dg.x, 0.55 * g.dg.y, tl)); // sharp by the time the midtones are in
+  var img = cc;
+  if (r > 0.05) {
+    var sum = vec3f(0.0);
+    for (var i = 0; i < 16; i++) {
+      let a = f32(i) * 2.39996; let d = r * sqrt((f32(i) + 0.5) / 16.0);
+      let m = clamp(mu + vec2f(cos(a), sin(a)) * d / ms, vec2f(0.0), vec2f(1.0));
+      let u = mix(c.media.xy, c.media.zw, m);
+      sum += pow(textureSampleLevel(atlas, samp, mix(c.uv.xy, c.uv.zw, u), 0.0).rgb, vec3f(2.2));
+    }
+    img = sum / 16.0;
+  }
+  // Each spot's dyes come up by its tone (shadows first), each dye on its own clock (cyan, magenta, then yellow).
+  let tau = clamp(tl * (1.0 + g.di.y) - g.di.y * sqrt(dot(img, vec3f(0.2126, 0.7152, 0.0722))), 0.0, 1.0);
+  let x = clamp((vec3f(tau) - g.dg.x - vec3f(0.0, 0.5, 1.0) * g.dg.z) / max(1.0 - g.dg.x - g.dg.z, 0.05), vec3f(0.0), vec3f(1.0));
+  let f = 1.0 - (1.0 - x) * (1.0 - x); // a dye diffuses in fast, then slows
+  let dye = exp(log(max(img, vec3f(1e-3))) * f);
+  let veil = pow(1.0 - smoothstep(g.dg.x * 0.5, g.dg.y, tl), 1.5); // the opacifier clears, fastest early
+  let milk = g.dh.rgb * (1.0 + 0.025 * (n - 0.5)); // blank film, faintly uneven
+  return mix(dye, milk, veil);
+}
 // Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
 fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let q = p - c.flat.xy - o;
@@ -742,6 +793,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
       let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
       cc = printed(cc, gr, edge, color);
+      if (c.dv.x < 1.0) { cc = develop(c, cc, mu, ms, c.dv.x); }
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * (0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
@@ -1766,6 +1818,7 @@ function deal(s, deck, at, stack, [x, y, r]) {
   const i = deck.pile.indexOf(s);
   deck.pile.splice(i, 1); deck.dirty = true;
   s.fly = { out: true, at, x, y, r, deck, stack, i, ur: upright(s), pw: Math.min(s.w, s.h) };
+  if (s.kind === 'polaroid') s.dev = { t: now() - at - DRAW.dur, seed: Math.random() * 500 }; // blank film again, its clock from the landing
   Object.assign(s, { deck: null, flying: true, face: 1, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); // clicks go through to the box
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
@@ -2881,8 +2934,8 @@ async function buildAtlas(g) {
 
 // ---------- uniforms ----------
 
-// Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
+// Uniform layout: 28 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
+const G_HEAD = 28, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -2954,7 +3007,8 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
-    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * ((hz ? 1 : 0) + (over ? 2 : 0)) + looks(mv)];
+    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * ((hz ? 1 : 0) + (over ? 2 : 0)) + looks(mv),
+    s.dev && T.develop ? (s.dev.t - T.devDelay) / T.devS : 1, s.dev?.seed || 0, 0, 0];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
 }
@@ -3025,6 +3079,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     // the label sits on the flap at rest, its foot a few px from the fold
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
+    T.devStart, T.devClear, T.devCool, T.devBlur, ...hexRGB(T.devMilk).map(lin), T.devUneven, T.devFlow, T.devTone, 0, 0,
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
   g.device.queue.writeBuffer(g.uniform, 0, U);
@@ -3121,6 +3176,7 @@ function frame(now) {
   last = now;
   stepDecks(dt); // first: cards waiting on a deck follow it this frame
   stepFlights(dt);
+  for (const s of sources) if (s.dev && !window.__j?.freeze && (s.dev.t += dt) > T.devDelay + T.devS) s.dev = null; // developing, wherever it is
   syncInert();
   syncHover();
   stepCards(dt);
@@ -3276,7 +3332,7 @@ function tweakPanel() {
         input = document.createElement('select');
         for (const m of CHOICES[k]) input.append(new Option(m, m));
         input.oninput = () => set(k, input.value);
-      } else if (k === 'ink') {
+      } else if (typeof d === 'string') { // any other text value is a color
         input = Object.assign(document.createElement('input'), { type: 'color' });
         input.oninput = () => set(k, input.value.slice(1));
       } else if (step === 1 && max === 1) {
@@ -3325,7 +3381,7 @@ function tweakPanel() {
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
       if (el.type === 'checkbox') el.checked = !!T[k];
-      else el.value = k === 'ink' ? '#' + T[k] : T[k];
+      else el.value = el.type === 'color' ? '#' + T[k] : T[k];
       if (el.out) el.out.value = T[k];
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[page]} page)`;
