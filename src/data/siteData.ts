@@ -57,7 +57,7 @@ export const portfolioProjects = [
     ],
   },
   {
-    title: '4D Fruit Merging Game',
+    title: '4D Suika',
     description: 'A playable 4D puzzle game that makes impossible geometry feel tangible.',
     year: '2025',
     links: [
