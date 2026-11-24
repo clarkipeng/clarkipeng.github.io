@@ -156,6 +156,8 @@ const GROUPS = {
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
+    ['lidS', 0.25, 0.05, 1, 0.05, 'card box flap folds open or shut s'],
+    ['lidWait', 0.3, 0, 1.5, 0.05, 'flap waits before shutting s'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -1941,8 +1943,9 @@ function placeDecks() {
 // The box slides in from off screen right as a page's first beat (on load and when the page is turned to), on settle,
 // with its cards in it; they slide out of its open end, fan toward the page, and are dealt. Empty, it tucks off the
 // edge, its lid closing, and peeks out a little further while you drag a card; it comes out for a card dragged near it.
+// Holding cards it stays out, its lid shut until the pointer comes near.
 // A card dropped on it, or every card on the page (double-click or Enter), goes in through its open end, on top.
-const BOX = { close: 0.4, put: 0.3, enter: -10, keep: 28, near: 160, far: 220, peek: 20 }; // s: the lid closing, a put-back's slide in; CSS px: over the box (in, out), near it (in, out), the peek while dragging
+const BOX = { put: 0.3, enter: -10, keep: 28, near: 160, far: 220, peek: 20, hover: 48, unhover: 120 }; // s: a put-back's slide in; CSS px: over the box (in, out), near it (in, out), the peek while dragging, the pointer near it (in, out)
 const deckOut = (d, want) => (want === 'out' ? 0 : d.w + 40 * view.k); // x offset from its spot: in place, or off screen
 function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOutQuart : EASES.cubic) {
   const v = d.slide;
@@ -1954,7 +1957,7 @@ const tuckAt = (d) => DECK_SHOW * d.w - (lidOf(d).w + 34 * (view.cs || 1));
 function slideBox(d, to, dur, ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
 // The box out and open (a page you turn to, or one put away out of sight).
 function resetBox(d) {
-  Object.assign(d, { lidT: 0, outFor: 0, gatherAsk: false });
+  Object.assign(d, { lidT: 0, outFor: 0, gatherAsk: false, drawAsk: null });
   Object.assign(d.bx, { at: 0, from: 0, to: 0, t: 1 });
 }
 // A page's box comes in from off screen, `delay` s from now.
@@ -2205,21 +2208,23 @@ function stepDecks(dt) {
     moveDeck(d);
   }
 }
-// Out while it holds cards (or cards are on their way in or only just out), while it is wanted (a dragged card near or
-// over it, a gather asked for, keyboard focus), and for 0.4 s after; otherwise tucked, its lid closed.
+// Open while cards are on their way in or only just out, while it is wanted (the pointer or a dragged card near or over
+// it, a gather or a draw asked for, keyboard focus), and a moment after; otherwise its lid shut, and tucked if empty.
 function stepBox(d, dt) {
   const b = d.bx;
   if (b.t < 1) { b.t = Math.min(1, b.t + dt / b.dur); b.at = b.from + (b.to - b.from) * b.ease(b.t); }
-  let busy = d.pile.length > 0, drag = false;
+  d.hover = !!mouse && overDeck(d, mouse.x + cam.x, mouse.y, (d.hover ? BOX.unhover : BOX.hover) * view.k);
+  let busy = false, drag = false;
   for (const s of sources) {
     if (s.fly?.deck === d && (s.fly.in || flights.t < s.fly.at + 0.3 * DRAW.dur)) busy = true;
     if (s.dragging && s.region === d.region) drag = true;
   }
-  if (busy || d.near || d.welcome || d.gatherAsk || d.focused) d.outFor = 0.4; else d.outFor -= dt;
-  const out = d.outFor > 0 || arriving(d), to = out ? 0 : tuckAt(d) - (drag ? BOX.peek * view.k : 0);
+  if (busy || d.near || d.welcome || d.gatherAsk || d.drawAsk || d.focused || d.hover) d.outFor = T.lidWait; else d.outFor -= dt;
+  const open = d.outFor > 0 || arriving(d), out = open || d.pile.length > 0, to = out ? 0 : tuckAt(d) - (drag ? BOX.peek * view.k : 0);
   if (b.to !== to) slideBox(d, to, MOTION.respond, out || drag ? easeOutQuart : EASES.cubic);
-  d.lidT = clamp(d.lidT + (out ? -dt : dt) / BOX.close);
+  d.lidT = clamp(d.lidT + (open ? -dt : dt) / T.lidS);
   if (d.gatherAsk && b.t >= 1 && d.lidT === 0) { d.gatherAsk = false; boxGather(d); } // out and open: in they come
+  if (d.drawAsk && d.lidT === 0) { const all = d.drawAsk.all; d.drawAsk = null; drawMore(d, all); } // open: out it comes
 }
 const arriving = (d) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait > 0; // the box is still sliding in
 // The page's box: click deals the top card (to its slot, or the best free spot); double-click gathers every card on the
@@ -2242,6 +2247,7 @@ function drawMore(deck, all = false) {
   if (view.phone || turn.on) return;
   const take = all ? deck.pile.slice().reverse() : deck.pile.slice(-1); // top first
   if (!take.length) { deck.squashV = (deck.squashV || 0) + 8; return; } // empty: a tiny nudge
+  if (deck.lidT > 0) { deck.drawAsk = { all }; return; } // shut: it opens first
   take.forEach((s, i) => {
     const [x, y, r] = s.slot ? homeOf(s) : freeSlot(s);
     if (!s.slot) s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
