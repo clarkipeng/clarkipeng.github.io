@@ -1591,12 +1591,14 @@ function clearance(a, b, d, pad) {
   }
   return t;
 }
-// Boxes no shoved card may end on (desk px): the name, the tagline, and the links.
+// Boxes no shoved card may end on (desk px): the name, the tagline, the links, the corner and the card box.
 function keepOut(x0) {
   const p = 10 * view.k, out = [nameEl, taglineEl].map((el) => ({ l: el.offsetLeft, t: el.offsetTop, r: el.offsetLeft + el.offsetWidth, b: el.offsetTop + el.offsetHeight }));
   const lb = linksEl.getBoundingClientRect();
   out.push({ l: x0 + lb.left, t: lb.top, r: x0 + lb.right, b: lb.bottom });
   out.push(cornerBox(x0, 0));
+  const box = deckRect(Math.round(x0 / view.w));
+  if (box) out.push(box);
   return out.map((b) => ({ l: b.l - p, t: b.t - p, r: b.r + p, b: b.b + p }));
 }
 // The page corner's square, out to its hovered fold's tip, padded by p.
@@ -1604,10 +1606,11 @@ function cornerBox(x0, p = 10 * view.k) {
   const c = (2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * view.k / Math.SQRT2 + p;
   return { l: x0 + view.w - c, t: view.h - c, r: x0 + view.w, b: view.h };
 }
-// A card that comes to rest over the page corner slides off it (the corner would fold over it and take its pointer).
+// A card that comes to rest over the page corner or its box slides off it (the corner would fold over it and take its
+// pointer; the box would be hidden).
 function offCorner(s) {
   if (view.phone || s.kind === 'deck') return false;
-  const x0 = s.region * view.w, [tx, ty] = placeable(s, s.x, s.y, x0, [cornerBox(x0)]), dist = Math.hypot(tx - s.x, ty - s.y);
+  const x0 = s.region * view.w, [tx, ty] = placeable(s, s.x, s.y, x0, [cornerBox(x0), deckRect(s.region)].filter(Boolean)), dist = Math.hypot(tx - s.x, ty - s.y);
   if (dist < 0.5) return false;
   s.shove = { fx: s.x, fy: s.y, tx, ty, dist, t: 0, dur: MOTION.settle };
   return true;
@@ -2004,6 +2007,13 @@ function putBack(s, deck) {
 function overDeck(deck, x, y, pad = 0) {
   const r = obb(deck), ex = reach(r, [1, 0]) + pad, ey = reach(r, [0, 1]) + pad;
   return Math.abs(x - deck.x) < ex && Math.abs(y - deck.y) < ey;
+}
+// The box's part of the page as a rectangle (desk px), for keeping cards off it.
+function deckRect(region) {
+  const d = dealing && !view.phone && pageDeck(region);
+  if (!d) return null;
+  const r = obb(d), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]);
+  return { l: d.x - ex, r: d.x + ex, t: d.y - ey, b: d.y + ey };
 }
 // The best free spot for a card on its page: a grid search for the least overlap with the other cards (24 px apart),
 // the name, tagline, links, corner and box, inside a 32 px margin, then nearest the middle; its angle is a flip's Gaussian.
