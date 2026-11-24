@@ -117,10 +117,10 @@ const GROUPS = {
     ['curlShadowBlur', 0.8, 0, 2, 0.01, 'shadow blur per px of lift'],
     // Clicked, it folds up over its strip to show its back, like a top-bound pad's sheet: its edge lifts, then it rolls over.
     ['foldLift', 0.35, 0.05, 0.8, 0.01, 'share of the fold lifting its edge (then it rolls over: the top of its arc)'],
-    ['foldTop', 1.2, 0.2, 4, 0.05, 'fold speed over the top of its arc /s'],
-    ['foldG', 60, 5, 200, 1, 'gravity past the top of the arc /s2'],
-    ['foldBounce', 0.25, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
-    ['foldSlap', 5, 0.5, 10, 0.1, 'slap speed for a full burst /s'],
+    ['foldTop', 1.6, 0.2, 4, 0.05, 'fold speed over the top of its arc /s'],
+    ['foldG', 220, 5, 600, 1, 'gravity past the top of the arc /s2'],
+    ['foldBounce', 0.6, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
+    ['foldSlap', 2.5, 0.5, 4, 0.1, 'slap burst (a hard throw is 1.5)'],
     ['foldR', 5, 2, 16, 0.5, 'the fold\'s crease radius px'],
   ],
   // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
@@ -1644,7 +1644,7 @@ for (const s of sources) {
         s.suppressClick = true; s.dragging = false; s.released = true; s.el.classList.remove('dragging');
         const keep = performance.now() - lt > 80 ? 0 : 0.35; // a little momentum, none if held still before letting go
         // It lands when it touches down: a gentle drop gives a small burst, a throw a bigger one. It keeps its own angle.
-        s.dropS = 0.25 + (Math.hypot(s.vx, s.vy) * (keep ? 1 : 0)) / T.landThrow;
+        s.dropS = Math.min(0.25 + (Math.hypot(s.vx, s.vy) * (keep ? 1 : 0)) / T.landThrow, 1.5);
         s.vx *= keep; s.vy *= keep;
         if (!hit.matches(':hover')) setHover(s, false);
         next(); // a page change asked for during the drag goes now
@@ -1666,7 +1666,7 @@ function flip(s) {
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
   // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
-  if (hinged(s)) { s.slap = true; s.flipV = (s.flipTo ? 1 : -1) * Math.hypot(T.foldTop, Math.sqrt(T.foldG) * Math.abs(s.flip - T.foldLift)); } // flicked just hard enough to clear the top
+  s.slap = hinged(s); // the note is flicked just hard enough to clear the top of its arc
   s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay; the note stays stuck down
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces (the note: folded up or down)
     if (!gpu && s.flipTo) paintDomBack(s);
@@ -1707,13 +1707,12 @@ function stepCards(dt) {
     if (s === noteSrc) stepCurl(s, dt);
     if (s.flip !== s.flipTo) {
       if (hinged(s)) { // the note: over the top of its arc gravity takes it, and it slaps down (one burst) with a little bounce
-        const dir = s.flipTo ? 1 : -1;
-        s.flipV += T.foldG * (s.flip - T.foldLift) * dt;
-        if (dir * (s.flip - T.foldLift) < 0) s.flipV = dir * Math.max(dir * s.flipV, T.foldTop); // long frames lose speed: never stall short of the top
+        const dir = s.flipTo ? 1 : -1, g = T.foldG * (s.flip - T.foldLift); // gravity pushes it off the top of its arc
+        s.flipV = s.slap ? dir * Math.hypot(T.foldTop, Math.sqrt(T.foldG) * (s.flip - T.foldLift)) : s.flipV + g * dt; // until it lands its speed follows its height, so a long frame can't stall it
         s.flip += s.flipV * dt;
         if (dir * (s.flip - s.flipTo) >= 0) {
-          if (s.slap) { s.slap = false; land(s, Math.abs(s.flipV) / T.foldSlap); }
-          s.flipV *= -T.foldBounce; s.flip = Math.abs(s.flipV) < 0.3 ? s.flipTo : s.flipTo - dir * 1e-4;
+          if (s.slap) { s.slap = false; land(s, T.foldSlap); }
+          s.flipV *= -T.foldBounce; s.flip = Math.abs(s.flipV) < Math.abs(g) * dt ? s.flipTo : s.flipTo - dir * 1e-4; // at rest once a bounce can't outrun a frame of gravity
         }
       } else { const dur = s.flipTo ? T.flipS : T.flipS * MOTION.exit; s.flip = s.flipTo ? Math.min(1, s.flip + dt / dur) : Math.max(0, s.flip - dt / dur); } // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1);
@@ -1829,9 +1828,9 @@ function curlUniform(s, fr, dpr) {
   const u = unit(fr.mu), v = unit(fr.mv), nz = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
   if (nz[2] < 0.2) return out;
   const ez = fr.f * nz[2], roll = [0, 1, 2].map((i) => c.n[0] * u[i] + c.n[1] * v[i]); // the roll's direction in 3D
-  const o = [0.25 * T.curlShadowOff, T.curlShadowOff], cs = Math.cos(fr.th), sn = Math.sin(fr.th); // the shadow's offset per unit height, into the note's frame
+  const up = 1 + 2 * Math.abs(Math.sin(Math.PI * s.flip)), o = [0.25 * up * T.curlShadowOff, up * T.curlShadowOff], cs = Math.cos(fr.th), sn = Math.sin(fr.th); // the shadow's offset per unit height, into the note's frame
   out.splice(0, 20, c.n[0], c.n[1], c.d0 * dpr, c.kap / dpr, (fr.f * u[2]) / ez, (fr.f * v[2]) / ez, c.sr * dpr, s.id,
-    dot3(roll, LIGHT), dot3(nz, LIGHT), T.curlLight, T.curlAmbient, cs * o[0] + sn * o[1], -sn * o[0] + cs * o[1], T.curlShadowBlur, T.curlShadow,
+    dot3(roll, LIGHT), dot3(nz, LIGHT), T.curlLight, T.curlAmbient, cs * o[0] + sn * o[1], -sn * o[0] + cs * o[1], up * T.curlShadowBlur, T.curlShadow,
     T.curlUnderGrey, T.curlUnderLight, 0, c.back);
   return out;
 }
@@ -1878,7 +1877,7 @@ function stepKey(s, dt) {
 // around it out through its edge with a burst of speed (scaled by strength), the ink there gets a pulse of excitation,
 // and agents held for it (a page whose cards fly in) leave from its edge.
 function land(s, strength) {
-  const k = clamp(strength, 0.1, 1.5);
+  const k = Math.max(strength, 0.1);
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k) });
   if (s.rel < 0) s.rel = 0;
   if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; shove(s); } // a drawn card that had to land on something
