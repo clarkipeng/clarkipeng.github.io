@@ -1168,7 +1168,7 @@ function stepDoor(dt) {
   door.d += (restD(door.hover) * smooth(door.amt) - door.d) * e;
   door.a += ((door.hover && door.at ? leanTo(door.at.x, door.at.y) : Math.PI / 4) - door.a) * e;
 }
-const ARRIVE_AT = 0.25, DEAL_AT = 0.35; // the deck comes in this far into the turn, as the roll uncovers its spot, then deals; a turn by hand deals this far into its finish
+const ARRIVE_AT = 0.1, DEAL_AT = 0.35; // the box comes in this far into the turn, under the page until the roll uncovers its spot (about 0.3 of the turn), then deals; a turn by hand deals this far into its finish
 const busy = () => turn.on || flights.on || !!door.press;
 const turns = () => !!gpu && !reduced && !view.phone && sims.length > 1; // phones, reduced motion, and no WebGPU just show the other page
 // The page you see, frozen as it was last drawn, but without its corner: the turn draws that, from the same fold.
@@ -1197,8 +1197,8 @@ function startTurn(to, mode) {
   const r = linksEl.getBoundingClientRect(); // where the links show on the main page
   turn.links = { left: r.left + (to ? view.w : 0), top: r.top, width: r.width, height: r.height };
   Object.assign(door, { amt: 0, d: 0, a: Math.PI / 4 }); // the new page's corner lies flat until the turn is over
-  arriveDeck(to, mode === 'drag' ? 0 : ARRIVE_AT * T.turnS);
-  drawFrom(to, { delay: mode === 'drag' ? Infinity : ARRIVE_AT * T.turnS + MOTION.settle, hold: false });
+  arriveDeck(to, mode === 'drag' ? 0 : ARRIVE_AT * T.turnS, MOTION.respond);
+  drawFrom(to, { delay: mode === 'drag' ? Infinity : ARRIVE_AT * T.turnS + MOTION.respond, hold: false });
 }
 function stepTurn(dt) {
   if (!turn.on) return;
@@ -1315,7 +1315,7 @@ function go(region) {
   const out = sources.filter((s) => s.region === page && decked(s) && !s.inDeck && !s.dragging);
   if (!out.length) { startTurn(region, 'auto'); return; }
   // The turn starts while the last cards are still landing (the page keeps drawing them as it turns).
-  Object.assign(flights, { thenAt: gather(out, pageDeck(page)) + 0.5 * GATHER.dur, then: () => startTurn(region, 'auto') });
+  Object.assign(flights, { thenAt: gather(out, pageDeck(page)), then: () => startTurn(region, 'auto') }); // as the last card starts back
 }
 function next() {
   if (busy() || pendingNav == null) return;
@@ -1858,11 +1858,11 @@ function resetBox(d) {
   d.hit.setAttribute('aria-label', DECK_LABEL.pile);
 }
 // A page's deck comes in from off screen, `delay` s from now.
-function arriveDeck(region, delay) {
+function arriveDeck(region, delay, dur = MOTION.settle) {
   const d = pageDeck(region);
   if (!d || view.phone || !dealing) return;
   resetBox(d);
-  Object.assign(d.slide, { want: 'off', at: deckOut(d, 'off'), to: deckOut(d, 'off'), t: 1, wait: delay });
+  Object.assign(d.slide, { want: 'off', at: deckOut(d, 'off'), to: deckOut(d, 'off'), t: 1, wait: delay, arrive: dur });
   moveDeck(d);
 }
 // The deck's pile to its slide's offset, the box to its own, and the lid on its hinge (the box's open end): open, it lies
@@ -1887,7 +1887,7 @@ function stepDecks(dt) {
     if (!d.more || view.phone || !d.slide || !dealing) continue;
     const v = d.slide;
     if (v.wait > 0) v.wait -= dt;
-    else if (v.want === 'off') slideDeck(d, 'out', MOTION.settle, easeOutQuart); // the arrival
+    else if (v.want === 'off') slideDeck(d, 'out', v.arrive || MOTION.settle, easeOutQuart); // the arrival
     if (v.t < 1) v.t = Math.min(1, v.t + dt / v.dur);
     if (v.wait <= 0) v.at = v.from + (v.to - v.from) * v.ease(v.t);
     stepBox(d, dt);
