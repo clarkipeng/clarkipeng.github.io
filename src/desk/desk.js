@@ -1174,7 +1174,7 @@ function stepDoor(dt) {
   door.a += ((door.hover && door.at ? leanTo(door.at.x, door.at.y) : Math.PI / 4) - door.a) * e;
 }
 const ARRIVE_AT = 0.1, DEAL_AT = 0.35; // the box comes in this far into the turn, under the page until the roll uncovers its spot (about 0.3 of the turn), then deals; a turn by hand deals this far into its finish
-const busy = () => turn.on || flights.on || !!door.press;
+const busy = () => turn.on || flights.on || !!door.press || sources.some((s) => s.dragging); // a card in hand holds a page change until it is let go
 const turns = () => !!gpu && !reduced && !view.phone && sims.length > 1; // phones, reduced motion, and no WebGPU just show the other page
 // The page you see, frozen as it was last drawn, but without its corner: the turn draws that, from the same fold.
 function freeze(sm = sim) {
@@ -1442,6 +1442,7 @@ for (const s of sources) {
         s.dropS = 0.25 + (Math.hypot(s.vx, s.vy) * (keep ? 1 : 0)) / T.landThrow;
         s.vx *= keep; s.vy *= keep;
         if (!hit.matches(':hover')) setHover(s, false);
+        next(); // a page change asked for during the drag goes now
       }
     };
     hit.addEventListener('pointermove', move);
