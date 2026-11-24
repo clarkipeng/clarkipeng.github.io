@@ -121,7 +121,7 @@ const GROUPS = {
     ['foldLift', 0.08, 0.01, 0.3, 0.01, 'share of the flip its corner takes to flatten (then the sheet swings)'],
     ['foldTop', 1.2, 0.2, 4, 0.05, 'swing speed through upright /s'],
     ['foldG', 30, 5, 200, 1, 'gravity on the swinging sheet /s2'],
-    ['foldBounce', 0.35, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
+    ['foldBounce', 0.3, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
     ['foldSlap', 2.5, 0.5, 4, 0.1, 'slap burst (a hard throw is 1.5)'],
     ['foldR', 5, 2, 16, 0.5, 'its bend at the strip, radius px once over'],
   ],
