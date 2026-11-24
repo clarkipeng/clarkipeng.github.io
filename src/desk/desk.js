@@ -1086,10 +1086,10 @@ function animateFlatDoor() {
 }
 // A card dragged over its deck turns face down (s.down) and, with it, toward the pile's angle (s.downTo).
 const shownRot = (s) => (s.down > 0 && s.downTo != null ? lerp(s.rot, s.downTo, smooth(s.down)) : s.rot);
-// The DOM box (hit area and focus ring) follows the drawn card: the same lift scale, landing squash, and the camera's
-// perspective on a lifted card (cardUniform's f / (f - zh)); the 3D tilt is left out.
+// The DOM box (hit area and focus ring) follows the drawn card: a card is one size wherever it is (lifted or not), so
+// only the box's nudge squash scales it; the 3D tilt is left out.
 function placeDom(s) {
-  const lift = Math.max(s.lift, s.flyLift || 0), sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0)) * (1800 / (1800 - lift * T.lift));
+  const sc = 1 - 0.014 * (s.squash || 0);
   const r = shownRot(s) + (s.sway * 180) / Math.PI, k = s.k || 1, w = s.w / k, h = s.h / k; // design px, scaled to the card scale
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(s.x - w / 2).toFixed(2)}px, ${(s.y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${(sc * k).toFixed(4)})`;
@@ -1509,7 +1509,7 @@ function stepCards(dt) {
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
-    if (s.squash || s.squashV) { // landing settle: a small damped squash
+    if (s.squash || s.squashV) { // the box's nudge: a small damped squash
       s.squashV += (-260 * s.squash - 16 * s.squashV) * dt; s.squash += s.squashV * dt;
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
     }
@@ -1560,11 +1560,10 @@ function stepKey(s, dt) {
 // ---------- landing ----------
 // The one thing that happens whenever a card comes down onto the desk: the next sim step sends the agents under and just
 // around it out through its edge with a burst of speed (scaled by strength), the ink there gets a pulse of excitation,
-// the card settles with a small squash, and agents held for it (a page whose cards fly in) leave from its edge.
+// and agents held for it (a page whose cards fly in) leave from its edge.
 function land(s, strength) {
   const k = clamp(strength, 0.1, 1.5);
-  // The squash starts as a push (velocity), not a jump: it dips to about min(1, k) within ~75 ms and springs back.
-  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), squash: s.squash || 0, squashV: (s.squashV || 0) + 29 * Math.min(1, k) });
+  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k) });
   if (s.rel < 0) s.rel = 0;
   if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; shove(s); } // a drawn card that had to land on something
 }
@@ -2821,15 +2820,15 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const fa = s.flipA ?? (tn != null ? Math.PI * (1 - easeFlip(tn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56))), fc = Math.cos(fa); // a drawn card turns on its own clock; the box's lid by its angle
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
   const lift = Math.max(s.lift, (view.phone ? 0.3 : 0.9) * up, s.flyLift); // on a phone a flip lifts less, so the card stays inside the screen
-  const th = (shownRot(s) * Math.PI) / 180 + s.sway, sc = (1 + 0.035 * lift) * (1 - 0.014 * (s.squash || 0));
+  const th = (shownRot(s) * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular.
   const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1);
   if (s.flip > 0 || tn != null || s.flipA) mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe));
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
-  const f = 1800 * dpr, zh = lift * T.lift * dpr, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local
-  const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * (f - zh), f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * (f - zh), -mu[2], -mv[2], f - zh]);
+  const zh = lift * T.lift * dpr, f = 1800 * dpr - zh, cx = (s.x - originX) * dpr, cy = s.y * dpr; // page-local; the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
+  const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f]);
   const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2;
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
