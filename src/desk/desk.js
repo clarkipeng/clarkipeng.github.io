@@ -1184,7 +1184,7 @@ function show(region) {
   videoSrc = null; videoMix = 0;
   if (sim) sim.ready = false; // the page you leave stops; it is warmed again before it next shows
   page = region; if (gpu) sim = sims[page];
-  if (sim) sim.pre = false, sim.part = 0;
+  if (sim) sim.pre = false;
   cam.x = view.phone ? 0 : region * view.w; placePage(); setInert(region);
   tweakSync?.();
 }
@@ -1311,7 +1311,7 @@ function go(region) {
   if (busy()) { pendingNav = region; return; }
   if (region === page) return;
   if (!turns()) { jump(region); return; }
-  prewarm(region);
+  prewarm(region, 3); // a turn is coming: hurry
   const out = sources.filter((s) => s.region === page && decked(s) && !s.inDeck && !s.dragging);
   if (!out.length) { startTurn(region, 'auto'); return; }
   // The turn starts while the last cards are still landing (the page keeps drawing them as it turns).
@@ -1323,37 +1323,29 @@ function next() {
   pendingNav = null;
   go(n);
 }
-// Warming the other page: so a turn uncovers a page whose slime has its network, the hidden page steps once a frame
-// (after the frame's own work, outside the quality check's timing) with its cards counted at home, while you hover the
-// corner, during the gather, and once after the first visit's deal for a page never shown (its network forms from
-// scattered agents, about 3 s of sim time). Otherwise only the page you see steps.
+// Warming the other page: so a turn uncovers a page whose slime has its network, the hidden page steps (after the frame's
+// own work, outside the quality check's timing) with its cards counted at home: from the first frame (its network forms
+// from scattered agents, about 3 s of sim time), one step a frame, two while you hover the corner, three once a turn is
+// asked for; a page shown again catches up half a second. Otherwise only the page you see steps.
 const WARM = { fresh: 180, again: 30 };
-// parts: frames each warm-up step is spread over (see stepWarm): 4 for the warm-up after the first visit's deal, with no
-// hurry; 2 once a turn may be coming (the corner hovered, a gather), which also hurries one already under way.
-function prewarm(region, parts = 2) {
+function prewarm(region, rate = 2) {
   const sm = sims[region];
   if (!turns() || !sm || sm === sim || sm.ready) return;
-  if (sm.pre) { sm.nextParts = Math.min(sm.nextParts || parts, parts); return; }
-  Object.assign(sm, { pre: true, parts, nextParts: parts, part: 0, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
+  if (sm.pre) { sm.rate = Math.max(sm.rate, rate); return; }
+  Object.assign(sm, { pre: true, rate, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
 }
-// Each warm-up step is spread over sm.parts frames, its agents run in that many parts (the E pass with the first, the
-// diffuse with the last; nothing else touches the hidden page between them, so it is the same step), so the hidden page
-// adds a fraction of a step's GPU work to a frame instead of doubling the sim's.
 function stepWarm() {
   const sm = sims.find((x) => x !== sim && x.pre);
   if (!sm) return;
-  const part = sm.part || 0;
-  if (!part) sm.parts = sm.nextParts || sm.parts || 2; // a hurry starts with the next step
-  if (!part && sm.warm-- <= 0) { Object.assign(sm, { pre: false, ready: true, warm: 0 }); return; }
-  const WARM_PARTS = sm.parts;
-  atHome(sm.page, () => writeUniforms(gpu, sm));
-  const n = activeAgents(sm), from = Math.round((n * part) / WARM_PARTS), to = Math.round((n * (part + 1)) / WARM_PARTS);
-  U[2] = to; U[78] = from; // G.a.z, G.pq.z
-  gpu.device.queue.writeBuffer(gpu.uniform, 0, U);
-  const enc = gpu.device.createCommandEncoder();
-  encodeStep(enc, (part ? '' : 'e') + 'a' + (part === WARM_PARTS - 1 ? 'd' : ''), null, sm, to - from);
-  gpu.device.queue.submit([enc.finish()]);
-  sm.part = (part + 1) % WARM_PARTS;
+  const n = Math.min(sm.warm, sm.rate);
+  if (n > 0) {
+    atHome(sm.page, () => writeUniforms(gpu, sm));
+    const enc = gpu.device.createCommandEncoder();
+    for (let k = 0; k < n; k++) encodeStep(enc, 'ead', null, sm);
+    gpu.device.queue.submit([enc.finish()]);
+    sm.warm -= n;
+  }
+  if (sm.warm <= 0) Object.assign(sm, { pre: false, ready: true, warm: 0 });
 }
 // Without the turn the other page is just there, and the cards of the page you leave go home.
 function jump(region) {
@@ -2911,8 +2903,7 @@ function writeUniforms(g, sm = sim, hold = false) {
 
 // ---------- frame ----------
 
-// A step is the E pass, the agents, then the diffuse; a step spread over frames runs its agents in parts (see stepWarm), and
-// only the part with the diffuse completes it.
+// A step is the E pass, the agents, then the diffuse.
 function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents(sm)) {
   const s = sm, p = s.parity;
   const pass = enc.beginComputePass(ts ? { timestampWrites: { querySet: gpu.ts.set, beginningOfPassWriteIndex: 0 } } : undefined);
@@ -3328,7 +3319,7 @@ async function main() {
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
   setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
-  setTimeout(() => dead || prewarm(1 - page, 4), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // the other page, once
+  prewarm(1 - page, 1); // the other page grows in the background from the start
   requestAnimationFrame(frame);
   if (qs.has('tune')) tweakPanel();
   let timer = 0;
