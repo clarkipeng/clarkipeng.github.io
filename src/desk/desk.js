@@ -613,12 +613,13 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
   c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
   return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
 }
-// Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
-fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
-  let q = p - c.flat.xy - o;
+// Signed distance to card c's flat footprint at q from its center (sim px).
+fn footSd(c: Card, q: vec2f) -> f32 {
   let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / max(vec2f(c.bound.w, fract(c.obj.w * 0.25) * 4.0), vec2f(0.05)); // squashed as the card turns
-  return 1.0 - smoothstep(-b, b, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x);
+  return boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x;
 }
+// Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
+fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 { return 1.0 - smoothstep(-b, b, footSd(c, p - c.flat.xy - o)); }
 
 // Bare paper in the paper style: its grain (gr) and the vignette (vq).
 fn bare(gr: vec2f, vq: vec2f) -> vec3f {
@@ -711,9 +712,10 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   let lift = c.geo.w;
   let ow = u32(c.obj.w * 0.25);
   let face = (ow & 4u) != 0u; // a face of the flying box: no shadow of its own, lit by its turn
+  let base = (ow & 8u) != 0u; // the flying box's base: only its shadow, from its footprint, the contact one gone once it lifts
   if (distance(p, c.flat.xy) > c.bound.x + select((40.0 + 60.0 * lift) * s * max(g.u.x, 1.0), 0.0, face)) { return col; }
   let lp = toLocal(c, p);
-  let d = boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x;
+  let d = select(boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x, footSd(c, p - c.flat.xy), base);
   if (jmode && !face) {
     // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
     if (d > -1.0) {
@@ -725,11 +727,11 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
     }
   } else if (!face) {
     // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
-    let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - 0.6 * lift) * g.u.y;
+    let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - select(0.6, 1.0, base) * lift) * g.u.y;
     let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x) * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
     col *= (1.0 - near * (1.0 - c.imp.w)) * (1.0 - far * (1.0 - c.imp.w)); // imp.w: its shadow fades as it flies off
   }
-  if ((ow & 8u) != 0u) { return col; } // the flying box's base: only its shadow
+  if (base) { return col; }
   let cov = clamp(0.5 - d / q, 0.0, 1.0);
   if (cov > 0.0) {
     var un = lp / (2.0 * c.geo.xy) + 0.5;
@@ -1947,7 +1949,7 @@ function arriveDeck(region, delay, dur = MOTION.settle) {
 // settles, and eases home into its painting. Once off the frame it slides in again when its page next shows.
 const THROW = { fadeZ: 180, out: 0.6, limit: 6 }; // CSS px up by which its shadow has faded; s a box left at rest on screen after a turn takes to slide off; s at most in the air
 const easeOutCubic = (u) => 1 - (1 - u) ** 3;
-const POS = new Float64Array(3), ROT = new Float64Array(9);
+const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7);
 let phys = null; // the world and the turning page every thrown box shares
 // Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
 function throwWorld() {
@@ -1991,7 +1993,7 @@ function launch(d) {
   }
   Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
   P.L = L; world.time = 0; world.g = T.throwG * view.k;
-  curl.page(d.region * view.w, view.w, view.h); curl.sag = T.throwSag * view.k;
+  curl.page(d.region * view.w, view.w, view.h); curl.sag = T.throwSag * view.k; curl.prepare(0);
   L.sv = world.save();
   const lid = lidOf(d);
   for (const s of sources) if (s === d || s === lid || s.deck === d) s.carrier = d;
@@ -2023,7 +2025,7 @@ const quatMat = ([w, x, y, z]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z),
 const nlerp = (p, q, u) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
 // The thrown box this frame: its axes at rest on the desk (X, Y); where its middle is (C, CSS px, z above the desk) and
 // how it is turned from rest (M, row major); how far its perspective has eased in (w); how high its lowest point is
-// (low), how long its footprint is down the page, of its height (lv), and how far its shadow has faded.
+// over the paper under it (low); its shadow's footprint from above (foot: angle, half sizes), and how far it has faded.
 function poseThrow(d) {
   const L = d.launch, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   phys.world.pose(L.body, POS, ROT);
@@ -2031,9 +2033,17 @@ function poseThrow(d) {
   if (L.home) { const u = smooth(L.home.t / T.throwHome), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
   else if (L.out) C[0] += 1.2 * view.w * clamp(L.out.t / THROW.out) ** 3;
   const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
-  const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2, down = (i) => Math.abs(c * R[3 + i] - s * R[i]);
+  // Its shadow: the box seen from straight above, as the smallest rectangle along one of its edges that holds it.
+  const reach = (x, y) => (W * Math.abs(x * R[0] + y * R[3]) + H * Math.abs(x * R[1] + y * R[4]) + D * Math.abs(x * R[2] + y * R[5])) / 2;
+  let foot = null;
+  for (let i = 0; i < 3; i++) {
+    const l = Math.hypot(R[i], R[3 + i]), x = R[i] / l, y = R[3 + i] / l, f = l > 1e-3 && [Math.atan2(y, x), reach(x, y), reach(-y, x)];
+    if (f && (!foot || f[1] * f[2] < foot[1] * foot[2])) foot = f;
+  }
+  SURF[0] = C[0]; SURF[1] = C[1]; phys.curl.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
+  const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2 - SURF[0];
   C[2] = Math.min(C[2], 1200); // never up at the eye
-  L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, lv: clamp((W * down(0) + H * down(1) + D * down(2)) / H, 0.2, 1.3), fade: smooth(low / (THROW.fadeZ * view.k)) };
+  L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * view.k)) };
 }
 const launchPose = (d) => d.launch.P;
 // Off the frame: everything it could draw (it, its lid, as its eye sees them) is past an edge of its page.
@@ -3150,7 +3160,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
   const [fz, fv] = flipPath(s), lift = Math.max(s.lift, fz / T.lift, s.flyLift);
   let [sx, sy, sr] = shown(s);
-  const th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
+  let th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
   sx -= Math.sin(th) * fv; sy += Math.cos(th) * fv;
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular. The note's lower edge rises as it turns.
@@ -3160,11 +3170,11 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   let z = lift * T.lift, fade = 0, H = null, flags = hz ? 1 : 0;
   const looks = (m) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
-  let lv = looks(mv);
-  if (s.carrier === s) { // the flying box itself: only its shadow on the desk, under where it is (its faces are drawn on their own)
-    const P = launchPose(s);
+  let lv = looks(mv), shd = boxShadow(s, dpr, (s.w * dpr) / 2, (s.h * dpr) / 2).slice(0, 7);
+  if (s.carrier === s) { // the flying box itself: only its shadow on what is under it (its faces are drawn on their own)
+    const P = launchPose(s), [ang, fx, fy] = P.foot, u = (1 - P.w) * shd[1]; // from its base's place in the painting
     sx += P.C[0] - s.launch.x; sy += P.C[1] - s.launch.y; z += Math.max(0, P.low); fade = P.fade;
-    lv = P.lv; flags = 8; // its footprint along the page as it tumbles
+    th = ang; lv = 1; flags = 8; shd = [-u, u, fx * dpr, fy * dpr, ...shd.slice(4)];
   } else if (s.carrier) { // riding in it: seen by the box's eye
     const d = s.carrier, P = launchPose(d), i = d.pile.indexOf(s), a = (d.rot * Math.PI) / 180;
     if (i >= 0) { const inn = P.w * (2 + i * BOX_STEP + 3) * view.k; sx += Math.cos(a) * inn; sy += Math.sin(a) * inn; } // in all the way
@@ -3188,7 +3198,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
-    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * flags + lv];
+    ...shd, 4 * flags + lv];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
 }
