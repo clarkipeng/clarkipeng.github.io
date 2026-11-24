@@ -977,7 +977,7 @@ function layout() {
     // always relative to the same card; the back options only change what fits on it.
     const opts = { backTitle: T.backTitle, backTight: T.backTight };
     Object.assign(T, { backTitle: 1, backTight: 0 }); TS = 1;
-    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round(((s.slot?.w ?? s.baseW) * k) / c))]));
+    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c))])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
     Object.assign(T, opts); TS = Math.max(1, 12 / (TOK.fs * c)); view.cs = c;
     // The longest side (design px) scales with the desk like the layout, but never below the smallest at which every back fits.
     const fitsAt = (cp) => sources.every((s) => !capped(s) || !s.backEl || ((b) => backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
