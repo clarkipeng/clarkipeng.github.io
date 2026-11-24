@@ -1720,7 +1720,8 @@ function drawFrom(region, { delay = 0, hold = true } = {}) {
   if (hold) atHome(region, () => holdPage(sim)); // so each agent waits for the card that will land nearest it
   const t0 = now() + delay;
   cards.forEach((s, k) => deal(s, deck, t0 + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: t0 }, homeOf(s)));
-  topZ += cards.length; // the stack sits above everything, the first to be dealt on top
+  topZ += cards.length; // the stack, the first to be dealt on top
+  deck.z = ++topZ; // in the box, under its front until each slides out
   flights.on = true;
   stepFlights(0);
 }
@@ -1747,15 +1748,17 @@ function deal(s, deck, at, stack = null, [x, y, r] = [s.x, s.y, s.rot]) {
 // Each card sits PILE_STEP up and to the right of the one below it, so the pile's edges show along its left and bottom,
 // a stack with thickness, seen the way the box's walls are.
 const PILE_STEP = 1.4;
+// How far a waiting card is through its fan (0 to 1), and how far out of the box's open end (it slides out first).
+const fanOf = (k, t = flights.t) => { const f = k.stack, a = 1 - (1 - clamp((t - f.at - f.k * 0.03) / DRAW.fan)) ** 3; return [clamp((a - 0.4) / 0.6), clamp(a / 0.6)]; };
 function waitPose(k, t = flights.t) {
   const d = k.deck, [jx0, jy0, jr] = k.jit, f = k.stack, a0 = (d.rot * Math.PI) / 180, up = (k.h ?? d.pileN ?? 0) * PILE_STEP * view.k;
   const jx = jx0 + up * (Math.cos(a0) + Math.sin(a0)), jy = jy0 + up * (Math.sin(a0) - Math.cos(a0));
   if (!f || f.at == null) return [d.px + jx, d.y + jy, d.rot + k.ur + jr];
-  const { k: j, n } = f, a = 1 - (1 - clamp((t - f.at - j * 0.03) / DRAW.fan)) ** 3;
+  const { k: j, n } = f, [a, o] = fanOf(k, t), off = smooth(o) * ((d.w + k.pw) / 2 + 6 * view.k); // out beside the open end, as a card goes in
   const deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = d.pile.pw * view.cs, ph = d.pile.ph * view.cs; // the pile, upright
-  const ox = -0.62 * pw, oy = -0.18 * ph; // from the pivot (outer edge, a little low) to the pile's center
-  return [d.px + 0.62 * pw + ox * Math.cos(th) - oy * Math.sin(th) - (a * 30 * (n - j)) / n + jx,
-    d.y + 0.18 * ph + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + k.ur + deg + jr];
+  const ox = -0.62 * pw, oy = -0.18 * ph, bx = d.px - off * Math.cos(a0), by = d.y - off * Math.sin(a0); // from the pivot (outer edge, a little low) to the pile's center
+  return [bx + 0.62 * pw + ox * Math.cos(th) - oy * Math.sin(th) - (a * 30 * (n - j)) / n + jx,
+    by + 0.18 * ph + ox * Math.sin(th) + oy * Math.cos(th) + jy, d.rot + k.ur + deg + jr];
 }
 // A page's deck holds its cards that are not on the desk: every card of a page you do not see (its featured cards come
 // out as you turn to it), and those put back or never dealt.
@@ -1766,7 +1769,7 @@ function pileUp(region) {
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   for (const s of cards) { s.inDeck = true; s.pileZ ||= -s.order; } // never dealt: the first in order on top
   cards.forEach((s, k) => deal(s, deck, Infinity, { k, n: cards.length }));
-  topZ += cards.length;
+  topZ += cards.length; deck.z = ++topZ; // in the box
   for (const s of cards) { [s.x, s.y, s.rot] = waitPose(s.fly); placeDom(s); }
 }
 function stepFlights(dt) {
@@ -1780,6 +1783,7 @@ function stepFlights(dt) {
     if (k.box && flights.t - k.at >= k.dur) { busy = slideIn(s, k) || busy; placeDom(s); continue; } // lined up beside the box: in it goes
     const [wx, wy, wr] = k.box ? entryPose(k) : waitPose(k), u0 = clamp((flights.t - k.at) / (k.dur || DRAW.dur)), u = k.back ? 1 - u0 : u0, e = drawEase(clamp((u - 0.08) / 0.92));
     if (u0 > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top (or onto it)
+    else if (!k.up && !k.back && k.stack?.at != null && !k.out && fanOf(k)[1] >= 1) { k.out = true; s.z = k.deck.z + 0.6 + (k.stack.n - k.stack.k) * 1e-3; } // out of the box, over it
     Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * smooth((u - DRAW.rotA) / (DRAW.rotB - DRAW.rotA)),
       turn: (1 - (k.down || 0)) * smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA)), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
     if (k.back && u0 >= 1 && !k.box) { k.at = Infinity; [s.x, s.y, s.rot] = waitPose(k); } // back on the pile, no burst
@@ -1834,19 +1838,18 @@ function placeDecks() {
     if (s.slide.want === 'off') s.slide.want = 'out';
     const at = deckOut(s, s.slide.want);
     Object.assign(s.slide, { at, from: at, to: at, t: 1, wait: 0 }); // a new layout: where it was headed
-    s.mode ??= 'pile';
-    const bx = s.mode === 'box' && s.phase !== 'leaving' ? 0 : deckOut(s, 'off');
-    s.bx = { at: bx, from: bx, to: bx, t: 1, dur: 1, ease: easeOutQuart };
+    s.mode ??= 'pile'; s.lidT ??= 0;
+    s.bx = { at: 0, from: 0, to: 0, t: 1, dur: 1, ease: easeOutQuart }; // an empty box tucks again from here
     s.px = s.x = s.spot + s.slide.at;
   }
   for (const s of sources) if (s.kind === 'deck') { s.el.hidden = !dealing; s.gone = true; } // nothing to hold without the deal
 }
-// The pile slides in from off screen right as a page's first beat (on load and when the page is turned to), on settle.
-// The card box: when the last card leaves the pile, the box slides out to the same spot, lid open. A card dropped on it,
-// or every card on the page (double-click or Enter), goes in through its open end: it lines up beside the box, then slides
-// in under its front. Once they are all in, the lid closes over the opening and the box slides away off the edge, leaving
-// the cards as the pile again.
-const BOX = { close: 0.4, pause: 0.12, away: 0.45, inS: 0.26 }; // lid closing, a beat, the box leaving (s); a card sliding in (s)
+// The card box holds every card of its page that is not on the desk. It slides in from off screen right as a page's first
+// beat (on load and when the page is turned to), on settle, with its cards in it; they slide out of its open end, fan
+// toward the page, and are dealt. Empty, it tucks off the edge, its lid closing. A card dropped on it, or every card on
+// the page (double-click or Enter), goes in through its open end: it lines up beside the box, then slides in under its
+// front; the box stays out, holding them.
+const BOX = { close: 0.4, inS: 0.26 }; // the lid closing (s); a card sliding in (s)
 const deckOut = (d, want) => (want === 'out' ? 0 : d.w + 40 * view.k); // x offset from its spot: in place, or off screen
 function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOutQuart : EASES.cubic) {
   const v = d.slide;
@@ -1856,11 +1859,10 @@ function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOu
 // Tucked, only the box's open end and its label peek in at the edge (the lid closed over them).
 const tuckAt = (d) => DECK_SHOW * d.w - (lidOf(d).w + 34 * (view.cs || 1));
 function slideBox(d, to, dur, ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
-// The deck as a pile, the box off screen (a page you turn to, or one put away out of sight).
+// The box holding its cards, open (a page you turn to, or one put away out of sight).
 function resetBox(d) {
-  const off = deckOut(d, 'off');
   Object.assign(d, { mode: 'pile', phase: '', lidT: 0 });
-  Object.assign(d.bx, { at: off, from: off, to: off, t: 1 });
+  Object.assign(d.bx, { at: 0, from: 0, to: 0, t: 1 });
   d.hit.setAttribute('aria-label', DECK_LABEL.pile);
 }
 // A page's deck comes in from off screen, `delay` s from now.
@@ -1875,9 +1877,8 @@ function arriveDeck(region, delay) {
 // flat beside the box, inside up; closing, it turns over about the hinge (its free edge rising) onto the box's front.
 const LID_OPEN = 0.22 * Math.PI; // open, the lid stands up off the desk at about 40 degrees, the way a paper hinge springs back
 function moveDeck(d) {
-  d.px = d.spot + d.slide.at;
-  d.x = d.mode === 'box' ? d.spot + d.bx.at : d.px;
-  d.gone = d.mode !== 'box';
+  d.x = d.px = d.spot + d.slide.at + d.bx.at; // the arrival's slide, then the empty box's tuck
+  d.gone = false;
   placeDom(d);
   // Each card on the pile, bottom up, takes its height in it (a card on its way back aims for the top).
   const pile = sources.filter((s) => s.fly?.deck === d && !s.fly.back && s.fly.at > flights.t).sort((p, q) => p.z - q.z);
@@ -1909,11 +1910,10 @@ function stepBox(d, dt) {
   const held = mine.some((s) => s.fly.at === Infinity || (!s.fly.back && flights.t < s.fly.at + 0.3 * DRAW.dur)); // in it, or only just off it
   if (d.mode === 'pile') {
     if (held || coming || d.welcome || arriving(d)) return;
-    Object.assign(d, { mode: 'box', phase: 'open', lidT: 1, outFor: 0, z: ++topZ }); // the last card is away: the box slides in, tucked, lid closed
-    slideBox(d, tuckAt(d), MOTION.settle, easeOutQuart);
+    Object.assign(d, { mode: 'box', phase: 'open', outFor: 0 }); // the last card is away: the empty box tucks, its lid closing
     d.hit.setAttribute('aria-label', DECK_LABEL.box);
   } else if (d.phase === 'open') {
-    if (held && !coming && !d.welcome) { Object.assign(d, { phase: 'closing', pt: d.lidT * BOX.close }); return; } // everything is in: close up
+    if (held && !coming && !d.welcome) { resetBox(d); return; } // everything is in: the box stays out, holding them
     // Tucked unless it is wanted: a dragged card near it, cards on their way in, a gather asked for, keyboard focus. It
     // stays out 0.4 s after the last reason goes, then tucks back, its lid closing.
     if (d.near || d.welcome || coming || d.gatherAsk || d.focused) d.outFor = 0.4; else d.outFor -= dt;
@@ -1921,10 +1921,7 @@ function stepBox(d, dt) {
     if (b.to !== to) slideBox(d, to, MOTION.respond, out ? easeOutQuart : EASES.cubic);
     d.lidT = clamp(d.lidT + (out ? -dt : dt) / BOX.close);
     if (d.gatherAsk && b.t >= 1 && d.lidT === 0) { d.gatherAsk = false; boxGather(d); } // out and open: in they come
-  } else if (d.phase === 'closing') {
-    d.pt += dt; d.lidT = clamp(d.pt / BOX.close);
-    if (d.pt >= BOX.close + BOX.pause) { d.phase = 'leaving'; slideBox(d, deckOut(d, 'off'), BOX.away, EASES.cubic); }
-  } else if (d.phase === 'leaving' && b.t >= 1) resetBox(d); // the box is away: the cards it held are the pile
+  }
 }
 const arriving = (d) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait > 0; // the pile is still sliding in
 // The page deck: holds a page's cards that are not on the desk, as a squared pile on it. Click draws the top card (to its
@@ -1954,6 +1951,7 @@ function drawMore(deck, all = false) {
     s.inDeck = false; s.shoveOnLand = !all;
     deal(s, deck, now() + i * T.drawStagger, { k: i, n: take.length, at: now() }, [x, y, r]);
   });
+  deck.z = ++topZ; // they slide out from under its front
   flights.on = true;
   stepFlights(0);
 }
@@ -1980,7 +1978,7 @@ function gather(cards, deck) {
 }
 function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), pw: Math.min(s.w, s.h), down: s.down || 0, dur, box: deck.mode === 'box' && deck.phase === 'open', // down: already face down; box: it goes in through the box's open end
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), pw: Math.min(s.w, s.h), down: s.down || 0, dur, box: true, // down: already face down; box: it goes in through the box's open end
     jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
   Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0 });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
