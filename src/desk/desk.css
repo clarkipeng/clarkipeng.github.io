@@ -77,6 +77,10 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk.phone .door { display: none; }
 #desk .src.flying { pointer-events: none; } /* cards in a pile or in the air: clicks go through to the deck */
 #desk .src:is(.turning, .flying) .hit:focus-visible { outline-color: transparent; } /* the ring is flat: it shows only while the card lies flat */
+/* The note's ring is drawn along its curled outline (desk.js placeRing), in place of the flat outline, while WebGPU draws the curl. */
+#desk .curl-ring { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; fill: none; display: none; }
+#desk.gpu .note .hit:focus-visible { outline-color: transparent; }
+#desk.gpu .note:not(.turning, .flying):has(.hit:focus-visible) .curl-ring { display: block; stroke: var(--ink-deep); stroke-width: 2px; }
 #desk .live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } /* the box's announcements, for screen readers */
 #desk:not(.gpu) .deck[inert] { visibility: hidden; } /* the other page's deck reaches across the page edge */
 /* The back's links: the drawn text is the link; the DOM link is its hit area, with an ink wash on hover and the deep-ink focus ring. */

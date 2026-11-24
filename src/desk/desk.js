@@ -96,6 +96,22 @@ const GROUPS = {
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
+  // The sticky note's curl: held down only by its strip, its free bottom edge rolls up off the desk along a leaning line,
+  // so one bottom corner lifts most; hovering lifts it a little more, as if breathed on. Lifts are design px (they scale
+  // with the card).
+  'Sticky note': [
+    ['curlRest', 14, 0, 30, 0.5, 'corner lift at rest px'],
+    ['curlHover', 10, 0, 30, 0.5, 'more lift on hover px'],
+    ['curlReach', 0.4, 0.1, 0.85, 0.01, 'curl reach (of its height, at the corner)'],
+    ['curlTilt', 20, -45, 45, 1, 'curl axis lean deg (+: the right corner lifts most)'],
+    ['curlIn', 0.7, 0.05, 3, 0.05, 'hover lift s'],
+    ['curlOut', 1.2, 0.05, 4, 0.05, 'settle back s'],
+    ['curlRelax', 0.4, 0.05, 1, 0.01, 'flat by this far into a turn'],
+    ['curlLight', 2, 0, 3, 0.05, 'light on the bend'],
+    ['curlShadow', 1.5, 0, 3, 0.05, 'shadow under the lift'],
+    ['curlShadowOff', 0.5, 0, 1.5, 0.01, 'shadow offset per px of lift'],
+    ['curlShadowBlur', 0.5, 0, 2, 0.01, 'shadow blur per px of lift'],
+  ],
   // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
   // of speed, and releases any agents waiting for it (a page's network grows out of its cards when they fly in).
   Landing: [
@@ -259,6 +275,13 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
+// The sticky note's curl, in the note's frame (sim px, from its middle, y toward its free edge): past the line
+// dot(x, ln.xy) = ln.z its paper rises off its plane as (y / lt.z)^3 of the corner's height ln.w (ln.w = 0: flat), lt.z
+// being how far past that line the corner sits. cam: the camera seen from the note's frame (its xy over its height, 1 over
+// its height) and the note's card index. lt.xy: the light's change as the paper turns along the roll (premultiplied by its
+// strength). sh: the shadow's offset per unit of height (in the note's frame), its extra blur per unit of height, and the
+// lifted part's extra shadow.
+struct Curl { ln: vec4f, cam: vec4f, lt: vec4f, sh: vec4f };
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -285,6 +308,7 @@ struct G {
   lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
   la: vec4f,  // the corner label's atlas rect
   lt: vec4f,  // the turning page's label's atlas rect
+  nc: Curl,   // the sticky note's curl
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
@@ -598,11 +622,52 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
   c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
   return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
 }
-// Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
-fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
+// The note's rolled paper across the roll, y past its foot. Like real paper it leaves the desk without a crease and
+// bends hardest at its edge: its height is a cubic, whose bend grows from nothing at the foot. Past the corner (only rays
+// and shadows that miss the paper get there) it carries on along its tangent, so the height keeps rising everywhere.
+fn curlHeight(y: f32) -> f32 {
+  let H = g.nc.ln.w; let yc = g.nc.lt.z; let u = clamp(y / yc, 0.0, 1.0);
+  return H * u * u * u + max(y - yc, 0.0) * 3.0 * H / yc;
+}
+// There: its height, its arc from the foot (laid flat; 4-point Gauss-Legendre, the integrand is smooth), and its angle.
+fn curlProfile(y: f32) -> vec3f {
+  if (y <= 0.0) { return vec3f(0.0, y, 0.0); }
+  let k = 3.0 * g.nc.ln.w / g.nc.lt.z; let ym = min(y, g.nc.lt.z); let u = ym / g.nc.lt.z;
+  let gx = array<f32, 4>(0.0694318, 0.3300095, 0.6699905, 0.9305682); let gw = array<f32, 4>(0.1739274, 0.3260726, 0.3260726, 0.1739274);
+  var arc = 0.0;
+  for (var i = 0; i < 4; i++) { let su = k * u * u * gx[i] * gx[i]; arc += gw[i] * sqrt(1.0 + su * su); }
+  return vec3f(curlHeight(y), ym * arc + max(y - ym, 0.0) * sqrt(1.0 + k * k), atan(k * u * u));
+}
+// The point of the note's curled paper that a ray meets, given where the ray crosses the note's plane (x0) and how far it
+// moves across the plane per unit of height (v): that point's place on the flat paper, its height, and the paper's angle
+// there. The paper's height less the ray's falls as the ray climbs, so one height solves it: found by halving, up to the
+// corner's height (a ray that would meet the paper higher meets it past the paper's end).
+fn curlHit(x0: vec2f, v: vec2f) -> vec4f {
+  let n = g.nc.ln.xy; let y0 = dot(x0, n) - g.nc.ln.z; let vn = dot(v, n);
+  var lo = 0.0; var hi = g.nc.ln.w;
+  if (max(y0, y0 + vn * hi) <= 0.0) { return vec4f(x0, 0.0, 0.0); } // the ray never comes over the roll
+  for (var i = 0; i < 12; i++) {
+    let h = 0.5 * (lo + hi);
+    if (curlHeight(y0 + vn * h) > h) { lo = h; } else { hi = h; }
+  }
+  let h = 0.5 * (lo + hi); let y = y0 + vn * h; let pr = curlProfile(y);
+  return vec4f(x0 + v * h + n * (pr.y - y), pr.x, pr.z);
+}
+// The direction a rounded box's distance grows fastest at l.
+fn boxGrad(l: vec2f, half: vec2f, r: f32) -> vec2f {
+  let q = abs(l) - half + vec2f(r);
+  let sg = select(vec2f(-1.0), vec2f(1.0), l >= vec2f(0.0));
+  if (q.x > 0.0 && q.y > 0.0) { return normalize(q) * sg; }
+  return select(vec2f(0.0, sg.y), vec2f(sg.x, 0.0), q.x > q.y);
+}
+// Soft shadow of card c's footprint, offset by o and blurred by b (sim px), and how high the paper that casts it is. The
+// curled note's lifted paper casts from its height: further along the light and softer.
+fn shadow(c: Card, p: vec2f, o: vec2f, b: f32, curled: bool) -> vec2f {
   let q = p - c.flat.xy - o;
-  let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / max(vec2f(c.bound.w, fract(c.obj.w * 0.25) * 4.0), vec2f(0.05)); // squashed as the card turns
-  return 1.0 - smoothstep(-b, b, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x);
+  var l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / max(vec2f(c.bound.w, fract(c.obj.w * 0.25) * 4.0), vec2f(0.05)); // squashed as the card turns
+  var bb = b; var h = 0.0;
+  if (curled) { let r = curlHit(l, -g.nc.sh.xy); l = r.xy; h = r.z; bb += g.nc.sh.z * h; }
+  return vec2f(1.0 - smoothstep(-bb, bb, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x), h);
 }
 
 // Bare paper in the paper style: its grain (gr) and the vignette (vq).
@@ -695,7 +760,17 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   let c = g.cards[k];
   let lift = c.geo.w;
   if (distance(p, c.flat.xy) > c.bound.x + (40.0 + 60.0 * lift) * s * max(g.u.x, 1.0)) { return col; }
-  let lp = toLocal(c, p);
+  var lp = toLocal(c, p);
+  // The curled note: where the view ray meets its rolled paper (seen from its own camera), that paper's place on the note,
+  // and its angle on the roll; the paper's edge looks finer on screen where the roll foreshortens it.
+  let curled = f32(k) == g.nc.cam.w && g.nc.ln.w > 0.0;
+  var th = 0.0; var aa = 1.0;
+  if (curled) {
+    let r = curlHit(lp, g.nc.cam.xy - lp * g.nc.cam.z);
+    lp = r.xy; th = r.w;
+    let n = g.nc.ln.xy; let gd = boxGrad(lp, c.geo.xy, c.geo.z);
+    aa = length(vec2f(dot(gd, n) * cos(th), dot(gd, vec2f(-n.y, n.x))));
+  }
   let d = boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x;
   if (jmode) {
     // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
@@ -703,16 +778,20 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       let dd = max(d, 0.0) / s;
       let contact = (exp(-dd / 1.1) * (0.13 + 0.45 * localInk) + exp(-dd / (3.0 + 6.0 * localInk)) * (0.04 + 0.3 * localInk)) * (1.0 - min(lift * 2.5, 1.0));
       var ls = 0.0;
-      if (lift > 0.001) { let b = (2.0 + 20.0 * lift) * s; ls = shadow(c, p, vec2f(0.35, 1.0) * c.misc.w * 1.3, b) * 0.24 * lift; }
+      if (lift > 0.001) { let b = (2.0 + 20.0 * lift) * s; ls = shadow(c, p, vec2f(0.35, 1.0) * c.misc.w * 1.3, b, curled).x * 0.24 * lift; }
       col *= (1.0 - contact * (1.0 - c.imp.w)) * (1.0 - ls * (1.0 - c.imp.w));
     }
   } else {
-    // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
-    let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - 0.6 * lift) * g.u.y;
-    let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x) * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
+    // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts. Under the
+    // curl the contact line gives way where the paper leaves the desk, and the lifted paper's shadow deepens a little.
+    let ns = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x, curled);
+    let fs = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x, curled);
+    let up = 1.0 - exp(-ns.y / (1.5 * s)); // how far the paper casting it has left the desk
+    let near = ns.x * mix(0.09 + 0.08 * conc + c.obj.y, 0.16 * g.nc.sh.w, up) * (1.0 - 0.6 * lift) * g.u.y;
+    let far = fs.x * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
     col *= (1.0 - near * (1.0 - c.imp.w)) * (1.0 - far * (1.0 - c.imp.w)); // imp.w: its shadow fades as it flies off
   }
-  let cov = clamp(0.5 - d / q, 0.0, 1.0);
+  let cov = clamp(0.5 - d * aa / q, 0.0, 1.0);
   if (cov > 0.0) {
     var un = lp / (2.0 * c.geo.xy) + 0.5;
     let back = c.bound.y < 0.0;
@@ -744,6 +823,10 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       cc = printed(cc, gr, edge, color);
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * (0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
+    if (curled) { // the rolled paper turns toward or away from the light; light past what yellow paper can show goes toward white
+      cc *= 1.0 - sin(th) * g.nc.lt.x + (cos(th) - 1.0) * g.nc.lt.y;
+      cc = mix(cc, vec3f(1.0), clamp(max(cc.r, max(cc.g, cc.b)) - 1.0, 0.0, 1.0));
+    }
     if (jmode) {
       // J: ink runs under the card and shows through as a light stain, soaking in harder along the border's fibers;
       // over captions it stays faint so the text reads. A lifted card is above the ink and comes away clean.
@@ -893,8 +976,12 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
     landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0,
+    curl: T.curlRest, curlV: 0, // the note's curl: how high its corner lifts (CSS px at its desk size), and how fast it is changing
   };
 });
+// The note's focus ring follows its curled outline (a drawn path; CSS outlines are flat rectangles).
+const noteSrc = sources.find((s) => s.kind === 'note');
+if (noteSrc) noteSrc.el.insertAdjacentHTML('beforeend', '<svg class="curl-ring" aria-hidden="true"><path/></svg>');
 
 let view = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, docH: innerHeight, dpr: 1 };
 let nameBox = null; // CSS px: { x, baseline, size }
@@ -1073,6 +1160,7 @@ function layout() {
     if (!gpu && s.flipTo) paintDomBack(s); // the still fallback's open backs follow the new size
     placeDom(s);
   }
+  if (noteSrc) placeRing(noteSrc);
 }
 
 // The corner's DOM: its hit area and focus ring (a triangle over the fold, hovered or not), and without WebGPU the fold
@@ -1521,6 +1609,7 @@ function stepCards(dt) {
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
+    if (s === noteSrc) stepCurl(s, dt);
     if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1);
@@ -1545,6 +1634,83 @@ function stepCards(dt) {
   }
 }
 
+
+// ---------- the sticky note's curl ----------
+// Held down only by its strip, the note's free edge rolls up off the desk past a line that leans (T.curlTilt),
+// so one bottom corner lifts most and the lift eases off along the edge; hovering lifts it a little more, as if breathed
+// on. The lift follows a critically damped spring (solved exactly, so any frame time is stable): it eases in and out and
+// never overshoots. The paper relaxes flat as it turns over (in a flip, into its box, being dealt), so a note lying back
+// up, or in its box, is flat.
+function stepCurl(s, dt) {
+  const want = T.curlRest + (s.hoverOn && !reduced ? T.curlHover : 0), w = 5 / (want > s.curl ? T.curlIn : T.curlOut);
+  const e = s.curl - want, a = s.curlV + w * e, x = Math.exp(-w * dt);
+  s.curl = want + (e + a * dt) * x; s.curlV = (s.curlV - w * a * dt) * x;
+  const amt = curlLift(s);
+  if (Math.abs(amt - (s.ringAt ?? -1)) > 0.02) placeRing(s);
+}
+// How high the note's corner lifts now (CSS px; the curl is in design px, scaled with the card).
+const curlLift = (s) => s.curl * (1 - smooth(s.face / T.curlRelax)) * (s.k || 1);
+// The paper's arc from the foot to y across the roll, for a curl rising H (y / yc)^3: the shader's curlProfile.
+const GL4 = [[0.0694318, 0.1739274], [0.3300095, 0.3260726], [0.6699905, 0.3260726], [0.9305682, 0.1739274]];
+function curlArc(H, yc, y) {
+  const k = (3 * H) / yc, ym = Math.min(y, yc), u = ym / yc;
+  return ym * GL4.reduce((a, [x, w]) => a + w * Math.hypot(1, k * u * u * x * x), 0) + Math.max(y - ym, 0) * Math.hypot(1, k);
+}
+// The curl's shape now, in the note's frame (CSS px from its middle, y toward its free edge): the roll's direction n, its
+// foot (the line dot(x, n) = d0, never into the strip), the corner's height H and how far past the foot the corner sits
+// across the roll, yc; null while it lies flat. The corner's paper, L past the foot laid flat, rolls up and in: yc is where
+// that much arc ends. H stays under 0.8 L, so the paper never stands up or rolls back over itself.
+function noteCurl(s) {
+  const lift = curlLift(s);
+  if (!(lift > 0.05)) return null;
+  const a = (T.curlTilt * Math.PI) / 180, n = [Math.sin(a), Math.cos(a)], hw = s.w / 2, hh = s.h / 2;
+  const corner = n[0] * (a < 0 ? -hw : hw) + n[1] * hh; // the corner that lifts most, along n
+  const d0 = Math.max(corner - T.curlReach * s.h, Math.abs(n[0]) * hw + n[1] * (STRIP * (s.k || 1) - hh)), L = corner - d0;
+  const H = Math.min(lift, 0.8 * L);
+  let lo = 0, hi = L; // the arc to yc grows with yc
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (curlArc(H, mid, mid) < L) lo = mid; else hi = mid; }
+  return { n, d0, H, yc: hi };
+}
+// A point of the note's frame (CSS px) lifted onto its curl and seen from its camera (1800 CSS px above its middle): the
+// paper t past the foot (laid flat) lands where the curl's arc reaches t.
+function curlPoint(c, [x, y]) {
+  const t = x * c.n[0] + y * c.n[1] - c.d0;
+  if (t <= 0) return [x, y];
+  let lo = 0, hi = t;
+  for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (curlArc(c.H, c.yc, mid) < t) lo = mid; else hi = mid; }
+  const u = Math.min(lo / c.yc, 1), h = c.H * u * u * u + (Math.max(lo - c.yc, 0) * 3 * c.H) / c.yc, k = 1800 / (1800 - h);
+  return [(x + c.n[0] * (lo - t)) * k, (y + c.n[1] * (lo - t)) * k];
+}
+// The note's focus ring, as CSS would draw it (3 px out, 2 px wide, corners rounded with the card's), each point carried
+// onto the curl: in the note's own design px, under its transform like the card's outline.
+function placeRing(s) {
+  s.ringAt = curlLift(s);
+  const c = noteCurl(s), k = s.k || 1, w = s.w / k, h = s.h / k, o = 4, r = 7, pts = [];
+  const seg = (ax, ay, bx, by) => { const m = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 5)); for (let i = 0; i < m; i++) pts.push([ax + ((bx - ax) * i) / m, ay + ((by - ay) * i) / m]); };
+  const arc = (cx, cy, a0) => { for (let i = 0; i < 6; i++) { const a = a0 + (i / 6) * (Math.PI / 2); pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } };
+  const [x0, y0, x1, y1] = [-o, -o, w + o, h + o];
+  seg(x0 + r, y0, x1 - r, y0); arc(x1 - r, y0 + r, -Math.PI / 2); seg(x1, y0 + r, x1, y1 - r); arc(x1 - r, y1 - r, 0);
+  seg(x1 - r, y1, x0 + r, y1); arc(x0 + r, y1 - r, Math.PI / 2); seg(x0, y1 - r, x0, y0 + r); arc(x0 + r, y0 + r, Math.PI);
+  const at = (p) => (c ? curlPoint(c, [(p[0] - w / 2) * k, (p[1] - h / 2) * k]).map((v, i) => v / k + (i ? h : w) / 2) : p);
+  const svg = s.el.querySelector('.curl-ring');
+  for (const [a, v] of [['width', w], ['height', h]]) svg.setAttribute(a, v);
+  svg.firstChild.setAttribute('d', 'M' + pts.map((p) => at(p).map((v) => v.toFixed(2)).join(' ')).join('L') + 'Z');
+}
+// The curl for the shader (sim px, in the note's frame; see Curl in the shaders), from the note's frame in 3D (fr: its axes
+// and its camera's distance, from cardUniform). Flat (ln.w = 0) when it lies flat or its face turns from the camera.
+const LIGHT = (() => { const l = [-0.3, -0.75, 1], m = Math.hypot(...l); return l.map((v) => v / m); })(); // the desk's light, from the upper left
+function curlUniform(s, fr, dpr) {
+  const out = [0, 0, 0, 0, 0, 0, 0, s ? s.id : -1, 0, 0, 0, 0, 0, 0, 0, 0], c = s && fr && noteCurl(s);
+  if (!c) return out;
+  const unit = (v) => { const m = Math.hypot(...v); return v.map((x) => x / m); }, dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const u = unit(fr.mu), v = unit(fr.mv), nz = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  if (nz[2] < 0.2) return out;
+  const ez = fr.f * nz[2], roll = [0, 1, 2].map((i) => c.n[0] * u[i] + c.n[1] * v[i]), kl = 0.55 * T.curlLight; // the roll's direction in 3D
+  const o = [0.25 * T.curlShadowOff, T.curlShadowOff], cs = Math.cos(fr.th), sn = Math.sin(fr.th); // the shadow's offset per unit height, into the note's frame
+  out.splice(0, 16, c.n[0], c.n[1], c.d0 * dpr, c.H * dpr, (fr.f * u[2]) / ez, (fr.f * v[2]) / ez, 1 / ez, s.id,
+    kl * dot3(roll, LIGHT), kl * dot3(nz, LIGHT), c.yc * dpr, 0, cs * o[0] + sn * o[1], -sn * o[0] + cs * o[1], T.curlShadowBlur, T.curlShadow);
+  return out;
+}
 
 // Edges push back: a released card that runs past the screen's margin meets a stiff, well-damped spring (zeta 0.7) that
 // turns it around; on the way back it is no faster than an ease-out onto the margin (83 ms), so it is not flung back
@@ -2881,8 +3047,8 @@ async function buildAtlas(g) {
 
 // ---------- uniforms ----------
 
-// Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
+// Uniform layout: 25 vec4 of globals, 4 of the note's curl, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
+const CURL_OFF = 25 * 4, G_HEAD = 29, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -2957,6 +3123,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * ((hz ? 1 : 0) + (over ? 2 : 0)) + looks(mv)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
+  return { mu, mv, f, th }; // its frame in 3D, for the note's curl
 }
 
 // The card box stands on its base (its shadow falls from there, not from the front panel raised above it), and its
@@ -3024,9 +3191,14 @@ function writeUniforms(g, sm = sim, hold = false) {
     ...(capturing || view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
-    ...shared.labelUV[page], ...shared.labelUV[turn.from],
+    ...shared.labelUV[page], ...shared.labelUV[turn.from], ...Array(16).fill(0), // the note's curl (below, once its frame is known)
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
-  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
+  let noteFrame = null;
+  for (const src of sources) { // each card from its own page's origin (the box flying off the page you left)
+    const fr = cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1);
+    if (src === noteSrc) noteFrame = fr;
+  }
+  U.set(curlUniform(noteSrc, noteFrame, d), CURL_OFF);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
 
