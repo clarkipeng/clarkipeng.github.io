@@ -29,7 +29,7 @@ struct CU {
   l1: vec4f, // translucent edges, oil sheen, shadow, nibbled edges
   l2: vec4f, // slime stain, light (x, y toward it), light contrast
   l3: vec4f, // crests and troughs, broad highlight, lifted rims glow, the camera's height (px)
-  l4: vec4f, // shadow softening per px of height, contact shadow, blisters, unused
+  l4: vec4f, // shadow softening per px of height, contact shadow, blisters, how gradually the edges curl
   b: array<Body, ${NCH}>,
 };
 @group(0) @binding(0) var<uniform> u: CU;
@@ -58,8 +58,9 @@ fn surf(p: vec2f) -> vec3f {
   return vec3f(h, hx, hy) + fold(p, b.f0) + fold(p, b.f1);
 }
 fn fold(p: vec2f, f: vec4f) -> vec3f {
-  let span = u.b[bi].s0.x - f.z; let e = (dot(f.xy, p) - f.z) / span; let r = length(vec2f(e, 0.2)); let q = 0.5 * (e + r);
-  return vec3f(f.w * q * q, f.w * q * (1.0 + e / r) / span * f.xy);
+  let w = u.l4.w; let span = u.b[bi].s0.x - f.z; let e = (dot(f.xy, p) - f.z) / span; let r = length(vec2f(e, w));
+  let q1 = 0.5 * (1.0 + length(vec2f(1.0, w))); let q = 0.5 * (e + r) / q1;
+  return vec3f(f.w * q * q, f.w * q * (1.0 + e / r) / (q1 * span) * f.xy);
 }
 // How far inside its rim p is (px; < 0 outside): chips.js's outlineR().
 fn rimSd(p: vec2f) -> f32 {
@@ -275,7 +276,7 @@ export async function createChipRenderer(device) {
   // look changed. A pile lying still costs nothing.
   function place(world, { x0, dev, T, t }) {
     const look = [T.chipGold, T.chipCrisp, T.chipRipple, T.chipSalt, T.chipGlow, T.chipSheen, T.chipShadow, T.chipNibble, T.chipStain,
-      T.chipLight, T.chipRelief, T.chipGloss, T.chipLift, T.chipCam, T.chipSoft, T.chipContact, T.chipBlister];
+      T.chipLight, T.chipRelief, T.chipGloss, T.chipLift, T.chipCam, T.chipSoft, T.chipContact, T.chipBlister, T.chipBend];
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box);
     assign(bodies);
     for (const id of drawn.keys()) if (!slots.has(id)) drawn.delete(id);
