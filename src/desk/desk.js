@@ -1254,10 +1254,8 @@ function stepTurn(dt) {
     turn.t = Math.min(1, window.__j?.at != null ? window.__j.at / turn.dur : turn.t + dt / turn.dur); // test hook: hold the turn at one moment
     turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase](turn.t) : 1 - (1 - turn.t) ** 3);
   }
-  clipLinks();
   if (turn.mode === 'drag' || turn.t < 1) return;
   turn.on = false;
-  clipLinks();
   if (turn.mode === 'back') { // fell back: the page you were on comes back to life as it was
     for (const s of sources) if (s.region === turn.to && s.rel < 0) s.rel = 1e3; // the other page's held agents let go
     show(turn.from);
@@ -1268,7 +1266,7 @@ function stepTurn(dt) {
 }
 // The links (DOM, on the main page) turn with it: while a turn shows the main page they stay put on screen, clipped to
 // where its paper shows. As it leaves: past the fold, but not under the flap (the sheet's corner, turned over the fold);
-// as it comes back: behind the roll.
+// as it comes back: behind the roll. A thrown box is above them: never where it is drawn.
 const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
   const out = [];
   poly.forEach((p, i) => {
@@ -1278,26 +1276,52 @@ const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 
   });
   return out;
 };
+// A convex polygon's edges as lines, f >= 0 inside (either winding); convex A less convex U, as disjoint convex pieces.
+const halves = (poly) => {
+  const area = poly.reduce((s2, p, i) => { const q = poly[(i + 1) % poly.length]; return s2 + p[0] * q[1] - q[0] * p[1]; }, 0);
+  return poly.map((p, i) => { const q = poly[(i + 1) % poly.length]; return (r) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])); });
+};
+const minus = (A, U) => halves(U).map((f, i, fs) => fs.slice(0, i).reduce(clipPoly, clipPoly(A, (r) => -f(r))));
+// The convex hull of points (monotone chain).
+const turnsLeft = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) > 0;
+function hull(pts) {
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const h = [];
+  for (const run of [pts, pts.slice().reverse()]) {
+    const k = h.length;
+    for (const p of run) { while (h.length >= k + 2 && !turnsLeft(h[h.length - 2], h[h.length - 1], p)) h.pop(); h.push(p); }
+    h.pop();
+  }
+  return h;
+}
 function clipLinks() {
-  const st = linksEl.style;
-  if (!turn.on || view.phone || (turn.from && turn.to)) { st.clipPath = st.translate = ''; return; }
-  const out = turn.from === 0, [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d, { left: L, top: Tp, width: w, height: h } = turn.links;
-  const X = ([u, v]) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
-  const box = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
-  let path;
-  if (!out) path = clipPoly(box, (p) => d - R - X(p));
-  else {
-    const shown = clipPoly(box, (p) => X(p) - d), page = [[-L, -Tp], [view.w - L, -Tp], [view.w - L, view.h - Tp], [-L, view.h - Tp]];
-    // the flap: the part of the page within d - pi R of the corner, mirrored across the fold (x to 2d - pi R - x)
-    const flap = clipPoly(page, (p) => d - Math.PI * R - X(p)).map((p) => { const m = 2 * d - Math.PI * R - 2 * X(p); return [p[0] + m * dx, p[1] + m * dy]; });
-    let under = flap; // the flap over what shows: clipped by each edge of the convex region
-    const area = shown.reduce((s2, p, i) => { const q = shown[(i + 1) % shown.length]; return s2 + p[0] * q[1] - q[0] * p[1]; }, 0);
-    shown.forEach((p, i) => { const q = shown[(i + 1) % shown.length]; under = clipPoly(under, (r) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]))); });
-    path = shown.length > 2 ? [shown, under] : [];
+  const st = linksEl.style, box = sources.find((s) => s.launch?.hull)?.launch.hull;
+  if (view.phone || !turn.links || (turn.on ? turn.from && turn.to : !box || page)) { st.clipPath = st.translate = ''; return; }
+  const out = turn.on && turn.from === 0, { left: L, top: Tp, width: w, height: h } = turn.links; // on screen at L, Tp
+  const rect = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
+  let shown = rect;
+  const holes = box ? [box.map(([x, y]) => [x - L, y - Tp])] : [];
+  if (turn.on) {
+    const [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d;
+    const X = ([u, v]) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
+    if (!out) shown = clipPoly(rect, (p) => d - R - X(p));
+    else {
+      shown = clipPoly(rect, (p) => X(p) - d);
+      const page = [[-L, -Tp], [view.w - L, -Tp], [view.w - L, view.h - Tp], [-L, view.h - Tp]];
+      // the flap: the part of the page within d - pi R of the corner, mirrored across the fold (x to 2d - pi R - x)
+      holes.unshift(clipPoly(page, (p) => d - Math.PI * R - X(p)).map((p) => { const m = 2 * d - Math.PI * R - 2 * X(p); return [p[0] + m * dx, p[1] + m * dy]; }));
+    }
+  }
+  const polys = [shown]; // what shows, then what covers it there, in disjoint pieces (so even-odd cuts each out once)
+  if (shown.length > 2) {
+    for (const hole of holes) {
+      let ps = [halves(shown).reduce(clipPoly, hole)];
+      for (const prev of polys.slice(1)) ps = ps.flatMap((p) => minus(p, prev));
+      polys.push(...ps.filter((p) => p.length > 2));
+    }
   }
   st.translate = out ? `${view.w}px 0` : '';
-  const polys = (out ? path : [path]).filter((poly) => poly.length > 2);
-  st.clipPath = polys.length ? `path(evenodd, '${polys.map((poly) => `M ${fmt(poly)} Z`).join(' ')}')` : 'polygon(0 0, 0 0, 0 0)';
+  st.clipPath = shown.length > 2 ? `path(evenodd, '${polys.map((poly) => `M ${fmt(poly)} Z`).join(' ')}')` : 'polygon(0 0, 0 0, 0 0)';
 }
 // The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
 const hitEl = doorEl.querySelector('.hit');
@@ -2028,7 +2052,7 @@ const nlerp = (p, q, u) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] +
 // over the paper under it (low); its shadow's footprint from above (foot: angle, half sizes), and how far it has faded.
 function poseThrow(d) {
   const L = d.launch, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
-  phys.world.pose(L.body, POS, ROT);
+  phys.world.pose(L.body, POS, ROT); L.hull = null; // where it shows, once drawn
   let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / T.throwPersp));
   if (L.home) { const u = smooth(L.home.t / T.throwHome), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
   else if (L.out) C[0] += 1.2 * view.w * clamp(L.out.t / THROW.out) ** 3;
@@ -2121,7 +2145,9 @@ function flyingOrder(d, dpr, originX, slot) {
     const H = boxH(P, world(c), world(mu), world(mv), dpr, originX);
     return { name, H, f: facing(H), hw: hw * dpr, hh: hh * dpr, light: ref ? shade(world(cross(mu, mv))) / shade(ref) : 1 };
   });
-  const open = faces.find((x) => x.name === 'open'), inside = open.f > EDGE_ON;
+  const open = faces.find((x) => x.name === 'open'), inside = open.f > EDGE_ON, lidOn = lid && !lid.gone && lid.flyH;
+  d.launch.hull = hull([...faces, ...(lidOn ? [{ H: lid.flyH, hw: (lid.w * dpr) / 2, hh: (lid.h * dpr) / 2 }] : [])].flatMap(({ H, hw, hh }) => // where it shows (CSS px)
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const q = (H[6] * u * hw + H[7] * v * hh + H[8]) * dpr; return [(H[0] * u * hw + H[1] * v * hh + H[2]) / q, (H[3] * u * hw + H[4] * v * hh + H[5]) / q]; })));
   const ids = [d.id], put = (x, tex, light, alpha) => {
     if (slot >= MAX) return;
     faceUniform((CARD0 + slot * CARD_VEC4) * 4, o0, x, tex, light, alpha, dpr);
@@ -3180,7 +3206,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     if (i >= 0) { const inn = P.w * (2 + i * BOX_STEP + 3) * view.k; sx += Math.cos(a) * inn; sy += Math.sin(a) * inn; } // in all the way
     const r = carried(d, { sx, sy, z, mu, mv }, P);
     ({ mu, mv } = r); z = P.C[2] + r.dc[2]; lv = looks(mv);
-    H = boxH(P, r.dc, mu, mv, dpr, originX);
+    H = s.flyH = boxH(P, r.dc, mu, mv, dpr, originX);
     fade = i >= 0 ? Math.max(P.fade, P.w) : P.fade;
     s.plane = { dc: r.dc, n: cross(mu, mv) };
   }
@@ -3412,6 +3438,7 @@ function frame(now) {
   }
   if (trans.fade > 0) trans.fade = Math.max(0, trans.fade - dt / 0.8); // crossfade from the frame before a resolution change
   if (!steps) writeUniforms(gpu);
+  clipLinks(); // where the turn and a thrown box were just drawn
   // Draw only when the picture can change: the sim stepped (60 times a second, which also shows every video frame), something
   // drawn moved (the uniforms differ), or a texture it reads changed. On a display faster than the sim (120 Hz) the frames
   // between steps are otherwise the same picture, and drawing them doubled the GPU's work.
