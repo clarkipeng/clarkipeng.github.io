@@ -28,7 +28,7 @@ const PAPER = [0xf3, 0xf1, 0xea];
 // Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
 // custom properties (--paper, --stock, ...), so the DOM still and no-WebGPU fallback match the GPU drawing.
 const TOK = {
-  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', note: '#fff4a8', noteStrip: '#f7ea98',
+  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', film: '#fbf8f0', note: '#fff4a8', noteStrip: '#f7ea98',
   text: '#1d1d1b', text2: '#2b2b28', body: '#3d3c38', muted: '#6f6d66', // muted is AA (4.5:1) on paper and every stock
   ink: '#a5a970', inkDeep: '#5c5f4a', inkLine: '#85895c', // inkLine: drawn link underlines, 3:1 on every stock
   fs: 13, fsHand: 23, lhBody: 20, radius: 3,
@@ -131,6 +131,13 @@ const GROUPS = {
     ['pGrain', 0, 0, 3, 0.05, 'paper grain'],
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
+  ],
+  // Film: photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a
+  // 107 mm sheet), as fractions of the cards' shared longest side; the strip grows to fit its page's longest caption.
+  Film: [
+    ['frameSide', 0.042, 0, 0.1, 0.002, 'side borders'],
+    ['frameTop', 0.052, 0, 0.12, 0.002, 'top border'],
+    ['frameBottom', 0.19, 0.06, 0.32, 0.005, 'bottom strip'],
   ],
   // Notebook: each page's folded corner, the way to the other page, and the page turn.
   Notebook: [
@@ -762,6 +769,12 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
       let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
       cc = printed(cc, gr, edge, color);
+      // The picture lies under the frame's glossy window: a hairline of shadow where the frame's edge overlaps it, and a
+      // faint sheen that holds still as the card turns and slides toward the top as it lifts.
+      cc *= 1.0 - 0.09 * (1.0 - smoothstep(0.0, 1.5, edge));
+      let sq = (p - c.flat.xy) / max(c.bound.x, 1.0);
+      let band = dot(sq, vec2f(0.55, 0.83)) + 0.3 + 0.5 * lift;
+      cc += 0.015 * exp(-band * band * 6.0) * (1.0 - cc);
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
@@ -940,22 +953,24 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
     const lines = wrapLines(s.hit.querySelector('b').textContent, w - 39, '600 16px Inter');
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small').textContent };
   }
-  if (s.kind === 'polaroid' && h) { // a polaroid at its capped size: the photo, then its wide bottom strip
-    return { w, h, media: { x: 8, y: 8, w: w - 16, h: h - 8 - 36 } };
-  }
-  if (s.kind === 'polaroid') {
-    const mw = w - 16;
-    return { w, h: 8 + mw / s.aspect + 36, media: { x: 8, y: 8, w: mw, h: mw / s.aspect } }; // its caption grows into the strip with the type
-  }
-  // A postcard: the picture takes what the caption leaves (a long title wraps), cover-framed.
-  const mw = w - 12;
-  const [title, sub] = [s.el.querySelector('.cap b').textContent, s.el.querySelector('.cap span').textContent];
-  const m = measure();
-  m.font = font(600); const tw = m.measureText(title).width;
-  m.font = font(400); const sw = m.measureText(sub).width;
-  const oneLine = tw + sw + 14 < mw - 4;
-  const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
-  return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 14 + 18 * TS : 13 + (titleLines.length + 1) * 18 * TS) }, title, titleLines, sub, oneLine };
+  const { side, top, bottom } = borders(s, w, Math.max(w, h || w / s.shape));
+  if (s.kind === 'polaroid' && !h) h = top + (w - 2 * side) / s.aspect + bottom; // phones: its picture at its own aspect
+  const media = { x: side, y: top, w: w - 2 * side, h: h - top - bottom };
+  const cap = capLines(s, w - 2 * side), baseline = media.y + media.h + (bottom - cap.lines.length * CAP_LH()) / 2 + CAP_LH() / 2 + 4.5 * TS;
+  return { w, h, media, ...cap, baseline };
+}
+// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or the polaroid's one line.
+const CAP_LH = () => 18 * TS;
+function capLines(s, tw) {
+  if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand').textContent] };
+  const title = s.el.querySelector('.cap b').textContent, sub = s.el.querySelector('.cap span').textContent;
+  return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
+}
+// The film's borders for a photo card w wide with longest side L (design px); the strip fits its page's longest caption.
+function borders(s, w, L) {
+  const side = Math.round(T.frameSide * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
+    .map((o) => capLines(o, (o === s || view.phone ? w : o.shape >= 1 ? L : L * o.shape) - 2 * side).lines.length);
+  return { side, top: Math.round(T.frameTop * L), bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(...rows) * CAP_LH() + 20)) };
 }
 // Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
@@ -1089,6 +1104,8 @@ function layout() {
       const [z, px, py] = s.frame, v = 1 / z;
       Object.assign(s.img.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`,
         objectViewBox: z > 1 ? `inset(${py * (1 - v) * 100}% ${(1 - px) * (1 - v) * 100}% ${(1 - py) * (1 - v) * 100}% ${px * (1 - v) * 100}%)` : '' });
+      const m = s.media; // the DOM still and the no-WebGPU fallback take the same film frame
+      for (const [k, v] of [['--fx', m.x], ['--ft', m.y], ['--fb', s.h / (s.k || 1) - m.y - m.h]]) s.el.style.setProperty(k, v + 'px');
     }
     if (!gpu && s.flipTo) paintDomBack(s); // the still fallback's open backs follow the new size
     placeDom(s);
@@ -2584,7 +2601,7 @@ function paintLid(x, s, S, outside) {
 function drawCard(s0, S0) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
-  x.fillStyle = s.kind === 'note' ? TOK.note : TOK.stock;
+  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
   if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, STRIP * S); // the sticky strip is a touch darker
@@ -2600,25 +2617,19 @@ function drawCard(s0, S0) {
   }
   x.scale(S, S);
   x.textBaseline = 'alphabetic';
-  if (s.kind === 'photo') {
-    const y0 = s.media.y + s.media.h;
-    x.font = font(600); x.fillStyle = TOK.text;
-    if (s.oneLine) {
-      x.fillText(s.title, 8, y0 + 8 + 13 * TS);
-      x.font = font(400); x.fillStyle = TOK.muted; x.textAlign = 'right'; x.fillText(s.sub, s.w - 8, y0 + 8 + 13 * TS);
-    } else {
-      s.titleLines.forEach((l, i) => x.fillText(l, 8, y0 + 7 + 13 * TS + i * 18 * TS));
-      x.font = font(400); x.fillStyle = TOK.muted; x.fillText(s.sub, 8, y0 + 7 + 13 * TS + s.titleLines.length * 18 * TS);
-    }
+  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or the polaroid's line centered
+    s.lines.forEach((l, i) => {
+      const last = i === s.lines.length - 1;
+      x.font = font(s.titled ? (last ? 400 : 600) : 500); x.fillStyle = s.titled ? (last ? TOK.muted : TOK.text) : TOK.body;
+      x.textAlign = s.titled ? 'left' : 'center';
+      x.fillText(l, s.titled ? s.media.x : s.w / 2, s.baseline + i * CAP_LH());
+    });
   } else if (s.kind === 'paper') {
     x.fillStyle = TOK.body; x.fillRect(0, 0, 3, s.h);
     x.font = font(600, 16); x.fillStyle = TOK.text;
     s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
     x.font = font(400); x.fillStyle = TOK.muted;
     x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
-  } else if (s.kind === 'polaroid') {
-    x.font = font(500); x.fillStyle = TOK.body; x.textAlign = 'center';
-    x.fillText(s.el.querySelector('.hand').textContent, s.w / 2, s.media.y + s.media.h + 10 + 13 * TS);
   } else if (s.kind === 'note') {
     x.font = HAND; x.fillStyle = TOK.text2;
     s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
@@ -2644,7 +2655,7 @@ const BACK_STYLES = {
   pen: { underline: 'pen', note: 'pen' },
 };
 const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
-const STOCK = { photo: TOK.stock, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note };
+const STOCK = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
 const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
   get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
@@ -3223,7 +3234,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const inv = edgeOn ? FAR : invert3(H);
   if (s.carrier && s.carrier !== s) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
-    hw, hh, 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
+    hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, s.carrier && s.carrier !== s ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
     ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
@@ -3551,7 +3562,7 @@ function tweakPanel() {
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
