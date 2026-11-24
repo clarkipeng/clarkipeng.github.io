@@ -179,7 +179,6 @@ const GROUPS = {
     ['chipDrop', 150, 0, 400, 1, 'drop height px'],
     ['chipSpin', 10, 0, 30, 0.5, 'tumble rad/s'],
     ['chipMass', 0.05, 0.005, 0.5, 0.005, 'mass against the card box'],
-    ['chipSweep', 8, 2, 20, 0.5, 'left on screen by a turn: swept off at x page widths/s²'],
     ['chipCam', 1200, 400, 4000, 10, 'camera height px (nearer looks larger)'],
     ['chipE', 0.3, 0, 0.8, 0.01, 'bounce'],
     ['chipMu', 0.5, 0, 1.5, 0.01, 'friction'],
@@ -3414,7 +3413,8 @@ function writeUniforms(g, sm = sim, hold = false) {
 
 // ---------- chips ----------
 // Potato chips (chips.js, drawn by chip-render.js): click the bare desk to drop one. They live on the page you see, in the
-// same sim as the card box (physics.js): a page turn throws them off with it, and they do not come back.
+// same sim as the card box (physics.js): a page turn throws them with it. A chip is gone once it is wholly off the screen
+// or eaten, never sooner.
 const chips = createChips(T, () => throwWorld().world);
 const chipRegion = () => chips.bodies[0]?.chip.region ?? page;
 const chipX0 = () => (view.phone ? 0 : chipRegion() * view.w);
@@ -3432,18 +3432,21 @@ function chipUniforms(s) {
     U[CHIP_OFF + 4 + (NCH + i) * 4] = b.pulse;
   });
 }
-// The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips off the frame are gone, and so are
-// the last crumbs of any on a page you left; any a finished turn left on screen are swept off to the right, as its box is.
+// The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
+// a finished turn left on it carry on on the new page, where they are on the screen.
 function stepChips(dt) {
   if (!chips.bodies.length) return;
+  if (chipRegion() !== page && !turn.on) {
+    const dx = view.phone ? 0 : (page - chipRegion()) * view.w;
+    for (const b of chips.bodies) { b.p.x[0] += dx; b.p.px[0] += dx; b.chip.region = page; }
+  }
   const { world, L } = phys, x0 = chipX0(), own = chipRegion() === page, H = view.phone ? view.docH : view.h;
-  if (!own && !turn.on) for (const b of chips.bodies) { b.v[0] += T.chipSweep * view.w * dt; b.p.sleep = false; b.p.still = 0; }
   if (own) chips.push(sources.filter((c) => (view.phone || c.region === page) && !c.gone && !c.deck && !c.carrier && c.w).map((c) => {
     const [x, y, r] = shown(c), th = (r * Math.PI) / 180;
     return { x, y, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy };
   }));
   if (!L || L.home || L.out) { const t = world.time + (phys.rem || 0) + dt; world.advance(t); phys.rem = t - world.time; }
-  for (const b of chips.bodies.filter((b) => (!own && b.frozen) || b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
+  for (const b of chips.bodies.filter((b) => b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
   chips.step(dt, own);
   if (chips.bodies.some((b) => !b.sleep || b.dirty)) redraw = true;
   if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
