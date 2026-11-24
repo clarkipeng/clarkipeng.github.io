@@ -130,10 +130,10 @@ const GROUPS = {
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
-  // Develop: each time the polaroid is dealt, its picture comes up out of blank instant film. Times after the first two are
-  // fractions of the develop time.
+  // Develop: each time a card with a picture is dealt, the picture comes up out of blank instant film. Times after the
+  // first two are fractions of the develop time.
   Develop: [
-    ['develop', 1, 0, 1, 1, 'the polaroid develops when dealt'],
+    ['develop', 1, 0, 1, 1, 'pictures develop when dealt'],
     ['devS', 5, 2, 10, 0.1, 'develop time s'],
     ['devDelay', -0.2, -0.7, 1.5, 0.05, 'starts after landing s'],
     ['devMilk', 'c3cbc2', 0, 0, 0, 'blank film'],
@@ -275,7 +275,7 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
-// dv: its picture developing (the polaroid): how far (0 blank film, 1 and up done), this develop's seed
+// dv: its picture developing: how far (0 blank film, 1 and up done), this develop's seed
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -619,36 +619,42 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
   c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
   return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
 }
-// Instant film developing (the polaroid, each time it is dealt), in linear light. The picture's dyes rise under a milky
-// opacifier that clears: dark shapes show first and soft, then midtones, highlights last; the cyan dye arrives first and
-// the yellow last, so colors come up cool and warm as they fill in. A little uneven: mottled, and a beat later toward
-// the top, away from the reagent spread from the wide bottom strip. Done (t = 1) is exactly the picture.
-// cc: the picture here; mu: where in the picture (0 to 1); ms: the picture's size (CSS px); t: how far along.
-fn develop(c: Card, cc: vec3f, mu: vec2f, ms: vec2f, t: f32) -> vec3f {
+// Instant film developing (every picture, each time its card is dealt), in linear light. The picture's dyes rise under
+// a milky opacifier that clears: dark shapes show first and soft, then midtones, highlights last; the cyan dye arrives
+// first and the yellow last, so colors come up cool and warm as they fill in. A little uneven: mottled, and a beat later
+// toward the top, away from the reagent spread from the wide bottom strip. Done (t = 1) is exactly the picture.
+// mu: where in the picture (0 to 1); ms: the picture's size (CSS px); t: how far along.
+// This spot's own progress (x) and its mottling (y).
+fn devSpot(c: Card, mu: vec2f, ms: vec2f, t: f32) -> vec2f {
   let sp = mu * ms / 70.0 + vec2f(c.dv.y, 0.618 * c.dv.y); // blotches about 70 CSS px across, new ones each time
   let n = 0.65 * vnoise(sp) + 0.35 * vnoise(sp * 2.4 + 31.0);
   let lag = g.dh.w * n + g.di.x * (1.0 - mu.y);
-  let tl = clamp(t * (1.0 + g.dh.w + g.di.x) - lag, 0.0, 1.0); // this spot's own progress; everywhere 1 when t is
-  // The first shapes are soft: a disc blur that sharpens as the milk clears.
-  let r = g.dg.w * (1.0 - smoothstep(g.dg.x, 0.55 * g.dg.y, tl)); // sharp by the time the midtones are in
-  var img = cc;
-  if (r > 0.05) {
-    var sum = vec3f(0.0);
-    for (var i = 0; i < 16; i++) {
-      let a = f32(i) * 2.39996; let d = r * sqrt((f32(i) + 0.5) / 16.0);
-      let m = clamp(mu + vec2f(cos(a), sin(a)) * d / ms, vec2f(0.0), vec2f(1.0));
-      let u = mix(c.media.xy, c.media.zw, m);
-      sum += pow(textureSampleLevel(atlas, samp, mix(c.uv.xy, c.uv.zw, u), 0.0).rgb, vec3f(2.2));
-    }
-    img = sum / 16.0;
+  return vec2f(clamp(t * (1.0 + g.dh.w + g.di.x) - lag, 0.0, 1.0), n); // everywhere 1 when t is
+}
+// The first shapes are soft: the card's own picture (before printing) through a disc blur that sharpens as the milk
+// clears; r scales it (a playing clip stays sharp under the milk).
+fn devBlur(c: Card, cc: vec3f, mu: vec2f, ms: vec2f, tl: f32, r0: f32) -> vec3f {
+  let r = r0 * g.dg.w * (1.0 - smoothstep(g.dg.x, 0.55 * g.dg.y, tl)); // sharp by the time the midtones are in
+  if (r <= 0.05) { return cc; }
+  var sum = vec3f(0.0);
+  for (var i = 0; i < 16; i++) {
+    let a = f32(i) * 2.39996; let d = r * sqrt((f32(i) + 0.5) / 16.0);
+    let m = clamp(mu + vec2f(cos(a), sin(a)) * d / ms, vec2f(0.0), vec2f(1.0));
+    let u = mix(c.media.xy, c.media.zw, m);
+    sum += pow(textureSampleLevel(atlas, samp, mix(c.uv.xy, c.uv.zw, u), 0.0).rgb, vec3f(2.2));
   }
-  // Each spot's dyes come up by its tone (shadows first), each dye on its own clock (cyan, magenta, then yellow).
+  return sum / 16.0;
+}
+// Each spot's dyes come up by its tone (shadows first), each dye on its own clock (cyan, magenta, then yellow), under
+// the clearing milk. img: the printed picture here; st: devSpot's.
+fn develop(img: vec3f, st: vec2f) -> vec3f {
+  let tl = st.x;
   let tau = clamp(tl * (1.0 + g.di.y) - g.di.y * sqrt(dot(img, vec3f(0.2126, 0.7152, 0.0722))), 0.0, 1.0);
   let x = clamp((vec3f(tau) - g.dg.x - vec3f(0.0, 0.5, 1.0) * g.dg.z) / max(1.0 - g.dg.x - g.dg.z, 0.05), vec3f(0.0), vec3f(1.0));
   let f = 1.0 - (1.0 - x) * (1.0 - x); // a dye diffuses in fast, then slows
   let dye = exp(log(max(img, vec3f(1e-3))) * f);
   let veil = pow(1.0 - smoothstep(g.dg.x * 0.5, g.dg.y, tl), 1.5); // the opacifier clears, fastest early
-  let milk = g.dh.rgb * (1.0 + 0.025 * (n - 0.5)); // blank film, faintly uneven
+  let milk = g.dh.rgb * (1.0 + 0.025 * (st.y - 0.5)); // blank film, faintly uneven
   return mix(dye, milk, veil);
 }
 // Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
@@ -795,8 +801,11 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       let edge = min(min(mu.x, 1.0 - mu.x) * ms.x, min(mu.y, 1.0 - mu.y) * ms.y);
       // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
       let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
-      cc = printed(cc, gr, edge, color);
-      if (c.dv.x < 1.0) { cc = develop(c, cc, mu, ms, c.dv.x); }
+      if (c.dv.x < 1.0) {
+        let st = devSpot(c, mu, ms, c.dv.x);
+        let clip = select(0.0, clamp(g.v.y, 0.0, 1.0), f32(k) == g.v.x && c.inv0.w > 0.5);
+        cc = develop(printed(devBlur(c, cc, mu, ms, st.x, 1.0 - clip), gr, edge, color), st);
+      } else { cc = printed(cc, gr, edge, color); }
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
@@ -1821,7 +1830,7 @@ function deal(s, deck, at, stack, [x, y, r]) {
   const i = deck.pile.indexOf(s);
   deck.pile.splice(i, 1); deck.dirty = true;
   s.fly = { out: true, at, x, y, r, deck, stack, i, ur: upright(s), pw: Math.min(s.w, s.h) };
-  if (s.kind === 'polaroid') s.dev = { t: now() - at - DRAW.dur, seed: Math.random() * 500 }; // blank film again, its clock from the landing
+  if (s.media) s.dev = { t: now() - at - DRAW.dur, seed: Math.random() * 500 }; // its picture is blank film again, its clock from the landing
   Object.assign(s, { deck: null, flying: true, face: 1, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); // clicks go through to the box
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
