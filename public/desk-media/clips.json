@@ -1,13 +1,9 @@
 {
   "slime": {
     "poster": "slime-poster.jpg",
+    "cover": "slime-poster.jpg",
     "clips": [
-      {
-        "src": "slime-01.mp4",
-        "start": 4.5042
-      },
-      "slime-02.mp4",
-      "slime-03.mp4"
+      "slime-cinematic.mp4"
     ]
   },
   "vp2": {
