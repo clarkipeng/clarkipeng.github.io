@@ -155,6 +155,8 @@ const GROUPS = {
     ['frameBottom', 0.19, 0.06, 0.32, 0.005, 'bottom strip'],
     ['frameRadius', 0.016, 0, 0.05, 0.001, 'corner rounding'],
     ['frameStock', 'fbf8f0', 0, 0, 0, 'photo stock'],
+    ['frameSheen', 0.015, 0, 0.1, 0.001, 'sheen on the picture'],
+    ['frameLip', 0.5, 0, 1, 0.01, 'shadow where the frame meets the picture'],
   ],
   // Notebook: each page's folded corner, the way to the other page, and the page turn.
   Notebook: [
@@ -315,7 +317,7 @@ struct G {
   lt: vec4f,  // the turning page's label's atlas rect
   dg: vec4f,  // developing: first shapes at, milk cleared by, warm dye lag, first shapes' blur (CSS px)
   dh: vec4f,  // developing: blank film (linear rgb), unevenness
-  di: vec4f,  // developing: top lag, highlight lag, unused, unused
+  di: vec4f,  // developing: top lag, highlight lag; the film's sheen on the picture, the frame's shadow on it
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
@@ -817,6 +819,12 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
         let clip = select(0.0, clamp(g.v.y, 0.0, 1.0), f32(k) == g.v.x && c.inv0.w > 0.5);
         cc = develop(printed(devBlur(c, cc, mu, ms, st.x, 1.0 - clip), gr, edge, color), st);
       } else { cc = printed(cc, gr, edge, color); }
+      // The picture lies under the frame's glossy window: a hairline of shadow where the frame's edge overlaps it, and a
+      // faint sheen that holds still as the card turns and slides toward the top as it lifts.
+      cc *= 1.0 - 0.18 * g.di.w * (1.0 - smoothstep(0.0, 1.5, edge));
+      let sq = (p - c.flat.xy) / max(c.bound.x, 1.0);
+      let band = dot(sq, vec2f(0.55, 0.83)) + 0.3 + 0.5 * lift;
+      cc += g.di.z * exp(-band * band * 6.0) * (1.0 - cc);
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
@@ -3261,7 +3269,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     // the label sits on the flap at rest, its foot a few px from the fold
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
-    T.devStart, T.devClear, T.devCool, T.devBlur, ...hexRGB(T.devMilk).map(lin), T.devUneven, T.devFlow, T.devTone, 0, 0,
+    T.devStart, T.devClear, T.devCool, T.devBlur, ...hexRGB(T.devMilk).map(lin), T.devUneven, T.devFlow, T.devTone, T.frameSheen, T.frameLip,
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
