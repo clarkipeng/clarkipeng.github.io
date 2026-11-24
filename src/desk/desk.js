@@ -26,7 +26,7 @@ const PAPER = [0xf3, 0xf1, 0xea];
 // Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
 // custom properties (--paper, --stock, ...), so the DOM still and no-WebGPU fallback match the GPU drawing.
 const TOK = {
-  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', note: '#fff4a8', noteStrip: '#f7ea98',
+  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', film: '#fbf8f0', note: '#fff4a8', noteStrip: '#f7ea98',
   text: '#1d1d1b', text2: '#2b2b28', body: '#3d3c38', muted: '#6f6d66', // muted is AA (4.5:1) on paper and every stock
   ink: '#a5a970', inkDeep: '#5c5f4a', inkLine: '#85895c', // inkLine: drawn link underlines, 3:1 on every stock
   fs: 13, fsHand: 23, lhBody: 20, radius: 3,
@@ -130,33 +130,12 @@ const GROUPS = {
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
-  // Develop: each time a card with a picture is dealt, the picture comes up out of blank instant film. Times after the
-  // first two are fractions of the develop time.
-  Develop: [
-    ['develop', 1, 0, 1, 1, 'pictures develop when dealt'],
-    ['devS', 5, 2, 10, 0.1, 'develop time s'],
-    ['devDelay', -0.2, -0.7, 1.5, 0.05, 'starts after landing s'],
-    ['devMilk', 'c3cbc2', 0, 0, 0, 'blank film'],
-    ['devStart', 0.06, 0, 0.4, 0.01, 'first shapes at'],
-    ['devClear', 0.8, 0.3, 1, 0.01, 'milk cleared by'],
-    ['devTone', 0.45, 0, 1, 0.01, 'highlights lag shadows by'],
-    ['devCool', 0.3, 0, 0.6, 0.01, 'warm dye lags cool by'],
-    ['devBlur', 5, 0, 16, 0.25, 'first shapes soft px'],
-    ['devUneven', 0.14, 0, 0.4, 0.01, 'uneven across the frame'],
-    ['devFlow', 0.08, 0, 0.3, 0.01, 'top lags bottom by'],
-  ],
-  // Film: every photo card is framed like instant film: thin even borders on the top and sides and a deep strip below
-  // that holds the caption (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a 107 mm sheet; Instax Wide
-  // much the same along its long side). Sizes are fractions of the card's longest side, which every photo card shares;
-  // the strip grows to fit the longest caption on its page, one depth for the page.
+  // Film: photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a
+  // 107 mm sheet), as fractions of the cards' shared longest side; the strip grows to fit its page's longest caption.
   Film: [
     ['frameSide', 0.042, 0, 0.1, 0.002, 'side borders'],
     ['frameTop', 0.052, 0, 0.12, 0.002, 'top border'],
     ['frameBottom', 0.19, 0.06, 0.32, 0.005, 'bottom strip'],
-    ['frameRadius', 0.016, 0, 0.05, 0.001, 'corner rounding'],
-    ['frameStock', 'fbf8f0', 0, 0, 0, 'photo stock'],
-    ['frameSheen', 0.015, 0, 0.1, 0.001, 'sheen on the picture'],
-    ['frameLip', 0.5, 0, 1, 0.01, 'shadow where the frame meets the picture'],
   ],
   // Notebook: each page's folded corner, the way to the other page, and the page turn.
   Notebook: [
@@ -276,7 +255,7 @@ const lin = (c) => Math.pow(c / 255, 2.2);
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f, dv: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f };
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S); w: how far its shadow has faded (a box flying off)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
@@ -288,7 +267,6 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
-// dv: its picture developing: how far (0 blank film, 1 and up done), this develop's seed
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -315,9 +293,6 @@ struct G {
   lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
   la: vec4f,  // the corner label's atlas rect
   lt: vec4f,  // the turning page's label's atlas rect
-  dg: vec4f,  // developing: first shapes at, milk cleared by, warm dye lag, first shapes' blur (CSS px)
-  dh: vec4f,  // developing: blank film (linear rgb), unevenness
-  di: vec4f,  // developing: top lag, highlight lag; the film's sheen on the picture, the frame's shadow on it
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
@@ -632,44 +607,6 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
   c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
   return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
 }
-// Instant film developing (every picture, each time its card is dealt), in linear light. The picture's dyes rise under
-// a milky opacifier that clears: dark shapes show first and soft, then midtones, highlights last; the cyan dye arrives
-// first and the yellow last, so colors come up cool and warm as they fill in. A little uneven: mottled, and a beat later
-// toward the top, away from the reagent spread from the wide bottom strip. Done (t = 1) is exactly the picture.
-// mu: where in the picture (0 to 1); ms: the picture's size (CSS px); t: how far along.
-// This spot's own progress (x) and its mottling (y).
-fn devSpot(c: Card, mu: vec2f, ms: vec2f, t: f32) -> vec2f {
-  let sp = mu * ms / 70.0 + vec2f(c.dv.y, 0.618 * c.dv.y); // blotches about 70 CSS px across, new ones each time
-  let n = 0.65 * vnoise(sp) + 0.35 * vnoise(sp * 2.4 + 31.0);
-  let lag = g.dh.w * n + g.di.x * (1.0 - mu.y);
-  return vec2f(clamp(t * (1.0 + g.dh.w + g.di.x) - lag, 0.0, 1.0), n); // everywhere 1 when t is
-}
-// The first shapes are soft: the card's own picture (before printing) through a disc blur that sharpens as the milk
-// clears; r scales it (a playing clip stays sharp under the milk).
-fn devBlur(c: Card, cc: vec3f, mu: vec2f, ms: vec2f, tl: f32, r0: f32) -> vec3f {
-  let r = r0 * g.dg.w * (1.0 - smoothstep(g.dg.x, 0.55 * g.dg.y, tl)); // sharp by the time the midtones are in
-  if (r <= 0.05) { return cc; }
-  var sum = vec3f(0.0);
-  for (var i = 0; i < 16; i++) {
-    let a = f32(i) * 2.39996; let d = r * sqrt((f32(i) + 0.5) / 16.0);
-    let m = clamp(mu + vec2f(cos(a), sin(a)) * d / ms, vec2f(0.0), vec2f(1.0));
-    let u = mix(c.media.xy, c.media.zw, m);
-    sum += pow(textureSampleLevel(atlas, samp, mix(c.uv.xy, c.uv.zw, u), 0.0).rgb, vec3f(2.2));
-  }
-  return sum / 16.0;
-}
-// Each spot's dyes come up by its tone (shadows first), each dye on its own clock (cyan, magenta, then yellow), under
-// the clearing milk. img: the printed picture here; st: devSpot's.
-fn develop(img: vec3f, st: vec2f) -> vec3f {
-  let tl = st.x;
-  let tau = clamp(tl * (1.0 + g.di.y) - g.di.y * sqrt(dot(img, vec3f(0.2126, 0.7152, 0.0722))), 0.0, 1.0);
-  let x = clamp((vec3f(tau) - g.dg.x - vec3f(0.0, 0.5, 1.0) * g.dg.z) / max(1.0 - g.dg.x - g.dg.z, 0.05), vec3f(0.0), vec3f(1.0));
-  let f = 1.0 - (1.0 - x) * (1.0 - x); // a dye diffuses in fast, then slows
-  let dye = exp(log(max(img, vec3f(1e-3))) * f);
-  let veil = pow(1.0 - smoothstep(g.dg.x * 0.5, g.dg.y, tl), 1.5); // the opacifier clears, fastest early
-  let milk = g.dh.rgb * (1.0 + 0.025 * (st.y - 0.5)); // blank film, faintly uneven
-  return mix(dye, milk, veil);
-}
 // Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
 fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let q = p - c.flat.xy - o;
@@ -814,17 +751,13 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       let edge = min(min(mu.x, 1.0 - mu.x) * ms.x, min(mu.y, 1.0 - mu.y) * ms.y);
       // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
       let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
-      if (c.dv.x < 1.0) {
-        let st = devSpot(c, mu, ms, c.dv.x);
-        let clip = select(0.0, clamp(g.v.y, 0.0, 1.0), f32(k) == g.v.x && c.inv0.w > 0.5);
-        cc = develop(printed(devBlur(c, cc, mu, ms, st.x, 1.0 - clip), gr, edge, color), st);
-      } else { cc = printed(cc, gr, edge, color); }
+      cc = printed(cc, gr, edge, color);
       // The picture lies under the frame's glossy window: a hairline of shadow where the frame's edge overlaps it, and a
       // faint sheen that holds still as the card turns and slides toward the top as it lifts.
-      cc *= 1.0 - 0.18 * g.di.w * (1.0 - smoothstep(0.0, 1.5, edge));
+      cc *= 1.0 - 0.09 * (1.0 - smoothstep(0.0, 1.5, edge));
       let sq = (p - c.flat.xy) / max(c.bound.x, 1.0);
       let band = dot(sq, vec2f(0.55, 0.83)) + 0.3 + 0.5 * lift;
-      cc += g.di.z * exp(-band * band * 6.0) * (1.0 - cc);
+      cc += 0.015 * exp(-band * band * 6.0) * (1.0 - cc);
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
@@ -963,7 +896,7 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent) : null,
     region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'), hueHex: d.hue || '888888', // the card's own hue (spectrum style)
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
-    jinkHex: d.jink, still: d.still, pic: +d.pic || 0, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
+    jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0, face: 0, deck: null, // face: 0 front up, 1 back up (one value, set by a flip, a flight, or the box's preview); deck: the box it is in (or going into)
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
     // focus: the framing option's zoom and crop on the picture's subject, for the poster and the clips alike (so the
@@ -1009,34 +942,24 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
   const cap = capLines(s, w - 2 * side), baseline = media.y + media.h + (bottom - cap.lines.length * CAP_LH()) / 2 + CAP_LH() / 2 + 4.5 * TS;
   return { w, h, media, ...cap, baseline };
 }
-// A photo card's caption, wrapped to tw (design px): the title's lines and the line under it; the polaroid's one
-// handwritten line. Set in the film's bottom strip, centered in it.
-const CAP_LH = () => 18 * TS, CAP_PAD = 10;
+// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or the polaroid's one line.
+const CAP_LH = () => 18 * TS;
 function capLines(s, tw) {
   if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand').textContent] };
   const title = s.el.querySelector('.cap b').textContent, sub = s.el.querySelector('.cap span').textContent;
   return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
 }
-// The film's borders for a photo card w wide whose longest side is L (design px). The bottom strip is as deep as its
-// page's longest caption needs: every photo card on the page at its own width for this longest side (on phones, all at
-// this width).
+// The film's borders for a photo card w wide with longest side L (design px); the strip fits its page's longest caption.
 function borders(s, w, L) {
-  const side = Math.round(T.frameSide * L), top = Math.round(T.frameTop * L);
-  const rows = sources.filter((o) => capped(o) && o.region === s.region).map((o) => {
-    const ow = o === s || view.phone ? w : o.pic || o.shape >= 1 ? L : L * o.shape;
-    return capLines(o, ow - 2 * side).lines.length;
-  });
-  return { side, top, bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(1, ...rows) * CAP_LH() + 2 * CAP_PAD)) };
+  const side = Math.round(T.frameSide * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
+    .map((o) => capLines(o, (o === s || view.phone ? w : o.shape >= 1 ? L : L * o.shape) - 2 * side).lines.length);
+  return { side, top: Math.round(T.frameTop * L), bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(...rows) * CAP_LH() + 20)) };
 }
 // Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
 // the one card size.)
 const capped = (s) => s.kind === 'photo' || s.kind === 'polaroid';
-// A figure (data-pic) keeps its picture's crop: its card is as wide as the cap and as tall as the film around it needs.
-function cappedDims(s, cap) {
-  if (s.pic) { const { side, top, bottom } = borders(s, cap, cap); return [cap, Math.min(cap, top + bottom + (cap - 2 * side) / s.pic)]; }
-  return s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap];
-}
+const cappedDims = (s, cap) => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
 // Each page's pile, upright: as wide as its widest card's short side and as tall as its longest long side (design px).
 function pileSizes() {
   for (const d of sources) if (d.more) {
@@ -1165,7 +1088,7 @@ function layout() {
       Object.assign(s.img.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`,
         objectViewBox: z > 1 ? `inset(${py * (1 - v) * 100}% ${(1 - px) * (1 - v) * 100}% ${(1 - py) * (1 - v) * 100}% ${px * (1 - v) * 100}%)` : '' });
       const m = s.media; // the DOM still and the no-WebGPU fallback take the same film frame
-      for (const [k, v] of [['--fx', m.x + 'px'], ['--ft', m.y + 'px'], ['--fb', s.h / (s.k || 1) - m.y - m.h + 'px'], ['--fr', T.frameRadius * Math.max(s.w, s.h) / (s.k || 1) + 'px'], ['--film', '#' + T.frameStock]]) s.el.style.setProperty(k, v);
+      for (const [k, v] of [['--fx', m.x], ['--ft', m.y], ['--fb', s.h / (s.k || 1) - m.y - m.h]]) s.el.style.setProperty(k, v + 'px');
     }
     if (!gpu && s.flipTo) paintDomBack(s); // the still fallback's open backs follow the new size
     placeDom(s);
@@ -1863,7 +1786,6 @@ function deal(s, deck, at, stack, [x, y, r]) {
   const i = deck.pile.indexOf(s);
   deck.pile.splice(i, 1); deck.dirty = true;
   s.fly = { out: true, at, x, y, r, deck, stack, i, ur: upright(s), pw: Math.min(s.w, s.h) };
-  if (s.media) s.dev = { t: now() - at - DRAW.dur, seed: Math.random() * 500 }; // its picture is blank film again, its clock from the landing
   Object.assign(s, { deck: null, flying: true, face: 1, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); // clicks go through to the box
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
@@ -2546,7 +2468,7 @@ function paintLid(x, s, S, outside) {
 function drawCard(s0, S0) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
-  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? '#' + T.frameStock : TOK.stock; // photo cards on their film's stock
+  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
   if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, STRIP * S); // the sticky strip is a touch darker
@@ -2600,7 +2522,7 @@ const BACK_STYLES = {
   pen: { underline: 'pen', note: 'pen' },
 };
 const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
-const STOCK = { get photo() { return '#' + T.frameStock; }, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
+const STOCK = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
 const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
   get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
@@ -3097,8 +3019,8 @@ async function buildAtlas(g) {
 
 // ---------- uniforms ----------
 
-// Uniform layout: 28 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 28, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
+// Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
+const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -3179,15 +3101,14 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const inv = edgeOn ? FAR : invert3(H);
   if (s.carrier && s.carrier !== s) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
-    hw, hh, capped(s) ? T.frameRadius * 2 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
+    hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, s.carrier && s.carrier !== s ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
     ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
-    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * flags + lv,
-    s.dev && T.develop ? (s.dev.t - T.devDelay) / T.devS : 1, s.dev?.seed || 0, 0, 0];
+    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * flags + lv];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
 }
@@ -3269,7 +3190,6 @@ function writeUniforms(g, sm = sim, hold = false) {
     // the label sits on the flap at rest, its foot a few px from the fold
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
-    T.devStart, T.devClear, T.devCool, T.devBlur, ...hexRGB(T.devMilk).map(lin), T.devUneven, T.devFlow, T.devTone, T.frameSheen, T.frameLip,
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
@@ -3365,7 +3285,6 @@ function frame(now) {
   last = now;
   stepDecks(dt); // first: cards waiting on a deck follow it this frame
   stepFlights(dt);
-  for (const s of sources) if (s.dev && !window.__j?.freeze && (s.dev.t += dt) > T.devDelay + T.devS) s.dev = null; // developing, wherever it is
   syncInert();
   syncHover();
   stepCards(dt);
@@ -3508,7 +3427,7 @@ function tweakPanel() {
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom', 'frameStock'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
@@ -3521,7 +3440,7 @@ function tweakPanel() {
         input = document.createElement('select');
         for (const m of CHOICES[k]) input.append(new Option(m, m));
         input.oninput = () => set(k, input.value);
-      } else if (typeof d === 'string') { // any other text value is a color
+      } else if (k === 'ink') {
         input = Object.assign(document.createElement('input'), { type: 'color' });
         input.oninput = () => set(k, input.value.slice(1));
       } else if (step === 1 && max === 1) {
@@ -3570,7 +3489,7 @@ function tweakPanel() {
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
       if (el.type === 'checkbox') el.checked = !!T[k];
-      else el.value = el.type === 'color' ? '#' + T[k] : T[k];
+      else el.value = k === 'ink' ? '#' + T[k] : T[k];
       if (el.out) el.out.value = T[k];
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[page]} page)`;
