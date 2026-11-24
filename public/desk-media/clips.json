@@ -55,7 +55,6 @@
   },
   "catapult": {
     "poster": "catapult-poster.jpg",
-    "cover": "catapult-thumb.jpg",
     "clips": [
       "catapult-01.mp4",
       "catapult-02.mp4"
@@ -63,7 +62,6 @@
   },
   "sine": {
     "poster": "sine-poster.jpg",
-    "cover": "sine-thumb.jpg",
     "clips": [
       "sine-01.mp4",
       "sine-02.mp4",
