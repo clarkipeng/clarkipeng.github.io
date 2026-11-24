@@ -1420,7 +1420,7 @@ for (const s of sources) {
       // once it is dragged away; it counts as over once well inside, and as away only once clearly out, so it never
       // flickers at the edge. The pile lifts a little to take it.
       const deck = pageDeck(s.region), x = deskX(m), y = deskY(m);
-      s.over = !!deck && decked(s) && !s.flip && !s.flipTo && !flights.on && !turn.on && (deck.mode === 'pile' || deck.phase === 'open') && overDeck(deck, x, y, (s.over ? 28 : -10) * view.k);
+      s.over = !!deck && decked(s) && s.flip === s.flipTo && !flights.on && !turn.on && (deck.mode === 'pile' || deck.phase === 'open') && overDeck(deck, x, y, (s.over ? 28 : -10) * view.k);
       if (deck) { // near the right edge or the deck's spot it calls a tucked box out (160 px in, 220 px to let go)
         const r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), q = obb({ ...deck, x: deck.spot }), qx = reach(q, [1, 0]), qy = reach(q, [0, 1]);
         const gap = Math.min((s.region + 1) * view.w - s.x - ex, Math.hypot(Math.max(0, Math.abs(s.x - deck.spot) - ex - qx), Math.max(0, Math.abs(s.y - deck.y) - ey - qy)));
@@ -1714,7 +1714,7 @@ const drawEase = cubicBezier(0.25, 1, 0.5, 1);
 function drawFrom(region, { delay = 0, hold = true } = {}) {
   endFlights(false, region);
   const deck = pageDeck(region);
-  const cards = sources.filter((s) => s.region === region && s.featured && decked(s) && !s.dragging).sort((a, b) => a.order - b.order);
+  const cards = sources.filter((s) => s.region === region && s.featured && decked(s) && !s.dragging).sort((a, b) => (b.pileZ || -b.order) - (a.pileZ || -a.order)); // the pile is a stack: the top card, the last put in, first
   if (view.phone || !gpu || reduced || !deck || !cards.length) return;
   for (const s of cards) Object.assign(s, { inDeck: false }, hold ? { rel: -1 } : {});
   if (hold) atHome(region, () => holdPage(sim)); // so each agent waits for the card that will land nearest it
@@ -1978,8 +1978,8 @@ function gather(cards, deck) {
 }
 function collect(s, deck, at, dur = GATHER.dur) {
   Object.assign(s, { inDeck: true, pileZ: ++pileSeq, released: false, vx: 0, vy: 0, shove: null, kb: null });
-  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), pw: Math.min(s.w, s.h), down: s.down || 0, dur, box: true, // down: already face down; box: it goes in through the box's open end
-    jit: [(hash01(s.id + 5) - 0.5) * 3, (hash01(s.id + 9) - 0.5) * 3, (hash01(s.id + 13) - 0.5) * 3] };
+  s.fly = { at, x: s.x, y: s.y, r: s.rot, deck, back: true, ur: upright(s), pw: Math.min(s.w, s.h), down: s.flipTo ? 1 : s.down || 0, open: !!s.flipTo, dur, box: true, // down: already face down (an open card is); box: it goes in through the box's open end
+    jit: [0, 0, 0] }; // it settles squarely on top
   Object.assign(s, { flying: true, turn: 1 - s.fly.down, down: 0, flip: 0, flipTo: 0 });
   s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
@@ -2815,7 +2815,7 @@ function mildInk(hex, baseHex, mix = 1) {
 }
 function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
   // Flip: lift in the first ~22%, turn over in the middle, lay back down in the last ~22% (same path in reverse).
-  const tn = s.turn ?? (s.down > 0 ? 1 - s.down : null); // turned face down by its own clock: a draw, or over a deck
+  const tn = s.turn ?? (s.down > 0 && !s.flipTo ? 1 - s.down : null); // turned face down by its own clock: a draw, or over a deck (an open card is face down already)
   const fa = s.flipA ?? (tn != null ? Math.PI * (1 - easeFlip(tn)) : Math.PI * easeFlip(clamp((s.flip - 0.22) / 0.56))), fc = Math.cos(fa); // a drawn card turns on its own clock; the box's lid by its angle
   const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
   const lift = Math.max(s.lift, (view.phone ? 0.3 : 0.9) * up, s.flyLift); // on a phone a flip lifts less, so the card stays inside the screen
@@ -2832,7 +2832,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   U.set([inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
-    ...((s.fly || s.down > 0) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
+    ...(((s.fly && (!s.fly.open || s.fly.at === Infinity)) || (s.down > 0 && !s.flipTo)) && s.puv ? s.puv : s.buv || s.uv), // in a deck its plain back; an open card keeps its own until it is in ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0,
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
