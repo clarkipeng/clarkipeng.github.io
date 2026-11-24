@@ -111,7 +111,7 @@ const GROUPS = {
     ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
   ],
   Media: [
-    ['fadeIn', MOTION.respond, 0.05, 2, 0.05, 'fade in s'],
+    ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
     ['fadeOut', 1, 0.1, 3, 0.05, 'fade out s'],
     ['finishFirst', 1, 0, 1, 1, 'finish clip before fading out'],
     ['xfade', 0.6, 0.1, 2, 0.05, 'crossfade s'],
