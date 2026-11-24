@@ -12,6 +12,8 @@
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
 import { clips, mediaUrl } from 'virtual:desk-media';
+import { createWorld, boxShape } from './physics.js';
+import { createCurl } from './curl.js';
 
 export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;
@@ -137,6 +139,17 @@ const GROUPS = {
     ['cornerLift', 10, 0, 40, 1, 'hover lift px'],
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
     ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
+  ],
+  // Throw: the card box as a rigid body the turning page throws off (physics.js, curl.js).
+  Throw: [
+    ['throwG', 9000, 2000, 20000, 100, 'gravity px/s²'],
+    ['throwMass', 1, 0.1, 5, 0.05, 'box mass (against what it hits)'],
+    ['throwMu', 0.6, 0, 1.5, 0.05, 'box friction on paper'],
+    ['throwBounce', 0.25, 0, 0.9, 0.05, 'box restitution'],
+    ['throwSag', 40, 0, 120, 1, 'curl coupling: flap edge sag px'],
+    ['throwHz', 480, 120, 960, 60, 'physics steps per s'],
+    ['throwPersp', 0.25, 0.05, 1, 0.05, 'box perspective ease s'],
+    ['throwHome', 0.5, 0.1, 2, 0.05, 'fallen box eases home s'],
   ],
   // Desk: what the desk does with cards you move.
   Desk: [
@@ -1362,6 +1375,7 @@ function next() {
 const WARM = { fresh: 180, again: 30 };
 function prewarm(region, rate = 2) {
   const sm = sims[region];
+  if (turns() && !phys) idle(throwWorld); // the page turn's physics, ready before the turn
   if (!turns() || !sm || sm === sim || sm.ready) return;
   if (sm.pre) { sm.rate = Math.max(sm.rate, rate); return; }
   Object.assign(sm, { pre: true, rate, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
@@ -1893,7 +1907,7 @@ function placeDecks() {
     Object.assign(s.slide, { at, from: at, to: at, t: 1, wait: 0 }); // a new layout: where it was headed
     s.pile ??= []; s.lidT ??= 0; s.dirty = true;
     s.bx = { at: 0, from: 0, to: 0, t: 1, dur: 1, ease: easeOutQuart }; // an empty box tucks again from here
-    s.launch = null; // a new layout ends a box's flight
+    if (s.launch) endThrow(s, false); // a new layout ends a box's flight
     s.px = s.x = s.spot + s.slide.at;
   }
   for (const s of sources) { s.carrier = null; if (s.kind === 'deck') { s.el.hidden = !dealing; s.gone = true; } } // nothing to hold without the deal
@@ -1925,54 +1939,131 @@ function arriveDeck(region, delay, dur = MOTION.settle) {
   Object.assign(d.slide, { want: 'off', at: deckOut(d, 'off'), to: deckOut(d, 'off'), t: 1, wait: delay, arrive: dur });
   moveDeck(d);
 }
-// ---------- the box flies off ----------
-// A page that turns leaves its card box behind, not printed on it: once its cards are in, the box leans back on its
-// bottom edge (the wind-up), then is thrown off the right edge along a short rising arc, tumbling end over end, its
-// shadow left on the desk and fading, while the page turns under it; its lid and the cards in it ride along. One easing
-// family (cubic, easing out): it rears back at once and holds for a beat, then is thrown. It slides in again when its
-// page next shows, like every arriving box.
-const LAUNCH = { wind: 0.3, fly: 0.9, back: 0.55, pull: 0.5, turns: 1, twist: -0.7, rise: 0.3, lift: 3 }; // s; s; rad leaned back; drawn in, of its width; turns end over end; rad turned end for end; rise, of the desk's height; height toward you, in lifts
+// ---------- the box is thrown off ----------
+// A page that turns throws its card box off. The box is not printed on the page but rests on it: a rigid body
+// (physics.js) on the turning paper (curl.js, the same curl the page is drawn with). The flap's sagging edge slides under
+// the box, lifts and tips it, and the turn flings it off the frame; its lid and the cards in it ride along. A corner
+// turned by hand moves the paper under it the same way: let go before halfway and the box drops back onto the page,
+// settles, and eases home into its painting. Once off the frame it slides in again when its page next shows.
+const THROW = { fadeZ: 180, out: 0.6, limit: 6 }; // CSS px up by which its shadow has faded; s a box left at rest on screen after a turn takes to slide off; s at most in the air
 const easeOutCubic = (u) => 1 - (1 - u) ** 3;
+const POS = new Float64Array(3), ROT = new Float64Array(9);
+let phys = null; // the world and the turning page every thrown box shares
+// Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
+function throwWorld() {
+  if (phys && (phys.hz === T.throwHz || phys.L)) return phys;
+  const world = createWorld({ hz: T.throwHz }), curl = createCurl({ state: (t, out) => turnAt(phys.L, t, out), rollR });
+  world.surface = curl;
+  phys = { world, curl, hz: T.throwHz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
+  const k = view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
+  curl.page(0, view.w, view.h); world.g = T.throwG * k;
+  const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [view.w, 0.36 * view.h, 32.5 * k] });
+  for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
+  world.remove(b); phys.L = null;
+  return phys;
+}
+// Where the turn is t s after it began (the physics' clock): out = the fold's distance, its direction. A turn by hand is
+// its frames (t, d, a), straight between them and on past the last; once let go (or a click's turn), its own curve.
+function turnAt(L, t, out) {
+  const g = L.seg, k = L.keys, n = k.length;
+  if (g && (t >= g.t0 || n < 3)) { out[0] = lerp(g.d0, g.d1, g.ease(clamp((t - g.t0) / g.dur))); out[1] = g.a; return; }
+  if (n < 6) { out[0] = k[1]; out[1] = k[2]; return; }
+  let j = L.kj;
+  while (j > 0 && k[j] > t) j -= 3;
+  while (j + 6 < n && k[j + 3] <= t) j += 3;
+  L.kj = j;
+  const u = (t - k[j]) / Math.max(k[j + 3] - k[j], 1e-6);
+  out[0] = lerp(k[j + 1], k[j + 4], u); out[1] = lerp(k[j + 2], k[j + 5], u);
+}
+// The turn starts: the box becomes a body resting where it lies (asleep, so exactly as painted until the paper reaches
+// it), and its lid and cards ride with it. A box still settling from a turn that fell back is thrown from where it is.
 function launch(d) {
   if (!d || view.phone || !dealing) return;
-  d.launch = { t: 0, x: d.x, y: d.y };
+  const P = throwWorld(), { world, curl } = P;
+  if (P.L && P.L.d !== d) endThrow(P.L.d, true); // one turn at a time: a box from the last one is long off the frame
+  let L = d.launch;
+  if (!L) {
+    const { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, sh = boxShape(W, H, D, 24 * view.k);
+    const body = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: T.throwMass, inertia: sh.inertia(T.throwMass), friction: T.throwMu, bounce: T.throwBounce,
+      x: [d.x, d.y, D / 2], q: [Math.cos(a / 2), 0, 0, Math.sin(a / 2)] });
+    body.sleep = true;
+    L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 };
+  }
+  Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
+  P.L = L; world.time = 0; world.g = T.throwG * view.k;
+  curl.page(d.region * view.w, view.w, view.h); curl.sag = T.throwSag * view.k;
+  L.sv = world.save();
   const lid = lidOf(d);
   for (const s of sources) if (s === d || s === lid || s.deck === d) s.carrier = d;
+  poseThrow(d);
 }
-function stepLaunch(d, dt) {
-  d.launch.t = window.__j?.at ?? d.launch.t + dt; // test hook (as the turn's)
-  if (d.launch.t < LAUNCH.wind + LAUNCH.fly) return;
-  d.launch = null;
+function stepThrows(dt) { for (const d of sources) if (d.launch) stepThrow(d, dt); }
+function stepThrow(d, dt) {
+  const L = d.launch, { world } = phys, at = window.__j?.at; // test hook (as the turn's): hold the throw at one moment
+  L.t = at ?? L.t + dt; L.wt = at ?? L.wt + dt;
+  if (turn.on && turn.from === d.region) { // the paper under it, as the turn moves it
+    if (turn.mode === 'drag') L.keys.push(L.t, turn.d, turn.a);
+    else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES[T.turnEase] : easeOutCubic };
+    L.mode = turn.mode;
+  } else L.end ??= L.mode === 'back' ? 'back' : 'done';
+  if (at != null && at < world.time - 1e-9) world.load(L.sv); // held earlier: the same throw again from its start
+  if (L.home) L.home.t += dt;
+  else if (L.out) L.out.t += dt;
+  else {
+    const t0 = performance.now();
+    world.advance(L.t);
+    stats.throwMs = performance.now() - t0;
+    // At rest after the turn: home if the page fell back; off to the right if a finished turn left it on screen.
+    if (L.end && (L.body.sleep || L.t > THROW.limit)) { if (L.end === 'back') L.home = { t: 0, q: [...L.body.q] }; else L.out = { t: 0 }; }
+  }
+  poseThrow(d);
+  if (L.home ? L.home.t >= T.throwHome : offFrame(d)) endThrow(d, !L.home);
+}
+const quatMat = ([w, x, y, z]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
+const nlerp = (p, q, u) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
+// The thrown box this frame: its axes at rest on the desk (X, Y); where its middle is (C, CSS px, z above the desk) and
+// how it is turned from rest (M, row major); how far its perspective has eased in (w); how high its lowest point is
+// (low), how long its footprint is down the page, of its height (lv), and how far its shadow has faded.
+function poseThrow(d) {
+  const L = d.launch, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  phys.world.pose(L.body, POS, ROT);
+  let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / T.throwPersp));
+  if (L.home) { const u = smooth(L.home.t / T.throwHome), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
+  else if (L.out) C[0] += 1.2 * view.w * clamp(L.out.t / THROW.out) ** 3;
+  const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
+  const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2, down = (i) => Math.abs(c * R[3 + i] - s * R[i]);
+  C[2] = Math.min(C[2], 1200); // never up at the eye
+  L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, lv: clamp((W * down(0) + H * down(1) + D * down(2)) / H, 0.2, 1.3), fade: smooth(low / (THROW.fadeZ * view.k)) };
+}
+const launchPose = (d) => d.launch.P;
+// Off the frame: everything it could draw (it, its lid, as its eye sees them) is past an edge of its page.
+function offFrame(d) {
+  const P = d.launch.P, lid = lidOf(d), { W, H, D } = boxDims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
+  const r = (r0 * (1 + BOX3D.a) * F) / Math.max(F - r0, 1), x = P.C[0] - d.region * view.w, y = P.C[1];
+  return x - r > view.w || x + r < 0 || y + r < 0 || y - r > view.h;
+}
+function endThrow(d, arrive) {
+  const L = d.launch;
+  phys.world.remove(L.body);
+  if (phys.L === L) phys.L = null;
+  d.launch = null; d.dirty = true;
   for (const s of sources) if (s.carrier === d) s.carrier = null;
-  arriveDeck(d.region, 0); // back in from off the right edge (out of sight, unless a turn by hand fell back)
+  if (arrive) arriveDeck(d.region, 0); // back in from off the right edge when its page next shows (or now, if a turn by hand fell back)
 }
 // In the air the box is a real box: six paper-board faces, its open end showing the cards inside, its lid on its hinge.
 // At rest it is a painting of that same box: its front panel BOX_T up and right of its base is what an eye A F to the
 // lower left and F above it sees of a box BOX_T / A deep (A = BOX3D.a; F = 1800 px, as high as the eye above every
-// card). That eye draws it in the air, its perspective easing in over the wind-up (from far away at first), so the first
-// frame is the painting.
+// card). That eye draws it in the air, its perspective easing in as the turn starts (from far away at first), so the
+// first frame is the painting.
 // The box's frame: X along it from its open end, Y down the page, Z up from its base; W, H, D its sizes along them (CSS px).
 const BOX3D = { a: 0.4 };
 const boxDims = (d) => { const t = BOX_T * (d.k || 1); return { t, W: d.w - t, H: d.h - t, D: t / BOX3D.a }; };
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-// The flying box: its axes on the desk (X, Y), its turn end over end (psi, about X) and end for end (twist, about Y),
-// where its middle is (C, CSS px, z above the desk), how far through the wind-up (w) and the throw (p) it is, and how
-// far its shadow has faded.
-function launchPose(d) {
-  const L = d.launch, { H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, X = [Math.cos(a), Math.sin(a), 0], Y = [-Math.sin(a), Math.cos(a), 0];
-  const w = easeOutCubic(clamp(L.t / LAUNCH.wind)), u = clamp((L.t - LAUNCH.wind) / LAUNCH.fly), p = u * (2 - u); // p: thrown, slowing as it rises
-  const back = -LAUNCH.back * w, edge = [(Y[0] * H) / 2, (Y[1] * H) / 2, -D / 2], e = rodrigues(edge, X, back); // leaning back on its bottom edge, which stays down
-  const pull = LAUNCH.pull * d.w, lid = lidOf(d), across = (pull + d.w / 2 + (lid ? lid.w : 0) + 40 * view.k) / 0.8; // drawn in, out from under the edge, then off it (its open lid too) by 80% of the throw
-  const dip = 8 * view.k * w; // and down a little, away from where it goes
-  // Thrown up toward you and out over the right edge: steady across, its rise and its turn slowing (a throw's arc).
-  return { X, Y, w, p, psi: back + (LAUNCH.back + 2 * Math.PI * LAUNCH.turns) * p, twist: LAUNCH.twist * p, fade: smooth(p / 0.5),
-    C: [L.x + edge[0] - e[0] - pull * w + across * u, L.y + edge[1] - e[1] + dip - LAUNCH.rise * view.h * p, D / 2 + edge[2] - e[2] + LAUNCH.lift * T.lift * p] };
-}
-const boxTurn = (P) => (v) => rodrigues(rodrigues(v, P.Y, P.twist), P.X, P.psi);
+const boxTurn = ({ M }) => (v) => [M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2]];
 // Something riding in the flying box (its lid, the cards in it), from where it lies at rest: where it is relative to the
 // box's middle (dc) and its axes, turned with the box. At rest each is drawn from straight above, not by the box's eye,
-// so it starts where that eye sees it there and settles into the box over the wind-up (a card in it slides all the way in).
+// so it starts where that eye sees it there and settles into the box as its perspective eases in (a card in it slides all the way in).
 function carried(d, { sx, sy, z, mu, mv }, P) {
   const L = d.launch, A = BOX3D.a, u = 1 - P.w, { D } = boxDims(d), s0 = A * (D / 2 - u * z), turn = boxTurn(P);
   const lean = (m) => [m[0] - u * A * m[2], m[1] + u * A * m[2], m[2]];
@@ -2068,7 +2159,7 @@ function moveDeck(d) {
 function stepDecks(dt) {
   for (const d of sources) {
     if (!d.more || view.phone || !d.slide || !dealing) continue;
-    if (d.launch) { stepLaunch(d, dt); continue; }
+    if (d.launch) continue; // thrown (stepThrows)
     const v = d.slide;
     if (v.wait > 0) v.wait -= dt;
     else if (v.want === 'off') slideDeck(d, 'out', v.arrive || MOTION.settle, easeOutQuart); // the arrival
@@ -3071,9 +3162,9 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const looks = (m) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
   let lv = looks(mv);
   if (s.carrier === s) { // the flying box itself: only its shadow on the desk, under where it is (its faces are drawn on their own)
-    const P = launchPose(s), { H: bh, D } = boxDims(s), c = Math.abs(Math.cos(P.psi)), n = Math.abs(Math.sin(P.psi));
-    sx += P.C[0] - s.launch.x; sy += P.C[1] - s.launch.y; z += Math.max(0, P.C[2] - D / 2); fade = P.fade;
-    lv = clamp((bh * c + D * n) / bh, 0.2, 1.3); flags = 8; // its footprint along the page as it turns end over end
+    const P = launchPose(s);
+    sx += P.C[0] - s.launch.x; sy += P.C[1] - s.launch.y; z += Math.max(0, P.low); fade = P.fade;
+    lv = P.lv; flags = 8; // its footprint along the page as it tumbles
   } else if (s.carrier) { // riding in it: seen by the box's eye
     const d = s.carrier, P = launchPose(d), i = d.pile.indexOf(s), a = (d.rot * Math.PI) / 180;
     if (i >= 0) { const inn = P.w * (2 + i * BOX_STEP + 3) * view.k; sx += Math.cos(a) * inn; sy += Math.sin(a) * inn; } // in all the way
@@ -3144,7 +3235,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id));
   // The page you left's card box flies off over the turn, above both pages (never part of the turning page's frame).
-  const over = turn.on && !capturing && !view.phone ? fly(sources.filter((x) => x.carrier === x && x.region !== s.page).map((x) => x.id)).slice(0, MAX - order.length) : [];
+  const over = !capturing && !view.phone ? fly(sources.filter((x) => x.carrier === x && x.region !== s.page).map((x) => x.id)).slice(0, MAX - order.length) : [];
   const vs = videoSrc;
   let vu = [0, 0, 1, 1];
   if (vs) {
@@ -3278,6 +3369,7 @@ function frame(now) {
   syncHover();
   stepCards(dt);
   stepTurn(dt);
+  stepThrows(dt); // after the turn: the paper under a thrown box is where the turn just put it
   stepDoor(dt);
   stepMedia(dt);
   cursor.amt *= Math.exp(-dt * 2);
@@ -3691,7 +3783,7 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, LAUNCH, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
+window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, throws: () => sources.filter((s) => s.launch).map(({ region, launch: L }) => ({ region, t: L.t, C: L.P.C.map(Math.round), end: L.end, home: !!L.home, out: !!L.out, asleep: L.body.sleep })), stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {
