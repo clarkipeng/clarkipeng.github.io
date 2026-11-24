@@ -171,7 +171,7 @@ const GROUPS = {
     ['chipHurry', 6, 1, 20, 0.5, 'over the cap: the oldest is eaten x faster'],
     ['chipCrumbs', 30, 0, 200, 1, 'a piece under this many columns is crumbs'],
     ['chipCrumbS', 0.6, 0.05, 3, 0.05, 'crumbs eaten in s'],
-    ['chipGold', 0.45, 0, 1, 0.01, 'pale to deep gold'],
+    ['chipGold', 0.8, 0, 1, 0.01, 'pale to deep gold'],
     ['chipCrisp', 0.35, 0, 1.5, 0.01, 'browned rim'],
     ['chipRipple', 0.4, 0, 2, 0.01, 'ripples'],
     ['chipSalt', 0.6, 0, 2, 0.01, 'salt'],
