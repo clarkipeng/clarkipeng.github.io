@@ -115,13 +115,13 @@ const GROUPS = {
     ['curlShadow', 1.5, 0, 3, 0.05, 'shadow under the lift'],
     ['curlShadowOff', 0.75, 0, 1.5, 0.01, 'shadow offset per px of lift'],
     ['curlShadowBlur', 0.8, 0, 2, 0.01, 'shadow blur per px of lift'],
-    // Clicked, it folds up over its strip to show its back, like a top-bound pad's sheet: its edge lifts, then it rolls over.
-    ['foldLift', 0.35, 0.05, 0.8, 0.01, 'share of the fold lifting its edge (then it rolls over: the top of its arc)'],
-    ['foldTop', 1.6, 0.2, 4, 0.05, 'fold speed over the top of its arc /s'],
-    ['foldG', 220, 5, 600, 1, 'gravity past the top of the arc /s2'],
-    ['foldBounce', 0.6, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
+    // Clicked, it swings up about its strip to show its back, like a top-bound pad's sheet, and falls over the other side.
+    ['foldLift', 0.08, 0.01, 0.3, 0.01, 'share of the flip its corner takes to flatten (then the sheet swings)'],
+    ['foldTop', 1.2, 0.2, 4, 0.05, 'swing speed through upright /s'],
+    ['foldG', 30, 5, 200, 1, 'gravity on the swinging sheet /s2'],
+    ['foldBounce', 0.35, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
     ['foldSlap', 2.5, 0.5, 4, 0.1, 'slap burst (a hard throw is 1.5)'],
-    ['foldR', 5, 2, 16, 0.5, 'the fold\'s crease radius px'],
+    ['foldR', 5, 2, 16, 0.5, 'its bend at the strip, radius px once over'],
   ],
   // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
   // of speed, and releases any agents waiting for it (a page's network grows out of its cards when they fly in).
@@ -291,9 +291,11 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // its paper bends up ever harder over its first cam.z, then rolls on round a circle of curvature ln.w (0: flat); cam.w:
 // the note's card index. lt: the light's dot with the roll's direction and with the note's normal, how strongly the bend
 // shows it, and the room light's share. sh: the shadow's offset per unit of height (in the note's frame), its extra blur
-// per unit of height, and the lifted part's extra shadow. ex: how much greyer its underside shows, and how strongly
-// the light shows on it (thin paper glows through).
-struct Curl { ln: vec4f, cam: vec4f, lt: vec4f, sh: vec4f, ex: vec4f };
+// per unit of height, and the lifted part's extra shadow. ex: how much greyer its underside shows, how strongly
+// the light shows on it (thin paper glows through), the bend's whole turn (the paper past it runs straight), and how much
+// of its back's writing the underside shows (on: swinging about its strip). pv.x: perspective, how much further a view
+// ray moves per unit of height per unit out from the note's middle (its camera is right above it).
+struct Curl { ln: vec4f, cam: vec4f, lt: vec4f, sh: vec4f, ex: vec4f, pv: vec4f };
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -366,7 +368,7 @@ fn curlBend(x0: vec2f, v: vec2f, y0: f32, vn: f32) -> CurlHit {
 fn curlHit(x0: vec2f, v: vec2f, up: bool) -> CurlHit {
   let n = g.nc.ln.xy; let y0 = dot(x0, n) - g.nc.ln.z; let vn = dot(v, n);
   let geo = g.cards[u32(g.nc.cam.w)].geo;
-  let r = 1.0 / g.nc.ln.w; let cr = curlRoll(); let sr = g.nc.cam.z; let fold = g.nc.ex.w > 0.0;
+  let r = 1.0 / g.nc.ln.w; let cr = curlRoll(); let sr = g.nc.cam.z; let fold = g.nc.ex.w > 0.0; let ta = g.nc.ex.z;
   // Behind everything the lifted paper reaches (no higher than the roll's top), the ray meets the flat paper.
   if (!fold && y0 < min(0.0, cr.x - r) - max(vn, 0.0) * (cr.y + r)) { return CurlHit(x0, 0.0, 0.0, -1e4, false); }
   let dy = y0 - cr.x; let A = 1.0 + vn * vn; let B = dy * vn - cr.y;
@@ -379,16 +381,19 @@ fn curlHit(x0: vec2f, v: vec2f, up: bool) -> CurlHit {
     let h = (-B + select(-1.0, 1.0, i == 0) * sqrt(max(disc, 0.0))) / A;
     let y = y0 + vn * h; let th = atan2(y - cr.x, cr.y - h);
     let f = x0 + v * h + n * (sr + (th - cr.z) * r - y);
-    on[i] = vec4f(f, th, select(1e9, boxSd(f, geo.xy, geo.z), disc >= 0.0 && th >= cr.z)); hs[i] = h;
+    on[i] = vec4f(f, th, select(1e9, boxSd(f, geo.xy, geo.z), disc >= 0.0 && th >= cr.z && (th <= ta || !fold))); hs[i] = h;
   }
-  // Folding (the note turned up to show its back): past a half turn the paper runs straight back over its strip, back up,
-  // at the roll's top (ha). Its place laid flat and how far that is outside the outline.
-  let ha = cr.y + r; var tl = vec3f(0.0, 0.0, 1e9);
+  // Swinging about its strip (to show its back): past the bend's turn (ta, ending at a) the paper runs straight on (along
+  // td), the ray meeting it at height ha (hl: no higher than its free edge, for the fade past it). Its place laid flat and
+  // how far that is outside the outline.
+  let a = vec2f(cr.x + r * sin(ta), cr.y - r * cos(ta)); let td = vec2f(cos(ta), sin(ta));
+  let ha = ((a.x - y0) * td.y - a.y * td.x) / (vn * td.y - td.x); var tl = vec3f(0.0, 0.0, 1e9);
+  let hl = min(ha, a.y + max(dot(abs(n), geo.xy) - g.nc.ln.z - sr - (ta - cr.z) * r, 0.0) * td.y);
   if (fold) {
-    let t = cr.x - y0 - vn * ha;
-    if (t >= 0.0) { let f = x0 + v * ha + n * (sr + (3.14159265 - cr.z) * r + t - (y0 + vn * ha)); tl = vec3f(f, boxSd(f, geo.xy, geo.z)); }
+    let t = dot(vec2f(y0 + vn * ha, ha) - a, td);
+    if (t >= 0.0 && ha >= 0.0) { let f = x0 + v * ha + n * (sr + (ta - cr.z) * r + t - (y0 + vn * ha)); tl = vec3f(f, boxSd(f, geo.xy, geo.z)); }
     if (up && y0 <= 0.0 && boxSd(x0, geo.xy, geo.z) < 0.0) { return CurlHit(x0, 0.0, 0.0, -1e4, false); } // its shadow: the strip under it, on the desk
-    if (!up && tl.z < 0.0) { return CurlHit(tl.xy, ha, 3.14159265, -1e4, false); }
+    if (!up && tl.z < 0.0) { return CurlHit(tl.xy, hl, ta, -1e4, false); }
   }
   if (up && y0 > 0.0) {
     if (onBend) { let b = curlBend(x0, v, y0, vn); if (boxSd(b.p, geo.xy, geo.z) < 0.0) { return b; } }
@@ -399,7 +404,8 @@ fn curlHit(x0: vec2f, v: vec2f, up: bool) -> CurlHit {
     return CurlHit(on[0].xy, hs[0], on[0].z, m, over);
   }
   if (on[1].w < 0.0) { return CurlHit(on[1].xy, hs[1], on[1].z, m, false); }
-  if (tl.z < 0.0 || (tl.z < 1e9 && tl.z < boxSd(x0, geo.xy, geo.z))) { return CurlHit(tl.xy, ha, 3.14159265, -1e4, false); } // on it (seen from below), or nearer its edge than the flat paper's
+  if (tl.z < 0.0 || (tl.z < 1e9 && (up || tl.z < boxSd(x0, geo.xy, geo.z)))) { return CurlHit(tl.xy, hl, ta, -1e4, false); } // on it, or its edge: its
+  // shadow's soft side (the higher, the softer), or seen from below nearer its edge than the flat paper's
   if (y0 <= 0.0) { return CurlHit(x0, 0.0, 0.0, -1e4, false); }
   if (onBend) { return curlBend(x0, v, y0, vn); }
   let b = select(1, 0, on[0].w < on[1].w); // just past the outline: the nearer, so its edge fades out
@@ -417,7 +423,7 @@ fn curlHit(x0: vec2f, v: vec2f, up: bool) -> CurlHit {
 // as it rolls up, so the ink keeps to the outline it shows, not the one it would have lying flat.
 fn cardSd(k: u32, p: vec2f) -> f32 {
   let c = g.cards[k]; let l = toLocal(c, p);
-  if (f32(k) == g.nc.cam.w && g.nc.ln.w > 0.0) { let r = curlHit(l, g.nc.cam.xy, false); return (boxSd(r.p, c.geo.xy, c.geo.z) + max(r.m, 0.0)) * c.misc.x; }
+  if (f32(k) == g.nc.cam.w && g.nc.ln.w > 0.0) { let r = curlHit(l, g.nc.cam.xy - l * g.nc.pv.x, false); return (boxSd(r.p, c.geo.xy, c.geo.z) + max(r.m, 0.0)) * c.misc.x; }
   return boxSd(l, c.geo.xy, c.geo.z) * c.misc.x;
 }
 fn pcg(v: u32) -> u32 {
@@ -829,9 +835,9 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   // The curled note: where the view ray meets its rolled paper (seen from its own camera), that paper's place on the note,
   // and its angle on the roll; the paper's edge looks finer on screen where the roll foreshortens it.
   let curled = f32(k) == g.nc.cam.w && g.nc.ln.w > 0.0;
-  var th = 0.0; var aa = 1.0; var rim = 1.0; var over = false;
+  var th = 0.0; var aa = 1.0; var rim = 1.0; var over = false; let cv = g.nc.cam.xy - lp * g.nc.pv.x; // the view ray
   if (curled) {
-    let r = curlHit(lp, g.nc.cam.xy, false);
+    let r = curlHit(lp, cv, false);
     over = r.over; lp = r.p; th = r.th; rim = clamp(0.5 - r.m * c.misc.x / q, 0.0, 1.0);
     let n = g.nc.ln.xy; let gd = boxGrad(lp, c.geo.xy, c.geo.z);
     aa = length(vec2f(dot(gd, n) * cos(th), dot(gd, vec2f(-n.y, n.x))));
@@ -870,7 +876,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
     let un = abs(fl - select(u0, ub, back));
     var tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
     // The curled note's paper rolled past upright shows its underside; folding up to read, its back's writing comes with it.
-    let under = curled && th > 0.0 && cos(th) < dot(g.nc.cam.xy, g.nc.ln.xy) * sin(th);
+    let under = curled && th > 0.0 && cos(th) < dot(cv, g.nc.ln.xy) * sin(th);
     if (under && g.nc.ex.w > 0.0) {
       let other = textureSampleLevel(atlas, samp, mix(select(c.buv.xy, c.uv.xy, back), select(c.buv.zw, c.uv.zw, back), abs(fl - select(ub, u0, back))), 0.0);
       tex = mix(tex, other, g.nc.ex.w);
@@ -1706,9 +1712,9 @@ function stepCards(dt) {
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
     if (s === noteSrc) stepCurl(s, dt);
     if (s.flip !== s.flipTo) {
-      if (hinged(s)) { // the note: over the top of its arc gravity takes it, and it slaps down (one burst) with a little bounce
-        const dir = s.flipTo ? 1 : -1, g = T.foldG * (s.flip - T.foldLift); // gravity pushes it off the top of its arc
-        s.flipV = s.slap ? dir * Math.hypot(T.foldTop, Math.sqrt(T.foldG) * (s.flip - T.foldLift)) : s.flipV + g * dt; // until it lands its speed follows its height, so a long frame can't stall it
+      if (hinged(s)) { // the note: a flick swings it up to upright, gravity takes it over, and it slaps down (one burst) with a little bounce
+        const dir = s.flipTo ? 1 : -1, th = swing(s.flip), g = -T.foldG * Math.cos(th); // gravity holds it back up to upright, then pulls it down
+        s.flipV = s.slap ? dir * Math.sqrt(T.foldTop ** 2 + T.foldG * (1 - Math.sin(th))) : s.flipV + g * dt; // until it lands its speed follows its height, so a long frame can't stall it
         s.flip += s.flipV * dt;
         if (dir * (s.flip - s.flipTo) >= 0) {
           if (s.slap) { s.slap = false; land(s, T.foldSlap); }
@@ -1755,22 +1761,21 @@ const curlRoll = (s) => (Math.min(s.curl, 170) * Math.PI / 180) * (1 - smooth(s.
 // The curl's shape now, in the note's frame (CSS px from its middle, y toward its free edge): the roll's direction n, its
 // foot (the line dot(x, n) = d0, never into the strip), how far the bend grows (sr) and the curvature it then rolls at
 // (kap); null while it lies flat. The corner, L past the foot, ends rolled by the whole angle: kap (L - sr / 2) of it.
-// Folding up to show its back (s.flip), like a top-bound pad's sheet: first its edge lifts (the corner's roll grows
-// to a half turn, the lean straightens, and its foot climbs to the strip, T.foldLift of the way), then the roll tightens to a
-// crease of radius T.foldR, and the paper past the half turn lies back over the strip, back up (the shader's tail). back:
-// how much of the underside shows the back's writing.
+// Flipping up to show its back (s.flip), like a top-bound pad's sheet: its corner flattens over the first T.foldLift of it,
+// then the whole sheet swings about its strip (th, from flat to over), bending softly there (the bend's paper is the
+// crease's, radius T.foldR once over) and straight past it (the shader's tail). back: its underside shows the back's writing.
 function noteCurl(s) {
-  const roll = curlRoll(s), e = s.flip || 0;
+  const roll = curlRoll(s), e = s.flip || 0, sw = e > T.foldLift;
   if (!(roll > 1e-3) && !(e > 0)) return null;
-  const k = s.k || 1, p1 = Math.min(e / T.foldLift, 1), p2 = Math.max((e - T.foldLift) / (1 - T.foldLift), 0);
-  const a = (T.curlTilt * Math.PI / 180) * (1 - p1), n = [Math.sin(a), Math.cos(a)], hw = s.w / 2, hh = s.h / 2;
+  const k = s.k || 1, a = sw ? 0 : (T.curlTilt * Math.PI) / 180, n = [Math.sin(a), Math.cos(a)], hw = s.w / 2, hh = s.h / 2;
   const corner = n[0] * (a < 0 ? -hw : hw) + n[1] * hh; // the corner that rolls most, along n
   const more = T.curlHover > 0 ? T.curlHoverReach * Math.min(Math.max((s.curl - T.curlRest) / T.curlHover, 0), 1) : 0;
   const strip = Math.abs(n[0]) * hw + n[1] * (STRIP * k - hh); // its foot never reaches into the strip
-  const d0 = lerp(Math.max(corner - T.curlReach * (1 + more) * s.h, strip), strip, p1), L = corner - d0;
-  const Lb = lerp(L, Math.min(L, crease(k)), p2), sr = T.curlRamp * Lb; // the paper in the roll (the rest lies back flat)
-  return { n, d0, sr, kap: lerp(roll, Math.PI, p1) / (Lb - sr / 2), back: p1 };
+  const d0 = sw ? strip : Math.max(corner - T.curlReach * (1 + more) * s.h, strip), L = corner - d0;
+  const Lb = sw ? Math.min(L, crease(k)) : L, sr = T.curlRamp * Lb, th = sw ? swing(e) : roll * (1 - e / T.foldLift); // the paper in the bend, and its turn
+  return { n, d0, sr, kap: th / (Lb - sr / 2), th, back: sw ? 1 : 0 };
 }
+const swing = (e) => (Math.PI * Math.max(e - T.foldLift, 0)) / (1 - T.foldLift); // the sheet's turn about its strip
 // The folded crease's paper (CSS px): a half turn at radius T.foldR, its bend growing in over T.curlRamp of it.
 const crease = (k) => (Math.PI * T.foldR * k) / (1 - T.curlRamp / 2);
 // The folded note in its frame (CSS px from its middle, y down): its back's top edge (C - hh, its picture shown upright
@@ -1822,16 +1827,16 @@ function placeRing(s) {
 // and its camera's distance, from cardUniform). Flat (ln.w = 0) when it lies flat or its face turns from the camera.
 const LIGHT = (() => { const l = [-0.3, -0.75, 1], m = Math.hypot(...l); return l.map((v) => v / m); })(); // the desk's light, from the upper left
 function curlUniform(s, fr, dpr) {
-  const out = [0, 0, 0, 0, 0, 0, 0, s ? s.id : -1, ...Array(12).fill(0)], c = s && fr && noteCurl(s);
+  const out = [0, 0, 0, 0, 0, 0, 0, s ? s.id : -1, ...Array(16).fill(0)], c = s && fr && noteCurl(s);
   if (!c) return out;
   const unit = (v) => { const m = Math.hypot(...v); return v.map((x) => x / m); }, dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const u = unit(fr.mu), v = unit(fr.mv), nz = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
   if (nz[2] < 0.2) return out;
   const ez = fr.f * nz[2], roll = [0, 1, 2].map((i) => c.n[0] * u[i] + c.n[1] * v[i]); // the roll's direction in 3D
-  const up = 1 + 2 * Math.abs(Math.sin(Math.PI * s.flip)), o = [0.25 * up * T.curlShadowOff, up * T.curlShadowOff], cs = Math.cos(fr.th), sn = Math.sin(fr.th); // the shadow's offset per unit height, into the note's frame
-  out.splice(0, 20, c.n[0], c.n[1], c.d0 * dpr, c.kap / dpr, (fr.f * u[2]) / ez, (fr.f * v[2]) / ez, c.sr * dpr, s.id,
-    dot3(roll, LIGHT), dot3(nz, LIGHT), T.curlLight, T.curlAmbient, cs * o[0] + sn * o[1], -sn * o[0] + cs * o[1], up * T.curlShadowBlur, T.curlShadow,
-    T.curlUnderGrey, T.curlUnderLight, 0, c.back);
+  const o = [0.25 * T.curlShadowOff, T.curlShadowOff], cs = Math.cos(fr.th), sn = Math.sin(fr.th); // the shadow's offset per unit height, into the note's frame
+  out.splice(0, 24, c.n[0], c.n[1], c.d0 * dpr, c.kap / dpr, (fr.f * u[2]) / ez, (fr.f * v[2]) / ez, c.sr * dpr, s.id,
+    dot3(roll, LIGHT), dot3(nz, LIGHT), T.curlLight, T.curlAmbient, cs * o[0] + sn * o[1], -sn * o[0] + cs * o[1], T.curlShadowBlur, T.curlShadow,
+    T.curlUnderGrey, T.curlUnderLight, c.th, c.back, Math.hypot(...fr.mu) / fr.f, 0, 0, 0);
   return out;
 }
 
@@ -3174,7 +3179,7 @@ async function buildAtlas(g) {
 // ---------- uniforms ----------
 
 // Uniform layout: 25 vec4 of globals, 4 of the note's curl, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const CURL_OFF = 25 * 4, G_HEAD = 30, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
+const CURL_OFF = 25 * 4, G_HEAD = 31, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
 const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -3315,7 +3320,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     ...(capturing || view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
-    ...shared.labelUV[page], ...shared.labelUV[turn.from], ...Array(20).fill(0), // the note's curl (below, once its frame is known)
+    ...shared.labelUV[page], ...shared.labelUV[turn.from], ...Array(24).fill(0), // the note's curl (below, once its frame is known)
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   let noteFrame = null;
   for (const src of sources) { // each card from its own page's origin (the box flying off the page you left)
