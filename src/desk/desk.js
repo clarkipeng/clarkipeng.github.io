@@ -12,8 +12,10 @@
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
 import { clips, mediaUrl } from 'virtual:desk-media';
-import { createWorld, NCH } from './chips.js';
+import { createChips, NCH } from './chips.js';
 import { createChipRenderer } from './chip-render.js';
+import { createWorld, boxShape } from './physics.js';
+import { createCurl } from './curl.js';
 
 export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;
@@ -28,7 +30,7 @@ const PAPER = [0xf3, 0xf1, 0xea];
 // Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
 // custom properties (--paper, --stock, ...), so the DOM still and no-WebGPU fallback match the GPU drawing.
 const TOK = {
-  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', note: '#fff4a8', noteStrip: '#f7ea98',
+  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', film: '#fbf8f0', note: '#fff4a8', noteStrip: '#f7ea98',
   text: '#1d1d1b', text2: '#2b2b28', body: '#3d3c38', muted: '#6f6d66', // muted is AA (4.5:1) on paper and every stock
   ink: '#a5a970', inkDeep: '#5c5f4a', inkLine: '#85895c', // inkLine: drawn link underlines, 3:1 on every stock
   fs: 13, fsHand: 23, lhBody: 20, radius: 3,
@@ -132,6 +134,13 @@ const GROUPS = {
     ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
     ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
   ],
+  // Film: photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a
+  // 107 mm sheet), as fractions of the cards' shared longest side; the strip grows to fit its page's longest caption.
+  Film: [
+    ['frameSide', 0.042, 0, 0.1, 0.002, 'side borders'],
+    ['frameTop', 0.052, 0, 0.12, 0.002, 'top border'],
+    ['frameBottom', 0.19, 0.06, 0.32, 0.005, 'bottom strip'],
+  ],
   // Notebook: each page's folded corner, the way to the other page, and the page turn.
   Notebook: [
     ['cornerSize', 70, 40, 120, 1, 'corner size px'],
@@ -140,11 +149,24 @@ const GROUPS = {
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
     ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
   ],
+  // Throw: the card box as a rigid body the turning page throws off (physics.js, curl.js).
+  Throw: [
+    ['throwG', 9000, 2000, 20000, 100, 'gravity px/s²'],
+    ['throwMass', 1, 0.1, 5, 0.05, 'box mass (against what it hits)'],
+    ['throwMu', 0.6, 0, 1.5, 0.05, 'box friction on paper'],
+    ['throwBounce', 0.25, 0, 0.9, 0.05, 'box restitution'],
+    ['throwSag', 40, 0, 120, 1, 'curl coupling: flap edge sag px'],
+    ['throwHz', 480, 120, 960, 60, 'physics steps per s'],
+    ['throwPersp', 0.25, 0.05, 1, 0.05, 'box perspective ease s'],
+    ['throwHome', 0.5, 0.1, 2, 0.05, 'fallen box eases home s'],
+  ],
   // Desk: what the desk does with cards you move.
   Desk: [
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
+    ['lidS', 0.25, 0.05, 1, 0.05, 'card box flap folds open or shut s'],
+    ['lidWait', 0.3, 0, 1.5, 0.05, 'flap waits before shutting s'],
   ],
   // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.js).
   Chips: [
@@ -156,12 +178,11 @@ const GROUPS = {
     ['chipBend', 0.8, 0.05, 2, 0.01, 'how gradually the edges curl'],
     ['chipDrop', 150, 0, 400, 1, 'drop height px'],
     ['chipSpin', 10, 0, 30, 0.5, 'tumble rad/s'],
-    ['chipG', 13700, 2000, 30000, 100, 'gravity px/s²'],
-    ['chipAir', 0.06, 0, 0.3, 0.005, 'air drag /px'],
+    ['chipMass', 0.05, 0.005, 0.5, 0.005, 'mass against the card box'],
+    ['chipSweep', 8, 2, 20, 0.5, 'left on screen by a turn: swept off at x page widths/s²'],
     ['chipCam', 1200, 400, 4000, 10, 'camera height px (nearer looks larger)'],
     ['chipE', 0.3, 0, 0.8, 0.01, 'bounce'],
     ['chipMu', 0.5, 0, 1.5, 0.01, 'friction'],
-    ['chipRock', 3, 0, 12, 0.1, 'rocking damping'],
     ['chipEat', 0.4, 0.05, 3, 0.01, 'eating speed'],
     ['chipBand', 1, 0.2, 4, 0.05, 'eaten within px of the desk'],
     ['chipTaste', 1.5, 0.2, 6, 0.05, 'slime under it counts x'],
@@ -300,7 +321,8 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
 // z = how much higher than a flat card its far shadow falls from (CSS px), w = 4 x flags + how long its vertical axis looks
-// (0 to 1, as it turns); flags: 1 its back is turned over its horizontal axis (the note), 2 the box it rides in has turned it over
+// (0 to 1, as it turns); flags: 1 its back is turned over its horizontal axis (the note), 4 a face of the flying box (y: its
+// opacity; bound.w: its light), 8 only its shadow (the flying box's base)
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, how long its horizontal axis looks (0 to 1)
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
@@ -335,7 +357,7 @@ struct G {
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
-  ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, unused
+  ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, chips thrown off the page you left
   chipf: array<vec4f, ${NCH * 2}>, // per chip: center, food radius, food strength (sim px); then per chip: landing pulse
   chipt: array<vec4f, ${NCH}>, // each chip's tile, lowest first: its corner and size on the canvas (device px), its layer in chipTex
 };
@@ -590,7 +612,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var m = vec4u(0u);
   for (var j = 0u; j < u32(g.z.w + g.z.z); j++) { // the page's cards and the box flying off it
     let k = u32(g.ord[j / 4u][j % 4u]);
-    let reach = g.cards[k].bound.x + (40.0 + 60.0 * g.cards[k].geo.w) * s * max(g.u.x, 1.0);
+    let face = (u32(g.cards[k].obj.w * 0.25) & 4u) != 0u;
+    let reach = g.cards[k].bound.x + select((40.0 + 60.0 * g.cards[k].geo.w) * s * max(g.u.x, 1.0), 0.0, face);
     if (rectDist(g.cards[k].flat.xy, lo, hi) <= reach + 1.0) { m.x |= 1u << j; }
   }
   for (var k = 0u; k < u32(g.d.z); k++) {
@@ -673,12 +696,13 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
   c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
   return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
 }
-// Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
-fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
-  let q = p - c.flat.xy - o;
+// Signed distance to card c's flat footprint at q from its center (sim px).
+fn footSd(c: Card, q: vec2f) -> f32 {
   let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / max(vec2f(c.bound.w, fract(c.obj.w * 0.25) * 4.0), vec2f(0.05)); // squashed as the card turns
-  return 1.0 - smoothstep(-b, b, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x);
+  return boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x;
 }
+// Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
+fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 { return 1.0 - smoothstep(-b, b, footSd(c, p - c.flat.xy - o)); }
 
 // Bare paper in the paper style: its grain (gr) and the vignette (vq).
 fn bare(gr: vec2f, vq: vec2f) -> vec3f {
@@ -769,10 +793,13 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   let jmode = g.st.x > 1.5;
   let c = g.cards[k];
   let lift = c.geo.w;
-  if (distance(p, c.flat.xy) > c.bound.x + (40.0 + 60.0 * lift) * s * max(g.u.x, 1.0)) { return col; }
+  let ow = u32(c.obj.w * 0.25);
+  let face = (ow & 4u) != 0u; // a face of the flying box: no shadow of its own, lit by its turn
+  let base = (ow & 8u) != 0u; // the flying box's base: only its shadow, from its footprint, the contact one gone once it lifts
+  if (distance(p, c.flat.xy) > c.bound.x + select((40.0 + 60.0 * lift) * s * max(g.u.x, 1.0), 0.0, face)) { return col; }
   let lp = toLocal(c, p);
-  let d = boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x;
-  if (jmode) {
+  let d = select(boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x, footSd(c, p - c.flat.xy), base);
+  if (jmode && !face) {
     // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
     if (d > -1.0) {
       let dd = max(d, 0.0) / s;
@@ -781,19 +808,18 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       if (lift > 0.001) { let b = (2.0 + 20.0 * lift) * s; ls = shadow(c, p, vec2f(0.35, 1.0) * c.misc.w * 1.3, b) * 0.24 * lift; }
       col *= (1.0 - contact * (1.0 - c.imp.w)) * (1.0 - ls * (1.0 - c.imp.w));
     }
-  } else {
+  } else if (!face) {
     // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
-    let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - 0.6 * lift) * g.u.y;
+    let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - select(0.6, 1.0, base) * lift) * g.u.y;
     let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x) * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
     col *= (1.0 - near * (1.0 - c.imp.w)) * (1.0 - far * (1.0 - c.imp.w)); // imp.w: its shadow fades as it flies off
   }
+  if (base) { return col; }
   let cov = clamp(0.5 - d / q, 0.0, 1.0);
   if (cov > 0.0) {
     var un = lp / (2.0 * c.geo.xy) + 0.5;
     let back = c.bound.y < 0.0;
-    let ow = u32(c.obj.w * 0.25);
     if (back) { if ((ow & 1u) != 0u) { un.y = 1.0 - un.y; } else { un.x = 1.0 - un.x; } } // seen from behind (turned over its horizontal or vertical axis), so the back reads the right way round
-    if ((ow & 2u) != 0u) { un.y = 1.0 - un.y; } // and turned over again by the box it rides in: the same picture, upright
     let tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
     var cc = pow(tex.rgb, vec3f(2.2));
     ${video ? `if (!back && f32(k) == g.v.x && g.v.y > 0.0) {
@@ -817,8 +843,14 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
       let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
       cc = printed(cc, gr, edge, color);
+      // The picture lies under the frame's glossy window: a hairline of shadow where the frame's edge overlaps it, and a
+      // faint sheen that holds still as the card turns and slides toward the top as it lifts.
+      cc *= 1.0 - 0.09 * (1.0 - smoothstep(0.0, 1.5, edge));
+      let sq = (p - c.flat.xy) / max(c.bound.x, 1.0);
+      let band = dot(sq, vec2f(0.55, 0.83)) + 0.3 + 0.5 * lift;
+      cc += 0.015 * exp(-band * band * 6.0) * (1.0 - cc);
     }
-    cc *= (1.0 + (gr.y - 0.5) * 0.03) * (0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
+    cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
       // J: ink runs under the card and shows through as a light stain, soaking in harder along the border's fibers;
       // over captions it stays faint so the text reads. A lifted card is above the ink and comes away clean.
@@ -826,7 +858,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       let onMedia = all(un >= c.media.xy) && all(un <= c.media.zw);
       cc *= pow(inkJ(t4, gr.y, fadeIn), vec3f(mix(g.jq.x * select(0.35, 1.0, onMedia), 0.6, band) * (1.0 - lift)));
     }
-    col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5)); // a box's open end and cut corners are see-through
+    col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5) * select(1.0, c.obj.y, face)); // a box's open end and cut corners are see-through; a face of the flying box fades by obj.y
   }
   return col;
 }
@@ -904,7 +936,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   let nPage = u32(g.z.w);
   let pageBits = select((1u << nPage) - 1u, 0xffffffffu, nPage >= 32u);
   var cards = tm.x & pageBits;
-  var chipsLaid = g.ch.y < 0.5;
+  var chipsLaid = g.ch.y < 0.5 || g.ch.w > 0.5;
   let chip = chipsAt(ip, tm.z);
   while (cards != 0u) { // on-screen cards that can reach this tile, bottom to top
     let j = firstTrailingBit(cards); cards &= cards - 1u;
@@ -919,6 +951,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   // paper the resting corner shows to this page as the fold opens (the same 250 px as the stacked edges), so the sliver
   // never switches in one frame, at the start or when a turn by hand falls back.
   if (g.pg.w > 0.5) { col = rolled(pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt); }
+  if (g.ch.w > 0.5) { col = layChips(col, chip); } // the chips the turn throws off the page you left, over it
   var over = tm.x & ~pageBits; // the box you left, above both pages
   while (over != 0u) {
     let j = firstTrailingBit(over); over &= over - 1u;
@@ -1000,22 +1033,24 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
     const lines = wrapLines(s.hit.querySelector('b').textContent, w - 39, '600 16px Inter');
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small').textContent };
   }
-  if (s.kind === 'polaroid' && h) { // a polaroid at its capped size: the photo, then its wide bottom strip
-    return { w, h, media: { x: 8, y: 8, w: w - 16, h: h - 8 - 36 } };
-  }
-  if (s.kind === 'polaroid') {
-    const mw = w - 16;
-    return { w, h: 8 + mw / s.aspect + 36, media: { x: 8, y: 8, w: mw, h: mw / s.aspect } }; // its caption grows into the strip with the type
-  }
-  // A postcard: the picture takes what the caption leaves (a long title wraps), cover-framed.
-  const mw = w - 12;
-  const [title, sub] = [s.el.querySelector('.cap b').textContent, s.el.querySelector('.cap span').textContent];
-  const m = measure();
-  m.font = font(600); const tw = m.measureText(title).width;
-  m.font = font(400); const sw = m.measureText(sub).width;
-  const oneLine = tw + sw + 14 < mw - 4;
-  const titleLines = oneLine ? [title] : wrapLines(title, mw - 4, font(600)); // long titles wrap
-  return { w, h, media: { x: 6, y: 6, w: mw, h: h - 6 - (oneLine ? 14 + 18 * TS : 13 + (titleLines.length + 1) * 18 * TS) }, title, titleLines, sub, oneLine };
+  const { side, top, bottom } = borders(s, w, Math.max(w, h || w / s.shape));
+  if (s.kind === 'polaroid' && !h) h = top + (w - 2 * side) / s.aspect + bottom; // phones: its picture at its own aspect
+  const media = { x: side, y: top, w: w - 2 * side, h: h - top - bottom };
+  const cap = capLines(s, w - 2 * side), baseline = media.y + media.h + (bottom - cap.lines.length * CAP_LH()) / 2 + CAP_LH() / 2 + 4.5 * TS;
+  return { w, h, media, ...cap, baseline };
+}
+// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or the polaroid's one line.
+const CAP_LH = () => 18 * TS;
+function capLines(s, tw) {
+  if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand').textContent] };
+  const title = s.el.querySelector('.cap b').textContent, sub = s.el.querySelector('.cap span').textContent;
+  return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
+}
+// The film's borders for a photo card w wide with longest side L (design px); the strip fits its page's longest caption.
+function borders(s, w, L) {
+  const side = Math.round(T.frameSide * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
+    .map((o) => capLines(o, (o === s || view.phone ? w : o.shape >= 1 ? L : L * o.shape) - 2 * side).lines.length);
+  return { side, top: Math.round(T.frameTop * L), bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(...rows) * CAP_LH() + 20)) };
 }
 // Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
@@ -1149,6 +1184,8 @@ function layout() {
       const [z, px, py] = s.frame, v = 1 / z;
       Object.assign(s.img.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`,
         objectViewBox: z > 1 ? `inset(${py * (1 - v) * 100}% ${(1 - px) * (1 - v) * 100}% ${(1 - py) * (1 - v) * 100}% ${px * (1 - v) * 100}%)` : '' });
+      const m = s.media; // the DOM still and the no-WebGPU fallback take the same film frame
+      for (const [k, v] of [['--fx', m.x], ['--ft', m.y], ['--fb', s.h / (s.k || 1) - m.y - m.h]]) s.el.style.setProperty(k, v + 'px');
     }
     if (!gpu && s.flipTo) paintDomBack(s); // the still fallback's open backs follow the new size
     placeDom(s);
@@ -1294,7 +1331,7 @@ function show(region) {
   page = region; if (gpu) sim = sims[page];
   if (sim) sim.pre = false;
   cam.x = view.phone ? 0 : region * view.w; placePage(); setInert(region);
-  chips.clear(); // the chips stay on the page you left
+  if (!turn.on && chipRegion() !== region) chips.clear(); // the chips stay on the page you left (a turn throws them off it)
   tweakSync?.();
 }
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
@@ -1314,13 +1351,11 @@ function stepTurn(dt) {
   if (!turn.on) return;
   if (turn.mode === 'drag') turn.d += (turn.target - turn.d) * (1 - Math.exp(-dt / 0.03));
   else {
-    turn.t = Math.min(1, turn.t + dt / turn.dur);
+    turn.t = Math.min(1, window.__j?.at != null ? window.__j.at / turn.dur : turn.t + dt / turn.dur); // test hook: hold the turn at one moment
     turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase](turn.t) : 1 - (1 - turn.t) ** 3);
   }
-  clipLinks();
   if (turn.mode === 'drag' || turn.t < 1) return;
   turn.on = false;
-  clipLinks();
   if (turn.mode === 'back') { // fell back: the page you were on comes back to life as it was
     for (const s of sources) if (s.region === turn.to && s.rel < 0) s.rel = 1e3; // the other page's held agents let go
     show(turn.from);
@@ -1331,7 +1366,7 @@ function stepTurn(dt) {
 }
 // The links (DOM, on the main page) turn with it: while a turn shows the main page they stay put on screen, clipped to
 // where its paper shows. As it leaves: past the fold, but not under the flap (the sheet's corner, turned over the fold);
-// as it comes back: behind the roll.
+// as it comes back: behind the roll. A thrown box is above them: never where it is drawn.
 const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
   const out = [];
   poly.forEach((p, i) => {
@@ -1341,26 +1376,52 @@ const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 
   });
   return out;
 };
+// A convex polygon's edges as lines, f >= 0 inside (either winding); convex A less convex U, as disjoint convex pieces.
+const halves = (poly) => {
+  const area = poly.reduce((s2, p, i) => { const q = poly[(i + 1) % poly.length]; return s2 + p[0] * q[1] - q[0] * p[1]; }, 0);
+  return poly.map((p, i) => { const q = poly[(i + 1) % poly.length]; return (r) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])); });
+};
+const minus = (A, U) => halves(U).map((f, i, fs) => fs.slice(0, i).reduce(clipPoly, clipPoly(A, (r) => -f(r))));
+// The convex hull of points (monotone chain).
+const turnsLeft = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) > 0;
+function hull(pts) {
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const h = [];
+  for (const run of [pts, pts.slice().reverse()]) {
+    const k = h.length;
+    for (const p of run) { while (h.length >= k + 2 && !turnsLeft(h[h.length - 2], h[h.length - 1], p)) h.pop(); h.push(p); }
+    h.pop();
+  }
+  return h;
+}
 function clipLinks() {
-  const st = linksEl.style;
-  if (!turn.on || view.phone || (turn.from && turn.to)) { st.clipPath = st.translate = ''; return; }
-  const out = turn.from === 0, [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d, { left: L, top: Tp, width: w, height: h } = turn.links;
-  const X = ([u, v]) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
-  const box = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
-  let path;
-  if (!out) path = clipPoly(box, (p) => d - R - X(p));
-  else {
-    const shown = clipPoly(box, (p) => X(p) - d), page = [[-L, -Tp], [view.w - L, -Tp], [view.w - L, view.h - Tp], [-L, view.h - Tp]];
-    // the flap: the part of the page within d - pi R of the corner, mirrored across the fold (x to 2d - pi R - x)
-    const flap = clipPoly(page, (p) => d - Math.PI * R - X(p)).map((p) => { const m = 2 * d - Math.PI * R - 2 * X(p); return [p[0] + m * dx, p[1] + m * dy]; });
-    let under = flap; // the flap over what shows: clipped by each edge of the convex region
-    const area = shown.reduce((s2, p, i) => { const q = shown[(i + 1) % shown.length]; return s2 + p[0] * q[1] - q[0] * p[1]; }, 0);
-    shown.forEach((p, i) => { const q = shown[(i + 1) % shown.length]; under = clipPoly(under, (r) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]))); });
-    path = shown.length > 2 ? [shown, under] : [];
+  const st = linksEl.style, box = sources.find((s) => s.launch?.hull)?.launch.hull;
+  if (view.phone || !turn.links || (turn.on ? turn.from && turn.to : !box || page)) { st.clipPath = st.translate = ''; return; }
+  const out = turn.on && turn.from === 0, { left: L, top: Tp, width: w, height: h } = turn.links; // on screen at L, Tp
+  const rect = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
+  let shown = rect;
+  const holes = box ? [box.map(([x, y]) => [x - L, y - Tp])] : [];
+  if (turn.on) {
+    const [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d;
+    const X = ([u, v]) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
+    if (!out) shown = clipPoly(rect, (p) => d - R - X(p));
+    else {
+      shown = clipPoly(rect, (p) => X(p) - d);
+      const page = [[-L, -Tp], [view.w - L, -Tp], [view.w - L, view.h - Tp], [-L, view.h - Tp]];
+      // the flap: the part of the page within d - pi R of the corner, mirrored across the fold (x to 2d - pi R - x)
+      holes.unshift(clipPoly(page, (p) => d - Math.PI * R - X(p)).map((p) => { const m = 2 * d - Math.PI * R - 2 * X(p); return [p[0] + m * dx, p[1] + m * dy]; }));
+    }
+  }
+  const polys = [shown]; // what shows, then what covers it there, in disjoint pieces (so even-odd cuts each out once)
+  if (shown.length > 2) {
+    for (const hole of holes) {
+      let ps = [halves(shown).reduce(clipPoly, hole)];
+      for (const prev of polys.slice(1)) ps = ps.flatMap((p) => minus(p, prev));
+      polys.push(...ps.filter((p) => p.length > 2));
+    }
   }
   st.translate = out ? `${view.w}px 0` : '';
-  const polys = (out ? path : [path]).filter((poly) => poly.length > 2);
-  st.clipPath = polys.length ? `path(evenodd, '${polys.map((poly) => `M ${fmt(poly)} Z`).join(' ')}')` : 'polygon(0 0, 0 0, 0 0)';
+  st.clipPath = shown.length > 2 ? `path(evenodd, '${polys.map((poly) => `M ${fmt(poly)} Z`).join(' ')}')` : 'polygon(0 0, 0 0, 0 0)';
 }
 // The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
 const hitEl = doorEl.querySelector('.hit');
@@ -1440,6 +1501,7 @@ function next() {
 const WARM = { fresh: 180, again: 30 };
 function prewarm(region, rate = 2) {
   const sm = sims[region];
+  if (turns() && !phys) idle(throwWorld); // the page turn's physics, ready before the turn
   if (!turns() || !sm || sm === sim || sm.ready) return;
   if (sm.pre) { sm.rate = Math.max(sm.rate, rate); return; }
   Object.assign(sm, { pre: true, rate, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
@@ -1971,7 +2033,7 @@ function placeDecks() {
     Object.assign(s.slide, { at, from: at, to: at, t: 1, wait: 0 }); // a new layout: where it was headed
     s.pile ??= []; s.lidT ??= 0; s.dirty = true;
     s.bx = { at: 0, from: 0, to: 0, t: 1, dur: 1, ease: easeOutQuart }; // an empty box tucks again from here
-    s.launch = null; // a new layout ends a box's flight
+    if (s.launch) endThrow(s, false); // a new layout ends a box's flight
     s.px = s.x = s.spot + s.slide.at;
   }
   for (const s of sources) { s.carrier = null; if (s.kind === 'deck') { s.el.hidden = !dealing; s.gone = true; } } // nothing to hold without the deal
@@ -1979,8 +2041,9 @@ function placeDecks() {
 // The box slides in from off screen right as a page's first beat (on load and when the page is turned to), on settle,
 // with its cards in it; they slide out of its open end, fan toward the page, and are dealt. Empty, it tucks off the
 // edge, its lid closing, and peeks out a little further while you drag a card; it comes out for a card dragged near it.
+// Holding cards it stays out, its lid shut until the pointer comes near.
 // A card dropped on it, or every card on the page (double-click or Enter), goes in through its open end, on top.
-const BOX = { close: 0.4, put: 0.3, enter: -10, keep: 28, near: 160, far: 220, peek: 20 }; // s: the lid closing, a put-back's slide in; CSS px: over the box (in, out), near it (in, out), the peek while dragging
+const BOX = { put: 0.3, enter: -10, keep: 28, near: 160, far: 220, peek: 20, hover: 48, unhover: 120 }; // s: a put-back's slide in; CSS px: over the box (in, out), near it (in, out), the peek while dragging, the pointer near it (in, out)
 const deckOut = (d, want) => (want === 'out' ? 0 : d.w + 40 * view.k); // x offset from its spot: in place, or off screen
 function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOutQuart : EASES.cubic) {
   const v = d.slide;
@@ -1992,7 +2055,7 @@ const tuckAt = (d) => DECK_SHOW * d.w - (lidOf(d).w + 34 * (view.cs || 1));
 function slideBox(d, to, dur, ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
 // The box out and open (a page you turn to, or one put away out of sight).
 function resetBox(d) {
-  Object.assign(d, { lidT: 0, outFor: 0, gatherAsk: false });
+  Object.assign(d, { lidT: 0, outFor: 0, gatherAsk: false, drawAsk: null });
   Object.assign(d.bx, { at: 0, from: 0, to: 0, t: 1 });
 }
 // A page's box comes in from off screen, `delay` s from now.
@@ -2003,45 +2066,212 @@ function arriveDeck(region, delay, dur = MOTION.settle) {
   Object.assign(d.slide, { want: 'off', at: deckOut(d, 'off'), to: deckOut(d, 'off'), t: 1, wait: delay, arrive: dur });
   moveDeck(d);
 }
-// ---------- the box flies off ----------
-// A page that turns leaves its card box behind, not printed on it: once its cards are in, the box leans back on its
-// bottom edge (the wind-up), then is thrown off the right edge along a short rising arc, turning end over end about its
-// horizontal axis, its shadow left on the desk and fading, while the page turns under it; its lid and the cards in it ride
-// along. One easing family (cubic, easing out): it rears back at once and holds for a beat, then is thrown. It slides in again when its page
-// next shows, like every arriving box.
-const LAUNCH = { wind: 0.15, fly: 0.8, back: 0.55, turns: 1, arc: 0.22, lift: 1.5 }; // s; s; rad leaned back; turns; rise, of the desk's height; height, in lifts
+// ---------- the box is thrown off ----------
+// A page that turns throws its card box off. The box is not printed on the page but rests on it: a rigid body
+// (physics.js) on the turning paper (curl.js, the same curl the page is drawn with). The flap's sagging edge slides under
+// the box, lifts and tips it, and the turn flings it off the frame; its lid and the cards in it ride along. A corner
+// turned by hand moves the paper under it the same way: let go before halfway and the box drops back onto the page,
+// settles, and eases home into its painting. Once off the frame it slides in again when its page next shows.
+const THROW = { fadeZ: 180, out: 0.6, limit: 6 }; // CSS px up by which its shadow has faded; s a box left at rest on screen after a turn takes to slide off; s at most in the air
 const easeOutCubic = (u) => 1 - (1 - u) ** 3;
+const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7);
+let phys = null; // the world and the turning page every thrown box shares
+// Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
+function throwWorld() {
+  if (phys && (phys.hz === T.throwHz || phys.L || phys.world.bodies.length)) return phys;
+  const world = createWorld({ hz: T.throwHz }), curl = createCurl({ state: (t, out) => (phys.L ? turnAt(phys.L, t, out) : out.fill(0)), rollR }); // no turn: flat
+  world.surface = curl;
+  phys = { world, curl, hz: T.throwHz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
+  const k = view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
+  curl.page(0, view.w, view.h); world.g = T.throwG * k;
+  const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [view.w, 0.36 * view.h, 32.5 * k] });
+  for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
+  world.remove(b); phys.L = null;
+  return phys;
+}
+// Where the turn is t s after it began (the physics' clock): out = the fold's distance, its direction. A turn by hand is
+// its frames (t, d, a), straight between them and on past the last; once let go (or a click's turn), its own curve.
+function turnAt(L, t, out) {
+  const g = L.seg, k = L.keys, n = k.length;
+  if (g && (t >= g.t0 || n < 3)) { out[0] = lerp(g.d0, g.d1, g.ease(clamp((t - g.t0) / g.dur))); out[1] = g.a; return; }
+  if (n < 6) { out[0] = k[1]; out[1] = k[2]; return; }
+  let j = L.kj;
+  while (j > 0 && k[j] > t) j -= 3;
+  while (j + 6 < n && k[j + 3] <= t) j += 3;
+  L.kj = j;
+  const u = (t - k[j]) / Math.max(k[j + 3] - k[j], 1e-6);
+  out[0] = lerp(k[j + 1], k[j + 4], u); out[1] = lerp(k[j + 2], k[j + 5], u);
+}
+// The turn starts: the box becomes a body resting where it lies (asleep, so exactly as painted until the paper reaches
+// it), and its lid and cards ride with it. A box still settling from a turn that fell back is thrown from where it is.
 function launch(d) {
   if (!d || view.phone || !dealing) return;
-  d.launch = { t: 0, x: d.x, y: d.y };
+  const P = throwWorld(), { world, curl } = P;
+  if (P.L && P.L.d !== d) endThrow(P.L.d, true); // one turn at a time: a box from the last one is long off the frame
+  let L = d.launch;
+  if (!L) {
+    const { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, sh = boxShape(W, H, D, 24 * view.k);
+    const body = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: T.throwMass, inertia: sh.inertia(T.throwMass), friction: T.throwMu, bounce: T.throwBounce,
+      x: [d.x, d.y, D / 2], q: [Math.cos(a / 2), 0, 0, Math.sin(a / 2)] });
+    body.sleep = true;
+    L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 };
+  }
+  Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
+  P.L = L; world.time = 0; world.g = T.throwG * view.k;
+  curl.page(d.region * view.w, view.w, view.h); curl.sag = T.throwSag * view.k; curl.prepare(0);
+  L.sv = world.save();
   const lid = lidOf(d);
   for (const s of sources) if (s === d || s === lid || s.deck === d) s.carrier = d;
+  poseThrow(d);
 }
-function stepLaunch(d, dt) {
-  if ((d.launch.t += dt) < LAUNCH.wind + LAUNCH.fly) return;
-  d.launch = null;
+function stepThrows(dt) { for (const d of sources) if (d.launch) stepThrow(d, dt); }
+function stepThrow(d, dt) {
+  const L = d.launch, { world } = phys, at = window.__j?.at; // test hook (as the turn's): hold the throw at one moment
+  L.t = at ?? L.t + dt; L.wt = at ?? L.wt + dt;
+  if (turn.on && turn.from === d.region) { // the paper under it, as the turn moves it
+    if (turn.mode === 'drag') L.keys.push(L.t, turn.d, turn.a);
+    else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES[T.turnEase] : easeOutCubic };
+    L.mode = turn.mode;
+  } else L.end ??= L.mode === 'back' ? 'back' : 'done';
+  if (at != null && at < world.time - 1e-9) world.load(L.sv); // held earlier: the same throw again from its start
+  if (L.home) L.home.t += dt;
+  else if (L.out) L.out.t += dt;
+  else {
+    const t0 = performance.now();
+    world.advance(L.t);
+    stats.throwMs = performance.now() - t0;
+    // At rest after the turn: home if the page fell back; off to the right if a finished turn left it on screen.
+    if (L.end && (L.body.sleep || L.t > THROW.limit)) { if (L.end === 'back') L.home = { t: 0, q: [...L.body.q] }; else L.out = { t: 0 }; }
+  }
+  poseThrow(d);
+  if (L.home ? L.home.t >= T.throwHome : offFrame(d)) endThrow(d, !L.home);
+}
+const quatMat = ([w, x, y, z]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
+const nlerp = (p, q, u) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
+// The thrown box this frame: its axes at rest on the desk (X, Y); where its middle is (C, CSS px, z above the desk) and
+// how it is turned from rest (M, row major); how far its perspective has eased in (w); how high its lowest point is
+// over the paper under it (low); its shadow's footprint from above (foot: angle, half sizes), and how far it has faded.
+function poseThrow(d) {
+  const L = d.launch, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  phys.world.pose(L.body, POS, ROT); L.hull = null; // where it shows, once drawn
+  let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / T.throwPersp));
+  if (L.home) { const u = smooth(L.home.t / T.throwHome), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
+  else if (L.out) C[0] += 1.2 * view.w * clamp(L.out.t / THROW.out) ** 3;
+  const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
+  // Its shadow: the box seen from straight above, as the smallest rectangle along one of its edges that holds it.
+  const reach = (x, y) => (W * Math.abs(x * R[0] + y * R[3]) + H * Math.abs(x * R[1] + y * R[4]) + D * Math.abs(x * R[2] + y * R[5])) / 2;
+  let foot = null;
+  for (let i = 0; i < 3; i++) {
+    const l = Math.hypot(R[i], R[3 + i]), x = R[i] / l, y = R[3 + i] / l, f = l > 1e-3 && [Math.atan2(y, x), reach(x, y), reach(-y, x)];
+    if (f && (!foot || f[1] * f[2] < foot[1] * foot[2])) foot = f;
+  }
+  SURF[0] = C[0]; SURF[1] = C[1]; phys.curl.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
+  const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2 - SURF[0];
+  C[2] = Math.min(C[2], 1200); // never up at the eye
+  L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * view.k)) };
+}
+const launchPose = (d) => d.launch.P;
+// Off the frame: everything it could draw (it, its lid, as its eye sees them) is past an edge of its page.
+function offFrame(d) {
+  const P = d.launch.P, lid = lidOf(d), { W, H, D } = boxDims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
+  const r = (r0 * (1 + BOX3D.a) * F) / Math.max(F - r0, 1), x = P.C[0] - d.region * view.w, y = P.C[1];
+  return x - r > view.w || x + r < 0 || y + r < 0 || y - r > view.h;
+}
+function endThrow(d, arrive) {
+  const L = d.launch;
+  phys.world.remove(L.body);
+  if (phys.L === L) phys.L = null;
+  d.launch = null; d.dirty = true;
   for (const s of sources) if (s.carrier === d) s.carrier = null;
-  arriveDeck(d.region, 0); // back in from off the right edge (out of sight, unless a turn by hand fell back)
+  if (arrive) arriveDeck(d.region, 0); // back in from off the right edge when its page next shows (or now, if a turn by hand fell back)
 }
-// The flying box: its turn about its horizontal axis (rad), where its middle is (CSS px, z above the desk), and how far its
-// shadow has faded.
-function launchPose(d) {
-  const L = d.launch, h = d.h / 2, a = (d.rot * Math.PI) / 180;
-  const w = easeOutCubic(clamp(L.t / LAUNCH.wind)), p = easeOutCubic(clamp((L.t - LAUNCH.wind) / LAUNCH.fly));
-  const back = -LAUNCH.back * w, lean = h * (1 - Math.cos(back)); // leaning back on its bottom edge, which stays down
-  const bx = 2 * p * (1 - p) * 0.2 + p * p, by = 2 * p * (1 - p) * 0.75 + p * p; // a rising arc that bends right
-  const lid = lidOf(d), DX = (d.w / 2 + (lid ? lid.w : 0) + 20 * view.k) / 0.7, DY = LAUNCH.arc * view.h; // it is off the edge (its open lid too) by 70% of its throw, still quick
-  const dip = 8 * view.k * w; // and it draws back a little, down and away from where it goes
-  return { psi: back + (LAUNCH.back + 2 * Math.PI * LAUNCH.turns) * p, x: L.x - Math.sin(a) * lean - 0.6 * dip + DX * bx, y: L.y + Math.cos(a) * lean + dip - DY * by,
-    z: -h * Math.sin(back) + LAUNCH.lift * T.lift * p, fade: smooth(p / 0.5) };
+// In the air the box is a real box: six paper-board faces, its open end showing the cards inside, its lid on its hinge.
+// At rest it is a painting of that same box: its front panel BOX_T up and right of its base is what an eye A F to the
+// lower left and F above it sees of a box BOX_T / A deep (A = BOX3D.a; F = 1800 px, as high as the eye above every
+// card). That eye draws it in the air, its perspective easing in as the turn starts (from far away at first), so the
+// first frame is the painting.
+// The box's frame: X along it from its open end, Y down the page, Z up from its base; W, H, D its sizes along them (CSS px).
+const BOX3D = { a: 0.4 };
+const boxDims = (d) => { const t = BOX_T * (d.k || 1); return { t, W: d.w - t, H: d.h - t, D: t / BOX3D.a }; };
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const boxTurn = ({ M }) => (v) => [M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2]];
+// Something riding in the flying box (its lid, the cards in it), from where it lies at rest: where it is relative to the
+// box's middle (dc) and its axes, turned with the box. At rest each is drawn from straight above, not by the box's eye,
+// so it starts where that eye sees it there and settles into the box as its perspective eases in (a card in it slides all the way in).
+function carried(d, { sx, sy, z, mu, mv }, P) {
+  const L = d.launch, A = BOX3D.a, u = 1 - P.w, { D } = boxDims(d), s0 = A * (D / 2 - u * z), turn = boxTurn(P);
+  const lean = (m) => [m[0] - u * A * m[2], m[1] + u * A * m[2], m[2]];
+  return { dc: turn([sx - L.x + s0, sy - L.y - s0, z - D / 2]), mu: turn(lean(mu)), mv: turn(lean(mv)) };
 }
-// A card riding in the flying box (the box itself, its lid, the cards in it): turned with it about the box's horizontal
-// axis through its middle, and carried. Never exactly edge-on with its own turn, where the homography would be singular.
-function carried(d, { sx, sy, z, mu, mv, bw }) {
-  const P = launchPose(d), L = d.launch, a = (d.rot * Math.PI) / 180, ax = [Math.cos(a), Math.sin(a), 0];
-  const c = Math.cos(P.psi), ce = Math.sign(c || 1) * Math.max(Math.abs(c), Math.min(1, 0.02 / Math.max(bw, 0.02)));
-  const psi = Math.atan2(Math.sign(Math.sin(P.psi) || 1) * Math.sqrt(1 - ce * ce), ce), r = rodrigues([sx - L.x, sy - L.y, z], ax, psi);
-  return { sx: P.x + r[0], sy: P.y + r[1], z: P.z + r[2], mu: rodrigues(mu, ax, psi), mv: rodrigues(mv, ax, psi), over: ce < 0, fade: P.fade };
+// The box's eye: the homography (sim px) from a plane through the box's middle plus dc (CSS px), with axes mu and mv,
+// to the page (page-local sim px).
+function boxH(P, dc, mu, mv, dpr, originX) {
+  const A = BOX3D.a, p = P.w, F = (1800 - P.C[2]) * dpr, c = dc.map((v) => v * dpr);
+  const row = (R, i, sg) => [F * mu[i] + sg * F * A * mu[2] - R * p * mu[2], F * mv[i] + sg * F * A * mv[2] - R * p * mv[2], R * (F - p * c[2]) + F * c[i] + sg * F * A * c[2]];
+  return [...row((P.C[0] - originX) * dpr, 0, 1), ...row(P.C[1] * dpr, 1, -1), -p * mu[2], -p * mv[2], F - p * c[2]];
+}
+// Whether the box's eye sees a plane through dc with normal n from the side n points to.
+const seesFront = (P, dc, n) => { const A = BOX3D.a, F = 1800 - P.C[2], p = P.w; return dot(n, [-A * F - p * dc[0], A * F - p * dc[1], F - p * dc[2]]) > 0; };
+// How squarely a plane faces the eye, signed (+: its front, mu x mv): the homography's area scale at its middle. Near 0
+// it is edge-on (and the homography singular), so it is not drawn.
+const facing = ([a, b, c, d, e, f, g, h, i]) => ((a * i - c * g) * (e * i - f * h) - (b * i - c * h) * (d * i - f * g)) / i ** 4;
+const EDGE_ON = 0.004;
+const FAR = [0, 0, 1e6, 0, 0, 1e6, 0, 0, 1]; // an inverse homography that puts every pixel far off the plane
+const projR = (H, hw, hh) => Math.max(...[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+  const q = H[6] * u * hw + H[7] * v * hh + H[8];
+  return Math.hypot((H[0] * u * hw + H[1] * v * hh + H[2]) / q - H[2] / H[8], (H[3] * u * hw + H[4] * v * hh + H[5]) / q - H[5] / H[8]);
+}));
+// The six faces in the box's frame: middle, axes (mu x mv points out), half sizes, and the normal its texture is lit for
+// (the shaded wall facing down the page is painted in its shade; the rest as if lit from straight above).
+const boxFaces = ({ W, H, D }) => ({
+  front: [[0, 0, D / 2], [1, 0, 0], [0, 1, 0], W / 2, H / 2, [0, 0, 1]],
+  back: [[0, 0, -D / 2], [1, 0, 0], [0, -1, 0], W / 2, H / 2, [0, 0, 1]],
+  bottom: [[0, H / 2, 0], [1, 0, 0], [0, 0, -1], W / 2, D / 2, [0, 1, 0]],
+  top: [[0, -H / 2, 0], [1, 0, 0], [0, 0, 1], W / 2, D / 2, [0, 0, 1]],
+  end: [[W / 2, 0, 0], [0, 1, 0], [0, 0, 1], H / 2, D / 2, [0, 0, 1]],
+  open: [[-W / 2, 0, 0], [0, 1, 0], [0, 0, -1], H / 2, D / 2, null],
+});
+// Paper board in the desk's light (from the upper left, as on the page corner).
+const LIGHT = (() => { const l = [-0.3, -0.75, 1], n = Math.hypot(...l); return l.map((v) => v / n); })();
+const shade = (n) => 0.78 + 0.26 * Math.max(0, dot(n, LIGHT));
+const FACE_SLOTS = 6; // uniform slots per flying box: at most two outside faces and three inside walls with its open end in view
+// The flying box, bottom to top (its faces' uniforms written into slots from `slot`): its shadow on the desk, its lid if
+// the box is between it and the eye, the inside walls seen through the open end, the cards in it, the open end's shade,
+// the outside faces toward the eye, then its lid if it is in front.
+function flyingOrder(d, dpr, originX, slot) {
+  const P = launchPose(d), turn = boxTurn(P), uv = d.faceUV, lid = lidOf(d), o0 = (CARD0 + d.id * CARD_VEC4) * 4;
+  const world = (v) => turn([v[0] * P.X[0] + v[1] * P.Y[0], v[0] * P.X[1] + v[1] * P.Y[1], v[2]]);
+  const faces = Object.entries(boxFaces(boxDims(d))).map(([name, [c, mu, mv, hw, hh, ref]]) => {
+    const H = boxH(P, world(c), world(mu), world(mv), dpr, originX);
+    return { name, H, f: facing(H), hw: hw * dpr, hh: hh * dpr, light: ref ? shade(world(cross(mu, mv))) / shade(ref) : 1 };
+  });
+  const open = faces.find((x) => x.name === 'open'), inside = open.f > EDGE_ON, lidOn = lid && !lid.gone && lid.flyH;
+  d.launch.hull = hull([...faces, ...(lidOn ? [{ H: lid.flyH, hw: (lid.w * dpr) / 2, hh: (lid.h * dpr) / 2 }] : [])].flatMap(({ H, hw, hh }) => // where it shows (CSS px)
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const q = (H[6] * u * hw + H[7] * v * hh + H[8]) * dpr; return [(H[0] * u * hw + H[1] * v * hh + H[2]) / q, (H[3] * u * hw + H[4] * v * hh + H[5]) / q]; })));
+  const ids = [d.id], put = (x, tex, light, alpha) => {
+    if (slot >= MAX) return;
+    faceUniform((CARD0 + slot * CARD_VEC4) * 4, o0, x, tex, light, alpha, dpr);
+    ids.push(slot++);
+  };
+  const behind = lid && lid.plane ? (dot(lid.plane.n, lid.plane.dc) < 0) === seesFront(P, lid.plane.dc, lid.plane.n) : true; // the box and the eye on the same side of the lid
+  if (lid && !lid.gone && behind) ids.push(lid.id);
+  if (inside) for (const x of faces) if (x.f < -EDGE_ON) put(x, uv.inner, 1, P.w);
+  ids.push(...d.pile.filter((s) => s.carrier === d && !s.gone).sort((a, b) => a.z - b.z).map((s) => s.id));
+  if (inside) put(open, uv.open, 1, 1 - 0.35 * P.w);
+  for (const x of faces) if (x !== open && x.f > EDGE_ON) put(x, uv[x.name], x.light, 1);
+  if (lid && !lid.gone && !behind) { ids.push(lid.id); U[(CARD0 + lid.id * CARD_VEC4) * 4 + 51] = 1; } // in front: no shadow on the box
+  return ids;
+}
+// One face of the flying box: the box's own uniform (its hue and the like), as a plane with its own homography and
+// texture, lit by the turn (bound.w), its alpha its shape, no shadow (the box's base casts it).
+function faceUniform(o, o0, { H, hw, hh }, tex, light, alpha, dpr) {
+  const v = U.slice(o0, o0 + CARD_VEC4 * 4), inv = invert3(H), pad = (0.6 * dpr) / shared.dev; // faces overlap a hair, so no seam shows between them
+  v.set([inv[0], inv[1], inv[2], 0, inv[3], inv[4], inv[5], 1e3, inv[6], inv[7], inv[8], 0, hw + pad, hh + pad, 0.4 * dpr, 1,
+    H[2] / H[8], H[5] / H[8], 1, 0, 1, 0, 0, 0, ...tex, 0, 0, 0, 0, projR(H, hw + pad, hh + pad) + 2, 1, 0, light, ...tex], 0);
+  v[43] = 1;
+  v.set([0, 0, 0, 0, 0, 0, 0, 1, 0, 0, hw, hh, 1, alpha, 0, 16 + 1], 44);
+  U.set(v, o);
 }
 // The box to its slide's offset and its tuck, the cards in it to their places (only when something moved), and the lid
 // on its hinge (the box's open end): open, it lies flat beside the box, inside up; closing, it turns over about the hinge
@@ -2066,7 +2296,7 @@ function moveDeck(d) {
 function stepDecks(dt) {
   for (const d of sources) {
     if (!d.more || view.phone || !d.slide || !dealing) continue;
-    if (d.launch) { stepLaunch(d, dt); continue; }
+    if (d.launch) continue; // thrown (stepThrows)
     const v = d.slide;
     if (v.wait > 0) v.wait -= dt;
     else if (v.want === 'off') slideDeck(d, 'out', v.arrive || MOTION.settle, easeOutQuart); // the arrival
@@ -2076,21 +2306,23 @@ function stepDecks(dt) {
     moveDeck(d);
   }
 }
-// Out while it holds cards (or cards are on their way in or only just out), while it is wanted (a dragged card near or
-// over it, a gather asked for, keyboard focus), and for 0.4 s after; otherwise tucked, its lid closed.
+// Open while cards are on their way in or only just out, while it is wanted (the pointer or a dragged card near or over
+// it, a gather or a draw asked for, keyboard focus), and a moment after; otherwise its lid shut, and tucked if empty.
 function stepBox(d, dt) {
   const b = d.bx;
   if (b.t < 1) { b.t = Math.min(1, b.t + dt / b.dur); b.at = b.from + (b.to - b.from) * b.ease(b.t); }
-  let busy = d.pile.length > 0, drag = false;
+  d.hover = !!mouse && overDeck(d, mouse.x + cam.x, mouse.y, (d.hover ? BOX.unhover : BOX.hover) * view.k);
+  let busy = false, drag = false;
   for (const s of sources) {
     if (s.fly?.deck === d && (s.fly.in || flights.t < s.fly.at + 0.3 * DRAW.dur)) busy = true;
     if (s.dragging && s.region === d.region) drag = true;
   }
-  if (busy || d.near || d.welcome || d.gatherAsk || d.focused) d.outFor = 0.4; else d.outFor -= dt;
-  const out = d.outFor > 0 || arriving(d), to = out ? 0 : tuckAt(d) - (drag ? BOX.peek * view.k : 0);
+  if (busy || d.near || d.welcome || d.gatherAsk || d.drawAsk || d.focused || d.hover) d.outFor = T.lidWait; else d.outFor -= dt;
+  const open = d.outFor > 0 || arriving(d), out = open || d.pile.length > 0, to = out ? 0 : tuckAt(d) - (drag ? BOX.peek * view.k : 0);
   if (b.to !== to) slideBox(d, to, MOTION.respond, out || drag ? easeOutQuart : EASES.cubic);
-  d.lidT = clamp(d.lidT + (out ? -dt : dt) / BOX.close);
+  d.lidT = clamp(d.lidT + (open ? -dt : dt) / T.lidS);
   if (d.gatherAsk && b.t >= 1 && d.lidT === 0) { d.gatherAsk = false; boxGather(d); } // out and open: in they come
+  if (d.drawAsk && d.lidT === 0) { const all = d.drawAsk.all; d.drawAsk = null; drawMore(d, all); } // open: out it comes
 }
 const arriving = (d) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait > 0; // the box is still sliding in
 // The page's box: click deals the top card (to its slot, or the best free spot); double-click gathers every card on the
@@ -2113,6 +2345,7 @@ function drawMore(deck, all = false) {
   if (view.phone || turn.on) return;
   const take = all ? deck.pile.slice().reverse() : deck.pile.slice(-1); // top first
   if (!take.length) { deck.squashV = (deck.squashV || 0) + 8; return; } // empty: a tiny nudge
+  if (deck.lidT > 0) { deck.drawAsk = { all }; return; } // shut: it opens first
   take.forEach((s, i) => {
     const [x, y, r] = s.slot ? homeOf(s) : freeSlot(s);
     if (!s.slot) s.slot = { x: ((x - s.region * view.w) / view.w) * REF_W, y: (y / view.h) * REF_H, w: s.baseW, r };
@@ -2360,14 +2593,7 @@ function paintBox(x, s, S) {
   // The front panel: card stock, lit a little more toward the light, a few faint veins inside a fine inset frame.
   g = x.createLinearGradient(t, 0, w, fh); g.addColorStop(0, '#fbf9f3'); g.addColorStop(1, TOK.stock);
   x.fillStyle = g; x.fillRect(t, 0, w - t, fh);
-  x.save(); x.beginPath(); x.rect(t + 7, 7, w - t - 14, fh - 14); x.clip();
-  const r = rng(31 + s.region * 7), pts = Array.from({ length: 14 }, () => [t + 7 + r() * (w - t - 14), 7 + r() * (fh - 14)]);
-  x.strokeStyle = TOK.ink; x.globalAlpha = 0.28; x.lineCap = 'round';
-  for (const [i, p] of pts.entries()) {
-    const near = pts.map((q, j) => [Math.hypot(q[0] - p[0], q[1] - p[1]), j]).filter(([, j]) => j > i).sort((a, b) => a[0] - b[0]).slice(0, 2);
-    for (const [d, j] of near) { const q = pts[j]; x.lineWidth = Math.max(0.6, 2 - d / 60); x.beginPath(); x.moveTo(p[0], p[1]); x.quadraticCurveTo((p[0] + q[0]) / 2 + (r() - 0.5) * 0.3 * d, (p[1] + q[1]) / 2 + (r() - 0.5) * 0.3 * d, q[0], q[1]); x.stroke(); }
-  }
-  x.restore(); x.globalAlpha = 1;
+  paintVeins(x, [t + 7, 7, w - t - 14, fh - 14], rng(31 + s.region * 7), 14, 0.28);
   x.strokeStyle = TOK.inkLine; x.lineWidth = 1; x.strokeRect(t + 7.5, 7.5, w - t - 15, fh - 15);
   // The thumb notch at the open end, cut out of the front panel: the inside shows through it.
   x.save(); x.beginPath(); x.arc(t, fh / 2, 15, -Math.PI / 2, Math.PI / 2); x.closePath(); x.clip(); x.clearRect(t, fh / 2 - 15, 15, 30);
@@ -2386,6 +2612,47 @@ function paintBox(x, s, S) {
   x.font = font(500, 26, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.translate(t + lid + 17, fh / 2); x.rotate(-Math.PI / 2); x.fillText(BOX_NAMES[s.region], 0, 2);
   x.restore();
+}
+// A few faint veins of ink in a rect of board: n points, each joined to its two nearest by a curved stroke.
+function paintVeins(x, [x0, y0, vw, vh], r, n, alpha) {
+  x.save(); x.beginPath(); x.rect(x0, y0, vw, vh); x.clip();
+  const pts = Array.from({ length: n }, () => [x0 + r() * vw, y0 + r() * vh]);
+  x.strokeStyle = TOK.ink; x.globalAlpha = alpha; x.lineCap = 'round';
+  for (const [i, p] of pts.entries()) {
+    const near = pts.map((q, j) => [Math.hypot(q[0] - p[0], q[1] - p[1]), j]).filter(([, j]) => j > i).sort((a, b) => a[0] - b[0]).slice(0, 2);
+    for (const [d, j] of near) { const q = pts[j]; x.lineWidth = Math.max(0.6, 2 - d / 60); x.beginPath(); x.moveTo(p[0], p[1]); x.quadraticCurveTo((p[0] + q[0]) / 2 + (r() - 0.5) * 0.3 * d, (p[1] + q[1]) / 2 + (r() - 0.5) * 0.3 * d, q[0], q[1]); x.stroke(); }
+  }
+  x.restore();
+}
+// The flying box's faces besides its front (which is the painting's front panel), at device resolution: the shaded wall
+// and the open end taken from the painting itself (each parallelogram there unsheared to its face), so its first frame
+// in the air is the painting; plain board for the walls the painting never shows, and the inside.
+function paintFaces(s0, S0, tile) {
+  const S = S0 * (s0.k || 1), s = design(s0), t = BOX_T, fh = s.h - t, a = BOX3D.a, W = s.w - t, H = s.h - t, D = t / a;
+  const face = (fw, fhh, paint) => { const c = new OffscreenCanvas(Math.ceil(fw * S), Math.ceil(fhh * S)), x = c.getContext('2d'); x.scale(S, S); paint(x, fw, fhh); return c; };
+  const from = (x, m) => { x.save(); x.setTransform(...m); x.drawImage(tile, 0, 0); x.restore(); }; // the painting, mapped (device px) onto the face
+  const board = (x, fw, fhh, seed, n) => {
+    const g = x.createLinearGradient(0, 0, fw, fhh); g.addColorStop(0, '#fbf9f3'); g.addColorStop(1, TOK.stock);
+    x.fillStyle = g; x.fillRect(0, 0, fw, fhh);
+    if (n) paintVeins(x, [7, 7, fw - 14, fhh - 14], rng(seed), n, 0.16);
+    x.strokeStyle = 'rgba(255, 253, 246, 0.9)'; x.lineWidth = 1.2; x.strokeRect(1.6, 1.6, fw - 3.2, fhh - 3.2); // the cut edges catch the light
+    x.strokeStyle = 'rgba(60, 54, 44, 0.32)'; x.lineWidth = 1; x.strokeRect(0.5, 0.5, fw - 1, fhh - 1);
+  };
+  return {
+    bottom: face(W, D, (x) => { // the wall facing down the page, in its shade
+      const g = x.createLinearGradient(0, 0, 0, D); g.addColorStop(0, '#d3ccbb'); g.addColorStop(1, '#ada48f');
+      x.fillStyle = g; x.fillRect(0, 0, W, D); from(x, [1, 0, 1, 1 / a, -S * (t + fh), (-S * fh) / a]);
+    }),
+    open: face(H, D, (x) => from(x, [1, -1 / a, 1, 0, -S * t, (S * t) / a])),
+    top: face(W, D, (x) => board(x, W, D, 47 + s.region * 7, 3)),
+    end: face(H, D, (x) => board(x, H, D, 53 + s.region * 7, 3)),
+    back: face(W, H, (x) => { // the base, its glued flap along one side
+      board(x, W, H, 61 + s.region * 7, 9);
+      x.fillStyle = 'rgba(60, 54, 44, 0.05)'; x.fillRect(1, H - 22, W - 2, 21);
+      x.strokeStyle = 'rgba(60, 54, 44, 0.22)'; x.beginPath(); x.moveTo(1, H - 22.5); x.lineTo(W - 1, H - 22.5); x.stroke();
+    }),
+    inner: face(8, 8, (x) => { x.fillStyle = '#ddd6c6'; x.fillRect(0, 0, 8, 8); }),
+  };
 }
 // The lid: the deep end wall (BOX_T, at the hinge) and the tuck flap. Inside (open, lying on the desk beside the open end,
 // hinged on its right): plain stock, on the base's span below the clear strip. Outside (closed over the open end, seen
@@ -2415,7 +2682,7 @@ function paintLid(x, s, S, outside) {
 function drawCard(s0, S0) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
-  x.fillStyle = s.kind === 'note' ? TOK.note : TOK.stock;
+  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
   if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, STRIP * S); // the sticky strip is a touch darker
@@ -2431,25 +2698,19 @@ function drawCard(s0, S0) {
   }
   x.scale(S, S);
   x.textBaseline = 'alphabetic';
-  if (s.kind === 'photo') {
-    const y0 = s.media.y + s.media.h;
-    x.font = font(600); x.fillStyle = TOK.text;
-    if (s.oneLine) {
-      x.fillText(s.title, 8, y0 + 8 + 13 * TS);
-      x.font = font(400); x.fillStyle = TOK.muted; x.textAlign = 'right'; x.fillText(s.sub, s.w - 8, y0 + 8 + 13 * TS);
-    } else {
-      s.titleLines.forEach((l, i) => x.fillText(l, 8, y0 + 7 + 13 * TS + i * 18 * TS));
-      x.font = font(400); x.fillStyle = TOK.muted; x.fillText(s.sub, 8, y0 + 7 + 13 * TS + s.titleLines.length * 18 * TS);
-    }
+  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or the polaroid's line centered
+    s.lines.forEach((l, i) => {
+      const last = i === s.lines.length - 1;
+      x.font = font(s.titled ? (last ? 400 : 600) : 500); x.fillStyle = s.titled ? (last ? TOK.muted : TOK.text) : TOK.body;
+      x.textAlign = s.titled ? 'left' : 'center';
+      x.fillText(l, s.titled ? s.media.x : s.w / 2, s.baseline + i * CAP_LH());
+    });
   } else if (s.kind === 'paper') {
     x.fillStyle = TOK.body; x.fillRect(0, 0, 3, s.h);
     x.font = font(600, 16); x.fillStyle = TOK.text;
     s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
     x.font = font(400); x.fillStyle = TOK.muted;
     x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
-  } else if (s.kind === 'polaroid') {
-    x.font = font(500); x.fillStyle = TOK.body; x.textAlign = 'center';
-    x.fillText(s.el.querySelector('.hand').textContent, s.w / 2, s.media.y + s.media.h + 10 + 13 * TS);
   } else if (s.kind === 'note') {
     x.font = HAND; x.fillStyle = TOK.text2;
     s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
@@ -2475,7 +2736,7 @@ const BACK_STYLES = {
   pen: { underline: 'pen', note: 'pen' },
 };
 const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
-const STOCK = { photo: TOK.stock, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note };
+const STOCK = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
 const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
   get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
@@ -2931,7 +3192,9 @@ async function buildAtlas(g) {
   // Shelf-pack the cards into one atlas.
   const AW = Math.min(4096, g.device.limits.maxTextureDimension2D);
   let x = 0, y = 0, rowH = 0;
-  const extra = [...plain, ...labels], places = [...drawn, ...backs, ...extra.map((c) => ({ canvas: c }))].map(({ canvas: c }) => {
+  const boxes = sources.filter((s) => s.kind === 'deck' && !s.lid), faces = boxes.map((d) => paintFaces(d, S, drawn[d.id].canvas));
+  const faceCanvases = faces.flatMap((f) => Object.values(f));
+  const extra = [...plain, ...labels, ...faceCanvases], places = [...drawn, ...backs, ...extra.map((c) => ({ canvas: c }))].map(({ canvas: c }) => {
     if (x + c.width > AW) { x = 0; y += rowH + 2; rowH = 0; }
     const p = { x, y }; x += c.width + 2; rowH = Math.max(rowH, c.height); return p;
   });
@@ -2956,7 +3219,15 @@ async function buildAtlas(g) {
     return [p.x / AW, p.y / AH, (p.x + c.width) / AW, (p.y + c.height) / AH];
   });
   plainFor.forEach((s, i) => (s.puv = rest[i]));
-  const labelUV = rest.slice(plainFor.length);
+  const labelUV = rest.slice(plainFor.length, plainFor.length + labels.length);
+  let fi = plainFor.length + labels.length;
+  boxes.forEach((d, i) => {
+    const t = (BOX_T * (d.k || 1)) / d.w, f = (BOX_T * (d.k || 1)) / d.h, [u0, v0, u1, v1] = d.uv;
+    d.faceUV = { front: [u0 + t * (u1 - u0), v0, u1, v1 - f * (v1 - v0)] };
+    for (const name of Object.keys(faces[i])) d.faceUV[name] = rest[fi++];
+    const [a0, b0, a1, b1] = d.faceUV.inner, e = 0.25; // the inside: its middle, clear of its neighbors
+    d.faceUV.inner = [a0 + e * (a1 - a0), b0 + e * (b1 - b0), a1 - e * (a1 - a0), b1 - e * (b1 - b0)];
+  });
   shared.labelUV = labelUV;
   shared.atlas = atlas;
 }
@@ -3015,7 +3286,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
   const [fz, fv] = flipPath(s), lift = Math.max(s.lift, fz / T.lift, s.flyLift);
   let [sx, sy, sr] = shown(s);
-  const th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
+  let th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
   sx -= Math.sin(th) * fv; sy += Math.cos(th) * fv;
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular. The note's lower edge rises as it turns.
@@ -3023,21 +3294,37 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   if (s.face > 0 || s.flipA) { if (hz) mv = rodrigues(mv, mu.map((v) => v / sc), Math.atan2(fs, fe)); else mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe)); }
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
-  let z = lift * T.lift, over = false, fade = 0; // over: the box it rides in has turned it over
-  if (s.carrier) ({ sx, sy, z, mu, mv, over, fade } = carried(s.carrier, { sx, sy, z, mu, mv, bw: Math.abs(fe) }));
+  let z = lift * T.lift, fade = 0, H = null, flags = hz ? 1 : 0;
   const looks = (m) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
-  const zh = z * dpr, f = 1800 * dpr - zh, cx = (sx - originX) * dpr, cy = sy * dpr; // page-local; the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
-  const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f]);
-  const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2;
+  let lv = looks(mv), shd = boxShadow(s, dpr, (s.w * dpr) / 2, (s.h * dpr) / 2).slice(0, 7);
+  if (s.carrier === s) { // the flying box itself: only its shadow on what is under it (its faces are drawn on their own)
+    const P = launchPose(s), [ang, fx, fy] = P.foot, u = (1 - P.w) * shd[1]; // from its base's place in the painting
+    sx += P.C[0] - s.launch.x; sy += P.C[1] - s.launch.y; z += Math.max(0, P.low); fade = P.fade;
+    th = ang; lv = 1; flags = 8; shd = [-u, u, fx * dpr, fy * dpr, ...shd.slice(4)];
+  } else if (s.carrier) { // riding in it: seen by the box's eye
+    const d = s.carrier, P = launchPose(d), i = d.pile.indexOf(s), a = (d.rot * Math.PI) / 180;
+    if (i >= 0) { const inn = P.w * (2 + i * BOX_STEP + 3) * view.k; sx += Math.cos(a) * inn; sy += Math.sin(a) * inn; } // in all the way
+    const r = carried(d, { sx, sy, z, mu, mv }, P);
+    ({ mu, mv } = r); z = P.C[2] + r.dc[2]; lv = looks(mv);
+    H = s.flyH = boxH(P, r.dc, mu, mv, dpr, originX);
+    fade = i >= 0 ? Math.max(P.fade, P.w) : P.fade;
+    s.plane = { dc: r.dc, n: cross(mu, mv) };
+  }
+  const zh = z * dpr, f = 1800 * dpr - zh; // the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
+  let cx = (sx - originX) * dpr, cy = sy * dpr; // page-local
+  H ||= [f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f];
+  const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2, fh = s.carrier && s.carrier !== s ? facing(H) : fc, edgeOn = Math.abs(fh) < 1e-4;
+  const inv = edgeOn ? FAR : invert3(H);
+  if (s.carrier && s.carrier !== s) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
-    hw, hh, 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
-    ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
+    hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
+    ...s.uv, ...s.mediaUV, s.carrier && s.carrier !== s ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
     ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
-    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * ((hz ? 1 : 0) + (over ? 2 : 0)) + looks(mv)];
+    ...shd, 4 * flags + lv];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
 }
@@ -3067,13 +3354,24 @@ function writeUniforms(g, sm = sim, hold = false) {
   const s = sm, d = s.dpr, dev = shared.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
-  const order = sources.filter((x) => {
+  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
+  // A flying box is drawn as a box (its faces in the slots after the cards'), with what rides in it in its own order.
+  let slot = sources.length;
+  const fly = (ids) => ids.flatMap((id) => {
+    const x = sources[id];
+    if (x.carrier && x.carrier !== x) return [];
+    if (x.carrier !== x) return [id];
+    const r = flyingOrder(x, d, view.phone ? s.origin : x.region * view.w, slot);
+    slot += FACE_SLOTS;
+    return r;
+  });
+  const order = fly(sources.filter((x) => {
     if ((!view.phone && x.region !== s.page) || x.gone || (capturing && x.carrier)) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
-  }).sort((a, b) => a.z - b.z).map((x) => x.id);
+  }).sort((a, b) => a.z - b.z).map((x) => x.id));
   // The page you left's card box flies off over the turn, above both pages (never part of the turning page's frame).
-  const over = turn.on && !capturing && !view.phone ? sources.filter((x) => x.carrier && x.region !== s.page).sort((a, b) => a.z - b.z).map((x) => x.id) : [];
+  const over = !capturing && !view.phone ? fly(sources.filter((x) => x.carrier === x && x.region !== s.page).map((x) => x.id)).slice(0, MAX - order.length) : [];
   const vs = videoSrc;
   let vu = [0, 0, 1, 1];
   if (vs) {
@@ -3109,41 +3407,41 @@ function writeUniforms(g, sm = sim, hold = false) {
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
-  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
   chipUniforms(s);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
 
 // ---------- chips ----------
-// Potato chips (chips.js, drawn by chip-render.js): click the bare desk to drop one. They live on the page you see: a page
-// turn carries them off in its frozen frame, and they do not come back.
-const chips = createWorld(T);
-const chipX0 = () => (view.phone ? 0 : page * view.w);
+// Potato chips (chips.js, drawn by chip-render.js): click the bare desk to drop one. They live on the page you see, in the
+// same sim as the card box (physics.js): a page turn throws them off with it, and they do not come back.
+const chips = createChips(T, () => throwWorld().world);
+const chipRegion = () => chips.bodies[0]?.chip.region ?? page;
+const chipX0 = () => (view.phone ? 0 : chipRegion() * view.w);
 let chipFeedAt = 0;
 // Each chip's food and landing pulse, for the agents and the excitation field (sim px), and where its drawn layer sits on the canvas.
 function chipUniforms(s) {
   U.fill(0, CHIP_OFF, CHIP_OFF + CHIP_VEC4 * 4);
-  const bs = s === sim ? chips.bodies.slice(0, NCH) : [];
-  if (!bs.length) return;
+  if (s !== sim || capturing || !chips.bodies.length) return; // never in the frozen frame a turn starts from
+  const own = chipRegion() === page, bs = own ? chips.bodies.slice(0, NCH) : [];
   const tiles = gpu.chipR.place(chips, { x0: chipX0(), dev: shared.dev, T, t: clock.t });
-  U.set([bs.length, 1, tiles.length, 0], CHIP_OFF);
+  U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
   tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH * 2 + i) * 4));
   bs.forEach((b, i) => {
     U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * T.chipFoodR * s.dpr, b.landed ? T.chipFood : 0], CHIP_OFF + 4 + i * 4);
     U[CHIP_OFF + 4 + (NCH + i) * 4] = b.pulse;
   });
 }
+// The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips off the frame are gone, and so are
+// the last crumbs of any on a page you left; any a finished turn left on screen are swept off to the right, as its box is.
 function stepChips(dt) {
   if (!chips.bodies.length) return;
-  const x0 = chipX0(), pushers = [];
-  for (const c of sources) { // every card on the page, and its box, nudges them
-    if ((!view.phone && c.region !== page) || c.gone || c.deck || c.carrier || !c.w) continue;
-    const [sx, sy, sr] = shown(c), th = (sr * Math.PI) / 180;
-    pushers.push({ x: sx, y: sy, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy });
-  }
-  const moved = chips.step(dt, { pushers, bounds: [x0, 0, x0 + view.w, view.phone ? view.docH : view.h] });
-  if (moved || chips.bodies.some((b) => b.dirty)) redraw = true;
-  if (clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
+  const { world, L } = phys, x0 = chipX0(), own = chipRegion() === page, H = view.phone ? view.docH : view.h;
+  if (!own && !turn.on) for (const b of chips.bodies) { b.v[0] += T.chipSweep * view.w * dt; b.p.sleep = false; b.p.still = 0; }
+  if (!L || L.home || L.out) { const t = world.time + (phys.rem || 0) + dt; world.advance(t); phys.rem = t - world.time; }
+  for (const b of chips.bodies.filter((b) => (!own && b.frozen) || b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
+  chips.step(dt, own);
+  if (chips.bodies.some((b) => !b.sleep || b.dirty)) redraw = true;
+  if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
 }
 // Over the cap the oldest chip is eaten faster; with every slot taken the click does nothing.
 function dropChip(x, y) {
@@ -3259,6 +3557,7 @@ function frame(now) {
   syncHover();
   stepCards(dt);
   stepTurn(dt);
+  stepThrows(dt); // after the turn: the paper under a thrown box is where the turn just put it
   stepDoor(dt);
   stepMedia(dt);
   stepChips(dt);
@@ -3292,6 +3591,7 @@ function frame(now) {
   }
   if (trans.fade > 0) trans.fade = Math.max(0, trans.fade - dt / 0.8); // crossfade from the frame before a resolution change
   if (!steps) writeUniforms(gpu);
+  clipLinks(); // where the turn and a thrown box were just drawn
   // Draw only when the picture can change: the sim stepped (60 times a second, which also shows every video frame), something
   // drawn moved (the uniforms differ), or a texture it reads changed. On a display faster than the sim (120 Hz) the frames
   // between steps are otherwise the same picture, and drawing them doubled the GPU's work.
@@ -3399,7 +3699,7 @@ function tweakPanel() {
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
   };
   for (const [name, params] of Object.entries(GROUPS)) {
@@ -3674,7 +3974,7 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, LAUNCH, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T,
+window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, throws: () => sources.filter((s) => s.launch).map(({ region, launch: L }) => ({ region, t: L.t, C: L.P.C.map(Math.round), end: L.end, home: !!L.home, out: !!L.out, asleep: L.body.sleep })), stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T,
   chips: { drop: dropChip, world: chips, stats: () => ({ n: chips.bodies.length, awake: chips.bodies.filter((b) => !b.sleep && !b.frozen).length, bodies: chips.bodies.map((b) => ({ id: b.id, x: +b.x[0].toFixed(1), y: +b.x[1].toFixed(1), z: +b.x[2].toFixed(2), sleep: b.sleep, m: +(b.m / b.mass0).toFixed(3), feed: b.feed ? +(b.feed.v.reduce((a, v) => a + v, 0) / b.feed.v.length).toFixed(3) : null })) }) } };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.

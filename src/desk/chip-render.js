@@ -289,7 +289,7 @@ export async function createChipRenderer(device) {
       const [rx0, ry0, rx1, ry1] = world.rect(b), [lo, hi] = world.zspan(b), m = F / Math.max(F - hi, F * 0.25), pad = 2;
       const r = [b.x[0] + (rx0 - b.x[0]) * m - x0 - pad, b.x[1] + (ry0 - b.x[1]) * m - pad, b.x[0] + (rx1 - b.x[0]) * m - x0 + pad, b.x[1] + (ry1 - b.x[1]) * m + pad];
       // The shadow: its box, widened by the margin, laid along the light.
-      const R = world.qmat(b.q), [blo, bhi] = b.box, sr = [Infinity, Infinity, -Infinity, -Infinity];
+      const R = b.R, [blo, bhi] = b.box, sr = [Infinity, Infinity, -Infinity, -Infinity];
       for (const X of [blo[0] - M, bhi[0] + M]) for (const Y of [blo[1] - M, bhi[1] + M]) for (const Z of [blo[2], bhi[2]]) {
         const p = b.toWorld(R, [X, Y, Z]), h = Math.min(HS, Math.max(0, p[2])), sx = p[0] + LS[0] * h - x0, sy = p[1] + LS[1] * h;
         sr[0] = Math.min(sr[0], sx - pad); sr[1] = Math.min(sr[1], sy - pad); sr[2] = Math.max(sr[2], sx + pad); sr[3] = Math.max(sr[3], sy + pad);
@@ -327,7 +327,7 @@ export async function createChipRenderer(device) {
       const { b, lo, hi, c, o, size } = x, sl = slots.get(b.id);
       if (b.dirty) { device.queue.writeTexture({ texture: masks, origin: [0, 0, sl] }, world.maskBytes(b, bytes), { bytesPerRow: CN * 4 }, [CN, CN, 1]); b.dirty = false; }
       drawn.set(b.id, { o, q: [...b.q], at: t, c, n: Math.min(size, side) });
-      const R = world.qmat(b.q), S = b.S;
+      const R = b.R, S = b.S;
       U.set([R[0], R[1], R[2], b.x[0] - x0, R[3], R[4], R[5], b.x[1], R[6], R[7], R[8], b.x[2], ...b.c, sl,
         S.R, S.B, S.t, S.sag, S.bowl, S.ca, S.sa, S.tone, ...S.harm, ...S.warp, ...S.folds, lo, hi, b.cell, (S.seed % 997) * 0.137,
         ...c, 0, 0], (HEAD_VEC4 + sl * BODY_VEC4) * 4);
