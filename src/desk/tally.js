@@ -17,19 +17,19 @@ export const TALLY_PARAMS = [
   ['tallyAt', 'corner', 0, 0, 0, 'where'],
   ['tallyX', 0, -20, 20, 0.5, 'nudge along the row px'],
   ['tallyY', 0, -20, 20, 0.5, 'nudge across px'],
-  ['tallyLen', 15.5, 8, 30, 0.5, 'stroke length px'],
-  ['tallyGap', 5.4, 2, 10, 0.1, 'stroke spacing px'],
-  ['tallyGroupGap', 13, 2, 24, 0.5, 'gap between fives px'],
+  ['tallyLen', 19, 8, 30, 0.5, 'stroke length px'],
+  ['tallyGap', 6.6, 2, 10, 0.1, 'stroke spacing px'],
+  ['tallyGroupGap', 19, 2, 24, 0.5, 'gap between fives px'],
   ['tallyRowGap', 7, 2, 20, 0.5, 'gap between rows px'],
   ['tallySlant', 7, -20, 20, 0.5, 'lean deg'],
   ['tallyBow', 0.9, 0, 3, 0.05, 'bow px'],
   ['tallyFlick', 0.35, 0, 3, 0.05, 'lift-off flick px'],
   ['tallyJitter', 1, 0, 3, 0.05, 'hand variation'],
-  ['tallyWidth', 1.7, 0.5, 4, 0.05, 'line width px'],
+  ['tallyWidth', 1.3, 0.5, 4, 0.05, 'line width px'],
   ['tallyPressure', 0.95, 0.2, 1.5, 0.01, 'pressure'],
   ['tallyTaper', 0.6, 0, 1, 0.01, 'taper as it lifts off'],
-  ['tallyDark', 0.74, 0.2, 1, 0.01, 'graphite darkness'],
-  ['tallyGrain', 0.65, 0, 1, 0.01, 'paper grain'],
+  ['tallyDark', 0.8, 0.2, 1, 0.01, 'graphite darkness'],
+  ['tallyGrain', 0.5, 0, 1, 0.01, 'paper grain'],
   ['tallySheen', 0.3, 0, 1, 0.01, 'sheen'],
   ['tallyDrawS', 0.2, 0.05, 0.6, 0.01, 'stroke drawn in s'],
   ['tallyEraseS', 0.3, 0.05, 1, 0.01, 'stroke rubbed out s'],
@@ -75,7 +75,7 @@ export function tallySurface(canvas, S, frame) {
 
 // The rows: how many fives fit in one (at least one), and how far apart groups and rows are.
 const rowsOf = (frame, P) => {
-  const pitch = 3 * P.tallyGap + P.tallyGroupGap, width = 5 * P.tallyGap; // a five with its slash's overshoot
+  const pitch = 3 * P.tallyGap + P.tallyGroupGap, width = 5.6 * P.tallyGap; // a five with its slash's overshoot
   return { per: Math.max(1, Math.floor((frame.uRoom - width) / pitch) + 1), pitch, rowPitch: P.tallyLen + P.tallyRowGap };
 };
 // A mark's centerline in the row frame (a: along the row; b: down the strokes, rows following on), as points with their
@@ -86,14 +86,14 @@ function markPath(slot, gen, P, R) {
   const v = () => (r() - 0.5) * J;
   let p0, p2, base, taper;
   if (j < 4) { // a pull down, leaning with the hand (its top further along)
-    const l = len * (1 + 0.14 * v()), a = a0 + j * gap + 0.4 * gap * v(), top = b0 - l / 2 + 1.6 * v();
-    const lean = Math.tan(((P.tallySlant + 8 * v()) * Math.PI) / 180) * l;
+    const l = len * (1 + 0.14 * v()), a = a0 + j * gap + 0.15 * gap * v(), top = b0 - l / 2 + 1.6 * v();
+    const lean = Math.tan(((P.tallySlant + 4 * v()) * Math.PI) / 180) * l;
     p0 = [a + lean / 2, top]; p2 = [a - lean / 2, top + l];
     base = 1 + 0.12 * v(); taper = P.tallyTaper * (1 + 0.3 * v());
-  } else { // the fifth: a quick flick up across the four, lighter, past them on both sides
-    const over = gap * (0.45 + 0.2 * v());
-    p0 = [a0 - over, b0 + len * (0.4 + 0.06 * v())]; p2 = [a0 + 3 * gap + over * (0.9 + 0.2 * v()), b0 - len * (0.36 + 0.06 * v())];
-    base = 0.88 + 0.1 * v(); taper = clamp(P.tallyTaper * 1.2);
+  } else { // the fifth: a long shallow stroke up across the four, past them on both sides
+    const over = gap * (0.8 + 0.2 * v());
+    p0 = [a0 - over, b0 + len * (0.3 + 0.04 * v())]; p2 = [a0 + 3 * gap + over * (0.9 + 0.2 * v()), b0 - len * (0.3 + 0.04 * v())]; // shallow, about 20 degrees
+    base = 0.95 + 0.08 * v(); taper = P.tallyTaper * 0.45; // pressed evenly all the way across, so it reads as one line
   }
   const dx = p2[0] - p0[0], dy = p2[1] - p0[1], L = Math.hypot(dx, dy), nx = -dy / L, ny = dx / L;
   const bow = P.tallyBow * (0.5 + r()) * (r() < 0.75 ? 1 : -1) * Math.min(1, J + 0.2);
@@ -144,8 +144,8 @@ export function paintTally(surf, marks, t, P) {
         const m2 = clamp(smudge * (Math.exp(-((d / sw) ** 2)) * streak + 0.6 * clamp(1 - d / hw))); // a haze along the rubbing, and a faint ghost of the line
         M[k] = M[k] + m2 - M[k] * m2;
       }
-      if (d >= hw + 0.75 || erase >= 1) continue;
-      const cov = clamp(1 - (d / (hw + 0.75)) ** 2); // a round pencil tip: heaviest down its middle
+      if (d >= hw + 0.5 || erase >= 1) continue;
+      const cov = clamp(1 - (d / (hw + 0.5)) ** 4); // a round pencil tip: heaviest down its middle
       const keep = erase > 0 ? smooth((rub[k] - erase * 1.25 + 0.2) / 0.25) * (1 - 0.4 * erase) : 1; // the grain lifts unevenly as it is rubbed
       const dens = clamp(pr * cov * keep);
       D[k] = D[k] + dens - D[k] * dens; // graphite over graphite: darker where strokes cross
