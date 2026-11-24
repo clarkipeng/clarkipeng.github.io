@@ -12,6 +12,8 @@
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
 import { clips, mediaUrl } from 'virtual:desk-media';
+import { createWorld, NCH } from './chips.js';
+import { createChipRenderer } from './chip-render.js';
 
 export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;
@@ -143,6 +145,37 @@ const GROUPS = {
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
+  ],
+  // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.js).
+  Chips: [
+    ['chips', 1, 0, 1, 1, 'click the desk to drop a chip'],
+    ['chipSize', 31, 15, 60, 0.5, 'radius px'],
+    ['chipThick', 2, 0.8, 5, 0.1, 'thickness px'],
+    ['chipCurl', 1.4, 0, 2, 0.05, 'curl'],
+    ['chipDrop', 45, 0, 200, 1, 'drop height px'],
+    ['chipSpin', 10, 0, 30, 0.5, 'tumble rad/s'],
+    ['chipG', 13700, 2000, 30000, 100, 'gravity px/s²'],
+    ['chipE', 0.3, 0, 0.8, 0.01, 'bounce'],
+    ['chipMu', 0.5, 0, 1.5, 0.01, 'friction'],
+    ['chipRock', 3, 0, 12, 0.1, 'rocking damping'],
+    ['chipEat', 0.4, 0.05, 3, 0.01, 'eating speed'],
+    ['chipBand', 1, 0.2, 4, 0.05, 'eaten within px of the desk'],
+    ['chipTaste', 1.5, 0.2, 6, 0.05, 'slime under it counts x'],
+    ['chipFood', 1, 0, 2, 0.01, 'food strength'],
+    ['chipFoodR', 2, 0.3, 3, 0.05, 'food reach x radius'],
+    ['chipMax', 8, 1, NCH, 1, 'live chips'],
+    ['chipHurry', 6, 1, 20, 0.5, 'over the cap: the oldest is eaten x faster'],
+    ['chipCrumbs', 30, 0, 200, 1, 'a piece under this many columns is crumbs'],
+    ['chipCrumbS', 0.6, 0.05, 3, 0.05, 'crumbs eaten in s'],
+    ['chipGold', 0.45, 0, 1, 0.01, 'pale to deep gold'],
+    ['chipCrisp', 0.7, 0, 1.5, 0.01, 'browned rim'],
+    ['chipRipple', 0.4, 0, 2, 0.01, 'ripples'],
+    ['chipSalt', 0.6, 0, 2, 0.01, 'salt'],
+    ['chipGlow', 0.6, 0, 1.5, 0.01, 'translucent edges'],
+    ['chipSheen', 0.6, 0, 2, 0.01, 'oil sheen'],
+    ['chipShadow', 0.6, 0, 1.5, 0.01, 'shadow'],
+    ['chipNibble', 0.6, 0, 1.5, 0.01, 'nibbled edges'],
+    ['chipStain', 0.4, 0, 1, 0.01, 'slime stain'],
   ],
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
@@ -288,6 +321,9 @@ struct G {
   ord: array<vec4f, ${MAX / 4}>, // draw order, bottom to top
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
+  ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, unused
+  chipf: array<vec4f, ${NCH * 2}>, // per chip: center, food radius, food strength (sim px); then per chip: landing pulse
+  chipt: array<vec4f, ${NCH}>, // each chip's tile, lowest first: its corner and size on the canvas (device px), its layer in chipTex
 };
 @group(0) @binding(0) var<uniform> g: G;
 
@@ -328,6 +364,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     if (m.y + m.z < 0.002) { continue; }
     let d = max(cardSd(k, w), 0.0);
     v += m.y * g.y.z * exp(-d / (30.0 * s)) + m.z * 0.12 * exp(-d / (40.0 * s));
+  }
+  for (var i = 0u; i < u32(g.ch.x); i++) { // a chip landing stirs the slime around it
+    let c = g.chipf[i]; let pu = g.chipf[${NCH}u + i].x;
+    if (pu > 0.002) { let r = (w - c.xy) / (c.z * 1.5); v += pu * 0.5 * exp(-dot(r, r)); }
   }
   let q = (w - g.e.xy) / (40.0 * s);
   v += g.e.z * g.y.w * exp(-dot(q, q));
@@ -393,6 +433,10 @@ fn sense(p: vec2f, edgy: bool) -> f32 {
       let f = g.d.y * food(k, p);
       if (u32(g.x.x) == 2u) { v += f; } else { v = max(v, f); }
     }
+  }
+  for (var i = 0u; i < u32(g.ch.x); i++) { // chips are food: veins grow toward them and under them
+    let c = g.chipf[i]; let r = (p - c.xy) / c.z; let d2 = dot(r, r);
+    if (d2 < 9.0) { v = max(v, c.w * exp(-d2)); }
   }
   return v + eAt(p) * g.f.x;
 }
@@ -519,7 +563,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
 // render's own per-pixel tests, so the picture is the same; a pixel just skips cards that cannot reach it.
 const TILE = 16;
 const TILE_WGSL = COMMON + /* wgsl */ `
-@group(0) @binding(1) var<storage, read_write> tiles: array<vec2u>;
+@group(0) @binding(1) var<storage, read_write> tiles: array<vec4u>; // per tile: the cards that can reach it, their imprints, the chips
 fn rectDist(c: vec2f, lo: vec2f, hi: vec2f) -> f32 { return length(max(max(lo - c, c - hi), vec2f(0.0))); }
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -529,7 +573,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let q = g.n.w; let s = g.a.w;
   let lo = vec2f(f32(gid.x % tx), f32(gid.x / tx)) * ${TILE}.0 * q;
   let hi = lo + vec2f(${TILE}.0 * q);
-  var m = vec2u(0u);
+  var m = vec4u(0u);
   for (var j = 0u; j < u32(g.z.w + g.z.z); j++) { // the page's cards and the box flying off it
     let k = u32(g.ord[j / 4u][j % 4u]);
     let reach = g.cards[k].bound.x + (40.0 + 60.0 * g.cards[k].geo.w) * s * max(g.u.x, 1.0);
@@ -539,6 +583,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let im = g.cards[k].imp;
     if (im.z < 0.002) { continue; }
     if (rectDist(im.xy, lo, hi) <= length(g.cards[k].geo.xy) + 6.0 * s + 1.0) { m.y |= 1u << k; } // the rounded box lies inside its corners' circle
+  }
+  let dlo = vec2f(f32(gid.x % tx), f32(gid.x / tx)) * ${TILE}.0;
+  for (var i = 0u; i < u32(g.ch.z); i++) { // the chips' tiles (device px)
+    let t = g.chipt[i];
+    if (all(t.xy < dlo + ${TILE}.0) && all(t.xy + t.z > dlo)) { m.z |= 1u << i; }
   }
   tiles[gid.x] = m;
 }`;
@@ -574,7 +623,19 @@ const renderWGSL = (video) => COMMON + /* wgsl */ `
 @group(0) @binding(5) var paper: texture_2d<f32>;
 @group(0) @binding(6) var frozen: texture_2d<f32>;
 ${video ? '@group(0) @binding(7) var vidA: texture_external;\n@group(0) @binding(8) var vidB: texture_external;' : ''}
-@group(0) @binding(9) var<storage, read> tiles: array<vec2u>;
+@group(0) @binding(9) var<storage, read> tiles: array<vec4u>;
+@group(0) @binding(10) var chipTex: texture_2d_array<f32>;
+// The chips, drawn on their own (chip-render.js) as premultiplied linear color, over the desk and the resting cards.
+fn chipsAt(ip: vec2i, near: u32) -> vec4f {
+  var o = vec4f(0.0); var m = near;
+  while (m != 0u) { // the chips whose tiles reach this screen tile, lowest first
+    let i = firstTrailingBit(m); m &= m - 1u;
+    let t = g.chipt[i]; let p = vec2f(ip) - t.xy;
+    if (all(p >= vec2f(0.0)) && all(p < vec2f(t.z))) { let c = textureLoad(chipTex, vec2i(p), i32(t.w), 0); o = o * (1.0 - c.a) + c; }
+  }
+  return o;
+}
+fn layChips(col: vec3f, c: vec4f) -> vec3f { return col * (1.0 - c.a) + c.rgb; }
 
 const PAPER = vec3f(${PAPER.map(lin).map((x) => x.toFixed(5)).join(', ')});
 
@@ -829,10 +890,15 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   let nPage = u32(g.z.w);
   let pageBits = select((1u << nPage) - 1u, 0xffffffffu, nPage >= 32u);
   var cards = tm.x & pageBits;
+  var chipsLaid = g.ch.y < 0.5;
+  let chip = chipsAt(ip, tm.z);
   while (cards != 0u) { // on-screen cards that can reach this tile, bottom to top
     let j = firstTrailingBit(cards); cards &= cards - 1u;
-    col = layCard(col, u32(g.ord[j / 4u][j % 4u]), p, gr, t4, conc, localInk, fadeIn);
+    let k = u32(g.ord[j / 4u][j % 4u]);
+    if (!chipsLaid && g.cards[k].geo.w > 0.01) { col = layChips(col, chip); chipsLaid = true; } // chips lie on the desk, under any lifted card
+    col = layCard(col, k, p, gr, t4, conc, localInk, fadeIn);
   }
+  if (!chipsLaid) { col = layChips(col, chip); }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
   col = rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la);
   // A page turn: the page you left (its frozen last frame) rolls away over this one. What it uncovers fades from the bare
@@ -1214,6 +1280,7 @@ function show(region) {
   page = region; if (gpu) sim = sims[page];
   if (sim) sim.pre = false;
   cam.x = view.phone ? 0 : region * view.w; placePage(); setInert(region);
+  chips.clear(); // the chips stay on the page you left
   tweakSync?.();
 }
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
@@ -2694,11 +2761,11 @@ async function initGpu() {
     const rend = (video) => { const m = mod(renderWGSL(video)); return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' }, fragment: { module: m, entryPoint: 'fs', targets: [{ format }] } }); };
     const grainMod = mod(GRAIN_WGSL);
     const grainPipe = device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: grainMod, entryPoint: 'vs' }, fragment: { module: grainMod, entryPoint: 'fs', targets: [{ format: 'rg8unorm' }] } });
-    const [ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainP, tilePipe] = await Promise.all([comp(E_WGSL), comp(AGENT_WGSL), comp(DIFFUSE_WGSL), rend(false), rend(true), grainPipe, comp(TILE_WGSL)]);
+    const [ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainP, tilePipe, chipR] = await Promise.all([comp(E_WGSL), comp(AGENT_WGSL), comp(DIFFUSE_WGSL), rend(false), rend(true), grainPipe, comp(TILE_WGSL), createChipRenderer(device)]);
     const uniform = device.createBuffer({ size: U.byteLength, usage: SB.UNIFORM | SB.COPY_DST });
     const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     device.lost.then((i) => { console.warn('WebGPU device lost', i.message); });
-    return { device, ctx, format, ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainPipe: grainP, tilePipe, uniform, sampler, ts };
+    return { device, ctx, format, ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainPipe: grainP, tilePipe, uniform, sampler, ts, chipR };
   } catch (err) {
     console.warn('WebGPU unavailable', err);
     return null;
@@ -2722,7 +2789,7 @@ function createShared(g) {
   const tex = (format, usage) => device.createTexture({ size: [CW, CH], format, usage });
   // Two frozen textures alternate, so the pass that captures the outgoing page never samples the one it writes.
   const TX = Math.ceil(CW / TILE), nTiles = TX * Math.ceil(CH / TILE);
-  const tiles = device.createBuffer({ size: nTiles * 8, usage: SB.STORAGE });
+  const tiles = device.createBuffer({ size: nTiles * 16, usage: SB.STORAGE });
   const tileBG = device.createBindGroup({ layout: g.tilePipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: { buffer: tiles } }] });
   return { CW, CH, dev, cssH, paper: tex('rg8unorm', 0x04 | 0x10), frozenTex: [tex(g.format, 0x04 | 0x10), tex(g.format, 0x04 | 0x10)], fz: 0, TX, nTiles, tiles, tileBG };
 }
@@ -2812,7 +2879,8 @@ function renderEntries(g, sm, extra = []) {
   return [
     { binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: sm.trail[sm.parity].createView() },
     { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared.atlas.createView() }, { binding: 4, resource: g.sampler },
-    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } }, ...extra];
+    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } },
+    { binding: 10, resource: g.chipR.view() }, ...extra];
 }
 // A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
 // on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
@@ -2883,7 +2951,8 @@ async function buildAtlas(g) {
 
 // Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
 const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
-const U = new Float32Array((CARD0 + MAX * CARD_VEC4) * 4);
+const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
+const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
@@ -3027,8 +3096,58 @@ function writeUniforms(g, sm = sim, hold = false) {
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
+  chipUniforms(s);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
+
+// ---------- chips ----------
+// Potato chips (chips.js, drawn by chip-render.js): click the bare desk to drop one. They live on the page you see: a page
+// turn carries them off in its frozen frame, and they do not come back.
+const chips = createWorld(T);
+const chipX0 = () => (view.phone ? 0 : page * view.w);
+let chipFeedAt = 0;
+// Each chip's food and landing pulse, for the agents and the excitation field (sim px), and where its drawn layer sits on the canvas.
+function chipUniforms(s) {
+  U.fill(0, CHIP_OFF, CHIP_OFF + CHIP_VEC4 * 4);
+  const bs = s === sim ? chips.bodies.slice(0, NCH) : [];
+  if (!bs.length) return;
+  const tiles = gpu.chipR.place(chips, { x0: chipX0(), dev: shared.dev, T, t: clock.t });
+  U.set([bs.length, 1, tiles.length, 0], CHIP_OFF);
+  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH * 2 + i) * 4));
+  bs.forEach((b, i) => {
+    U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * T.chipFoodR * s.dpr, b.landed ? T.chipFood : 0], CHIP_OFF + 4 + i * 4);
+    U[CHIP_OFF + 4 + (NCH + i) * 4] = b.pulse;
+  });
+}
+function stepChips(dt) {
+  if (!chips.bodies.length) return;
+  const x0 = chipX0(), pushers = [];
+  for (const c of sources) { // every card on the page, and its box, nudges them
+    if ((!view.phone && c.region !== page) || c.gone || c.deck || c.carrier || !c.w) continue;
+    const [sx, sy, sr] = shown(c), th = (sr * Math.PI) / 180;
+    pushers.push({ x: sx, y: sy, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy });
+  }
+  const moved = chips.step(dt, { pushers, bounds: [x0, 0, x0 + view.w, view.phone ? view.docH : view.h] });
+  if (moved || chips.bodies.some((b) => b.dirty)) redraw = true;
+  if (clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.1; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
+}
+// Over the cap the oldest chip is eaten faster; with every slot taken the click does nothing.
+function dropChip(x, y) {
+  const calm = [...new Set(chips.bodies.map((b) => b.chip))].filter((c) => c.hurry === 1).sort((a, b) => a.born - b.born);
+  if (calm.length >= T.chipMax) calm[0].hurry = T.chipHurry;
+  if (chips.bodies.length >= NCH) return null;
+  const b = chips.drop(x, y, T.chipSize * view.k, (Math.random() * 2 ** 31) >>> 0, { region: page, born: clock.t, still: reduced });
+  redraw = true;
+  if (reduced) drawStill(); // no frame loop: it is drawn where it came to rest
+  return b;
+}
+addEventListener('click', (e) => {
+  if (!gpu || !sim || !T.chips || turn.on || flights.on || e.button !== 0) return;
+  if (e.target.closest?.('.src, .door, a, button, input, select, label, textarea, .tweak, .links')) return;
+  const x = deskX(e), y = deskY(e), x0 = chipX0();
+  for (const r of [!view.phone && cornerBox(x0), deckRect(page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;
+  dropChip(x, y);
+});
 
 // ---------- frame ----------
 
@@ -3043,6 +3162,7 @@ function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents
   if (only.includes('d')) { s.parity = 1 - p; s.t += STEP; }
 }
 function encodeRender(enc, target, ts = null, s = sim) {
+  if (s === sim && chips.bodies.length) gpu.chipR.encode(enc);
   let pipe = gpu.renderPipe, bg = gpu.device.createBindGroup({ layout: gpu.renderPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s) });
   if (videoSrc && videoMix > 0) {
     try {
@@ -3127,6 +3247,7 @@ function frame(now) {
   stepTurn(dt);
   stepDoor(dt);
   stepMedia(dt);
+  stepChips(dt);
   cursor.amt *= Math.exp(-dt * 2);
   acc += dt;
   let steps = 0;
@@ -3215,6 +3336,7 @@ const destroySim = (sm) => { for (const t of [...sm.trail, ...sm.etex, sm.mask])
 async function rebuild(first) {
   layout();
   if (!gpu) return;
+  chips.clear();
   sims.forEach(destroySim);
   if (shared) for (const t of [shared.paper, ...shared.frozenTex, shared.atlas, shared.tiles]) t?.destroy();
   shared = createShared(gpu);
@@ -3538,7 +3660,8 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, LAUNCH, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
+window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, LAUNCH, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T,
+  chips: { drop: dropChip, world: chips, stats: () => ({ n: chips.bodies.length, awake: chips.bodies.filter((b) => !b.sleep && !b.frozen).length, bodies: chips.bodies.map((b) => ({ id: b.id, x: +b.x[0].toFixed(1), y: +b.x[1].toFixed(1), z: +b.x[2].toFixed(2), sleep: b.sleep, m: +(b.m / b.mass0).toFixed(3), feed: b.feed ? +(b.feed.v.reduce((a, v) => a + v, 0) / b.feed.v.length).toFixed(3) : null })) }) } };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {
