@@ -842,11 +842,10 @@ const doorEl = root.querySelector('.door');
 const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
 // Each page's deck; cards without a data-slot (more than the hand-placed slots) start in it.
-const DECK_LABEL = { pile: 'Deck: draw a card (double-click to gather or deal)', box: 'Card box: double-click or press Enter to put every card back' };
 {
   const list = pageEl.querySelector('.sources');
   for (const region of ['main', 'research']) { // every page has a deck for its cards, and a card box (its body and its lid) for when it is empty
-    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="deck-${region}" data-region="${region}" data-slot="0,0,170,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="${DECK_LABEL.pile}"></div></li>`);
+    list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="deck-${region}" data-region="${region}" data-slot="0,0,170,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Card box"></div></li>`);
     list.insertAdjacentHTML('beforeend', `<li class="src deck lid" data-key="lid-${region}" data-region="${region}" data-slot="0,0,40,0" data-order="98" aria-hidden="true"><div class="hit"></div></li>`);
   }
 }
@@ -1397,7 +1396,7 @@ for (const s of sources) {
   });
   if (s.more) { hit.addEventListener('focus', () => (s.focused = hit.matches(':focus-visible'))); hit.addEventListener('blur', () => (s.focused = false)); } // a tucked box comes out for the keyboard
   hit.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : flip(s); }
+    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : s.over ? putBack(s, pageDeck(s.region)) : flip(s); } // over its box, it goes in
     else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
   });
   hit.addEventListener('pointerdown', (e) => {
@@ -1546,6 +1545,8 @@ function nudge(s, [dx, dy], big) {
   k.tx = clamp(k.tx + dx * step, Math.min(x0 + ex + m, s.x), Math.max(x0 + view.w - ex - m, s.x)); // stays on screen
   k.ty = clamp(k.ty + dy * step, Math.min(ey + m, s.y), Math.max(view.h - ey - m, s.y));
   Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, dropS: 0.25 });
+  const deck = dealing && pageDeck(s.region); // over its box it waits at the open end; Enter puts it in
+  if (deck) deck.welcome = s.over = decked(s) && !turn.on && overDeck(deck, k.tx + ex, k.ty, (s.over ? BOX.keep : BOX.enter) * view.k); // its leading edge (it stays on screen, so its middle never reaches the box)
   if (s.z !== topZ) s.z = ++topZ;
   clearTimeout(s.keyTimer);
   s.keyTimer = setTimeout(() => { s.keyHeld = false; if (reduced) { s.kb = null; shove(s); drawStill(); } }, 300);
@@ -1834,6 +1835,7 @@ function stepIn(s, k) {
   }
   if (u < 1) return true;
   s.fly = null; d.dirty = true; d.squashV = (d.squashV || 0) + 8; // in: the box gives a little
+  if (k.say) say(`${k.say} put back, ${d.pile.length} card${d.pile.length === 1 ? '' : 's'} in the box`);
   return false;
 }
 // Finishes every card in the air (on one page, if given): one going into a box is in it, one being dealt is home.
@@ -1905,6 +1907,8 @@ function moveDeck(d) {
   if (d.dirty) {
     d.dirty = false;
     d.pile.forEach((s, i) => { if (!s.fly) { [s.x, s.y, s.rot] = pilePose(d, i, s); Object.assign(s, { face: 1, z: pileZ(d, i) }); placeDom(s); } });
+    const n = d.pile.length;
+    if (d.said !== n) { d.said = n; d.hit.setAttribute('aria-label', n ? `Card box, ${n} card${n === 1 ? '' : 's'}. Enter deals the top card; Shift+Enter gathers or deals them all` : 'Card box, empty. Enter puts every card back'); }
   }
   const lid = lidOf(d);
   if (!lid) return;
@@ -1991,18 +1995,24 @@ function gather(cards, deck) {
   return (cards.length - 1) * GATHER.stagger;
 }
 // One card into a box, on top: from where it shows (mid-flip, mid-deal, or waiting at the open end), face as it is.
-function collect(s, deck, at, dur = GATHER.dur) {
+function collect(s, deck, at, dur = GATHER.dur, say = '') {
   const [x0, y0, r0] = shown(s);
   deck.pile.push(s); deck.z = ++topZ; deck.dirty = true;
-  s.fly = { in: true, deck, at, dur, x0, y0, r0, face0: s.face, open: s.flip > 0 };
+  s.fly = { in: true, deck, at, dur, x0, y0, r0, face0: s.face, open: s.flip > 0, say };
   Object.assign(s, { deck, x: x0, y: y0, rot: r0, snap: 0, over: false, flying: true, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); s.el.classList.remove('flipped', 'turning', 'dragging'); s.hit.setAttribute('aria-expanded', 'false');
 }
-// Putting one card back by hand (a drop over its box): waiting at its open end already, it slides in.
+// Putting one card back by hand (a drop over its box, or Enter while it waits there): it slides in, keyboard focus goes to
+// the box, and a screen reader hears where it went.
 function putBack(s, deck) {
-  collect(s, deck, now(), s.snap > 0.99 ? BOX.put : GATHER.dur);
+  const focused = s.el.contains(document.activeElement);
+  collect(s, deck, now(), s.snap > 0.99 ? BOX.put : GATHER.dur, s.hit.getAttribute('aria-label').replace(/: [^:]*$/, ''));
   flights.on = true; stepFlights(0);
+  if (focused) deck.hit.focus({ preventScroll: true });
 }
+const live = root.appendChild(Object.assign(document.createElement('p'), { className: 'live' }));
+live.setAttribute('aria-live', 'polite');
+const say = (text) => { live.textContent = text; };
 // Is a desk point over a page's box (grown by pad px)?
 function overDeck(deck, x, y, pad = 0) {
   const r = obb(deck), ex = reach(r, [1, 0]) + pad, ey = reach(r, [0, 1]) + pad;
