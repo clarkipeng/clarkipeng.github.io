@@ -1501,7 +1501,8 @@ function stepCards(dt) {
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
     if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
-      s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1); // the real links (their hover wash and focus ring) only once the back lies at rest: mid-flip they would float off the turning card
+      s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1);
+      s.el.classList.toggle('turning', s.flip !== s.flipTo); // no flat focus ring around a card turning in 3D // the real links (their hover wash and focus ring) only once the back lies at rest: mid-flip they would float off the turning card
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
       if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
