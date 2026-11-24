@@ -238,6 +238,27 @@ export function createChips(P, world) {
   }
   function remove(b) { world().remove(b.p); bodies.splice(bodies.indexOf(b), 1); }
 
+  // Cards (pushers: { x, y, hw, hh, c, s, vx, vy } in desk px) shove the chips down on the desk out from under them, at least
+  // as fast as the card moves. A chip's pushes add, so one wedged between two cards settles where they balance.
+  function push(pushers) {
+    for (const b of bodies) {
+      const r = b.foot;
+      if (b.frozen || b.x[2] - b.S.hb > r * 0.5) continue;
+      let tx = 0, ty = 0;
+      for (const p of pushers) {
+        const dx = b.x[0] - p.x, dy = b.x[1] - p.y, lx = dx * p.c + dy * p.s, ly = -dx * p.s + dy * p.c;
+        const cx = Math.max(-p.hw, Math.min(p.hw, lx)), cy = Math.max(-p.hh, Math.min(p.hh, ly)), ex = p.hw - Math.abs(lx), ey = p.hh - Math.abs(ly);
+        const d = Math.hypot(lx - cx, ly - cy), under = !d; // under: out through the nearest edge
+        if (!under && d >= r * 0.92) continue;
+        const [nx, ny, pen] = !under ? [(lx - cx) / d, (ly - cy) / d, r * 0.92 - d] : ex < ey ? [Math.sign(lx) || 1, 0, ex + r] : [0, Math.sign(ly) || 1, ey + r];
+        const wx = nx * p.c - ny * p.s, wy = nx * p.s + ny * p.c, want = Math.max(p.vx * wx + p.vy * wy, Math.min(pen * 10, 260));
+        tx += wx * want; ty += wy * want;
+      }
+      const t = Math.hypot(tx, ty), dv = t - (b.v[0] * tx + b.v[1] * ty) / (t || 1);
+      if (t < 2 || dv <= 0) continue;
+      b.v[0] += (tx / t) * dv; b.v[1] += (ty / t) * dv; b.p.sleep = false; b.p.still = 0;
+    }
+  }
 
   // After the sim has advanced: a chip's first touch is its landing (a hard one stirs the slime); then eating.
   function step(dt, eatOn) {
@@ -283,5 +304,5 @@ export function createChips(P, world) {
     for (const X of [lo[0], hi[0]]) for (const Y of [lo[1], hi[1]]) for (const Z of [lo[2] - pad, hi[2] + pad]) { const z = b.toWorld(R, [X, Y, Z])[2]; z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
     return [Math.max(0, z0), z1];
   }
-  return { bodies, drop, step, remove, maskBytes, rect, zspan, clear: () => { while (bodies.length) remove(bodies[0]); } };
+  return { bodies, drop, step, push, remove, maskBytes, rect, zspan, clear: () => { while (bodies.length) remove(bodies[0]); } };
 }

@@ -3437,6 +3437,10 @@ function stepChips(dt) {
   if (!chips.bodies.length) return;
   const { world, L } = phys, x0 = chipX0(), own = chipRegion() === page, H = view.phone ? view.docH : view.h;
   if (!own && !turn.on) for (const b of chips.bodies) { b.v[0] += T.chipSweep * view.w * dt; b.p.sleep = false; b.p.still = 0; }
+  if (own) chips.push(sources.filter((c) => (view.phone || c.region === page) && !c.gone && !c.deck && !c.carrier && c.w).map((c) => {
+    const [x, y, r] = shown(c), th = (r * Math.PI) / 180;
+    return { x, y, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy };
+  }));
   if (!L || L.home || L.out) { const t = world.time + (phys.rem || 0) + dt; world.advance(t); phys.rem = t - world.time; }
   for (const b of chips.bodies.filter((b) => (!own && b.frozen) || b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
   chips.step(dt, own);
