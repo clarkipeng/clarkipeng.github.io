@@ -179,6 +179,7 @@ const GROUPS = {
     ['chipGlow', 0.6, 0, 1.5, 0.01, 'translucent edges'],
     ['chipSheen', 0.6, 0, 2, 0.01, 'oil sheen'],
     ['chipLight', 2, 0, 3, 0.05, 'light across the curl'],
+    ['chipFill', 0.6, 0, 1, 0.01, 'the darkest the side turned away gets'],
     ['chipRelief', 0.3, 0, 1.5, 0.01, 'bright crests, dark troughs'],
     ['chipGloss', 0.8, 0, 2, 0.01, 'broad highlight'],
     ['chipLift', 0.8, 0, 2, 0.01, 'lifted rims glow'],

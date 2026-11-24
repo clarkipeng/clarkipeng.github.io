@@ -6,7 +6,7 @@
 
 import { CN, NCH, FEED } from './chips.js';
 
-const BODY_VEC4 = 14, HEAD_VEC4 = 6, G = 40; // a chip's mesh: G x G quads
+const BODY_VEC4 = 14, HEAD_VEC4 = 7, G = 40; // a chip's mesh: G x G quads
 const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell
 // A shadow falls this far right and down per px of height, like the cards' far shadows.
 const LS = [0.15, 0.6];
@@ -30,6 +30,7 @@ struct CU {
   l2: vec4f, // slime stain, light (x, y toward it), light contrast
   l3: vec4f, // crests and troughs, broad highlight, lifted rims glow, the camera's height (px)
   l4: vec4f, // shadow softening per px of height, contact shadow, blisters, how gradually the edges curl
+  l5: vec4f, // the soft light from the sky and the desk that fills the side turned away, unused x3
   b: array<Body, ${NCH}>,
 };
 @group(0) @binding(0) var<uniform> u: CU;
@@ -181,8 +182,10 @@ const BROWN = vec3f(0.42, 0.21, 0.06); const OLIVE = vec3f(0.36, 0.37, 0.20); co
   let L = normalize(vec3f(u.l2.yz, 0.8)); let H = normalize(L + vec3f(0.0, 0.0, 1.0));
   let lam = dot(n, L) - L.z; // 0 lying flat
   let hn = smoothstep(0.0, 1.0, clamp((v.z - b.z.x) / max(b.z.y - b.z.x, 1.0), 0.0, 1.0));
-  // Light passes into it, so what turns away from the light dims to a warmer amber, never to grey.
-  let f = max(1.0 + u.l2.w * lam, 0.2) * (1.0 - u.l3.x * (0.4 - 0.5 * hn));
+  // The side turned away still gets the sky's and the desk's soft light, and light passes into it, so it dims only so
+  // far (to the fill), to a warmer gold, never to brown or grey.
+  let dl = 1.0 + u.l2.w * lam; let dk = max(1.0 - dl, 0.0);
+  let f = select(1.0 - (1.0 - u.l5.x) * dk / (1.0 + dk), dl, dl > 1.0) * (1.0 - u.l3.x * (0.4 - 0.5 * hn));
   var col = alb * select(pow(vec3f(f), vec3f(0.75, 1.0, 1.4)), vec3f(f), f > 1.0);
   let nh = max(dot(n, H), 0.0);
   col += vec3f(1.0, 0.9, 0.7) * pow(nh, 16.0) * 0.3 * u.l3.y * (0.4 + 0.6 * hn);
@@ -276,7 +279,7 @@ export async function createChipRenderer(device) {
   // look changed. A pile lying still costs nothing.
   function place(world, { x0, dev, T, t }) {
     const look = [T.chipGold, T.chipCrisp, T.chipRipple, T.chipSalt, T.chipGlow, T.chipSheen, T.chipShadow, T.chipNibble, T.chipStain,
-      T.chipLight, T.chipRelief, T.chipGloss, T.chipLift, T.chipCam, T.chipSoft, T.chipContact, T.chipBlister, T.chipBend];
+      T.chipLight, T.chipRelief, T.chipGloss, T.chipLift, T.chipCam, T.chipSoft, T.chipContact, T.chipBlister, T.chipBend, T.chipFill, 0, 0, 0];
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box);
     assign(bodies);
     for (const id of drawn.keys()) if (!slots.has(id)) drawn.delete(id);
