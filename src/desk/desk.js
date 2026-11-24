@@ -1775,8 +1775,8 @@ function waitPose(s, k, t = flights.t) {
 // on top. Only cards not in it yet.
 function pileUp(region, own = false) {
   const deck = pageDeck(region);
-  if (deck && region !== page) resetBox(deck); // out of sight, a box puts itself away at once
   if (view.phone || !gpu || reduced || !deck) return;
+  if (region !== page) resetBox(deck); // out of sight, a box puts itself away at once
   const cards = sources.filter((s) => s.region === region && decked(s) && !s.deck && !s.fly && !s.dragging && (own || region !== page || !s.slot)).sort((a, b) => b.order - a.order);
   for (const s of cards) {
     deck.pile.push(s);
