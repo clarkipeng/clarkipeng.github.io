@@ -116,9 +116,11 @@ const GROUPS = {
     ['curlShadowOff', 0.75, 0, 1.5, 0.01, 'shadow offset per px of lift'],
     ['curlShadowBlur', 0.8, 0, 2, 0.01, 'shadow blur per px of lift'],
     // Clicked, it folds up over its strip to show its back, like a top-bound pad's sheet: its edge lifts, then it rolls over.
-    ['foldS', 1, 0.2, 3, 0.05, 'fold up s'],
-    ['unfoldS', 0.8, 0.2, 3, 0.05, 'fold back down s'],
-    ['foldLift', 0.35, 0.05, 0.8, 0.01, 'share of the fold lifting its edge (then it rolls over)'],
+    ['foldLift', 0.35, 0.05, 0.8, 0.01, 'share of the fold lifting its edge (then it rolls over: the top of its arc)'],
+    ['foldTop', 1.2, 0.2, 4, 0.05, 'fold speed over the top of its arc /s'],
+    ['foldG', 60, 5, 200, 1, 'gravity past the top of the arc /s2'],
+    ['foldBounce', 0.25, 0, 0.6, 0.01, 'bounce as it slaps down (share of its speed)'],
+    ['foldSlap', 5, 0.5, 10, 0.1, 'slap speed for a full burst /s'],
     ['foldR', 5, 2, 16, 0.5, 'the fold\'s crease radius px'],
   ],
   // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
@@ -1664,6 +1666,7 @@ function flip(s) {
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
   // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  if (hinged(s)) { s.slap = true; s.flipV = (s.flipTo ? 1 : -1) * Math.hypot(T.foldTop, Math.sqrt(T.foldG) * Math.abs(s.flip - T.foldLift)); } // flicked just hard enough to clear the top
   s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay; the note stays stuck down
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces (the note: folded up or down)
     if (!gpu && s.flipTo) paintDomBack(s);
@@ -1703,13 +1706,21 @@ function stepCards(dt) {
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
     if (s === noteSrc) stepCurl(s, dt);
     if (s.flip !== s.flipTo) {
-      const dur = hinged(s) ? (s.flipTo ? T.foldS : T.unfoldS) : s.flipTo ? T.flipS : T.flipS * MOTION.exit; // closing is quicker
-      s.flip = s.flipTo ? Math.min(1, s.flip + dt / dur) : Math.max(0, s.flip - dt / dur);
+      if (hinged(s)) { // the note: over the top of its arc gravity takes it, and it slaps down (one burst) with a little bounce
+        const dir = s.flipTo ? 1 : -1;
+        s.flipV += T.foldG * (s.flip - T.foldLift) * dt;
+        if (dir * (s.flip - T.foldLift) < 0) s.flipV = dir * Math.max(dir * s.flipV, T.foldTop); // long frames lose speed: never stall short of the top
+        s.flip += s.flipV * dt;
+        if (dir * (s.flip - s.flipTo) >= 0) {
+          if (s.slap) { s.slap = false; land(s, Math.abs(s.flipV) / T.foldSlap); }
+          s.flipV *= -T.foldBounce; s.flip = Math.abs(s.flipV) < 0.3 ? s.flipTo : s.flipTo - dir * 1e-4;
+        }
+      } else { const dur = s.flipTo ? T.flipS : T.flipS * MOTION.exit; s.flip = s.flipTo ? Math.min(1, s.flip + dt / dur) : Math.max(0, s.flip - dt / dur); } // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1);
       s.el.classList.toggle('turning', s.flip !== s.flipTo); // no flat focus ring around a card turning in 3D // the real links (their hover wash and focus ring) only once the back lies at rest: mid-flip they would float off the turning card
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
-      if (s.flip === s.flipTo) { land(s, 1); placeDom(s); if (s === noteSrc) placeRing(s); } // laid down
+      if (s.flip === s.flipTo) { if (!hinged(s)) land(s, 1); placeDom(s); if (s === noteSrc) placeRing(s); } // laid down
     }
     if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(hinged(s) ? 0 : easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift (the note folds instead: noteCurl); over its box it turns face down
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
@@ -1745,19 +1756,19 @@ const curlRoll = (s) => (Math.min(s.curl, 170) * Math.PI / 180) * (1 - smooth(s.
 // The curl's shape now, in the note's frame (CSS px from its middle, y toward its free edge): the roll's direction n, its
 // foot (the line dot(x, n) = d0, never into the strip), how far the bend grows (sr) and the curvature it then rolls at
 // (kap); null while it lies flat. The corner, L past the foot, ends rolled by the whole angle: kap (L - sr / 2) of it.
-// Folding up to show its back (s.flip, eased), like a top-bound pad's sheet: first its edge lifts (the corner's roll grows
-// to a half turn, the lean straightens, T.foldLift of the way), then the roll tightens to a crease of radius T.foldR as its
-// foot climbs to the strip, and the paper past the half turn lies back over the strip, back up (the shader's tail). back:
+// Folding up to show its back (s.flip), like a top-bound pad's sheet: first its edge lifts (the corner's roll grows
+// to a half turn, the lean straightens, and its foot climbs to the strip, T.foldLift of the way), then the roll tightens to a
+// crease of radius T.foldR, and the paper past the half turn lies back over the strip, back up (the shader's tail). back:
 // how much of the underside shows the back's writing.
 function noteCurl(s) {
-  const roll = curlRoll(s), e = smooth(s.flip || 0);
+  const roll = curlRoll(s), e = s.flip || 0;
   if (!(roll > 1e-3) && !(e > 0)) return null;
   const k = s.k || 1, p1 = Math.min(e / T.foldLift, 1), p2 = Math.max((e - T.foldLift) / (1 - T.foldLift), 0);
-  const a = (T.curlTilt * Math.PI / 180) * (1 - e), n = [Math.sin(a), Math.cos(a)], hw = s.w / 2, hh = s.h / 2;
+  const a = (T.curlTilt * Math.PI / 180) * (1 - p1), n = [Math.sin(a), Math.cos(a)], hw = s.w / 2, hh = s.h / 2;
   const corner = n[0] * (a < 0 ? -hw : hw) + n[1] * hh; // the corner that rolls most, along n
   const more = T.curlHover > 0 ? T.curlHoverReach * Math.min(Math.max((s.curl - T.curlRest) / T.curlHover, 0), 1) : 0;
   const strip = Math.abs(n[0]) * hw + n[1] * (STRIP * k - hh); // its foot never reaches into the strip
-  const d0 = lerp(Math.max(corner - T.curlReach * (1 + more) * s.h, strip), strip, e), L = corner - d0;
+  const d0 = lerp(Math.max(corner - T.curlReach * (1 + more) * s.h, strip), strip, p1), L = corner - d0;
   const Lb = lerp(L, Math.min(L, crease(k)), p2), sr = T.curlRamp * Lb; // the paper in the roll (the rest lies back flat)
   return { n, d0, sr, kap: lerp(roll, Math.PI, p1) / (Lb - sr / 2), back: p1 };
 }
