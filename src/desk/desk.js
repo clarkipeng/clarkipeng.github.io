@@ -252,7 +252,7 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
-// z = how much higher than a flat card its far shadow falls from (CSS px)
+// z = how much higher than a flat card its far shadow falls from (CSS px), w = it turns about its horizontal axis (the note)
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, |cos flip|
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
@@ -600,7 +600,7 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
 // Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
 fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let q = p - c.flat.xy - o;
-  let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / vec2f(max(c.bound.w, 0.05), 1.0);
+  let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / select(vec2f(max(c.bound.w, 0.05), 1.0), vec2f(1.0, max(c.bound.w, 0.05)), c.obj.w > 0.5);
   return 1.0 - smoothstep(-b, b, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x);
 }
 
@@ -782,7 +782,7 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
     if (cov > 0.0) {
       var un = lp / (2.0 * c.geo.xy) + 0.5;
       let back = c.bound.y < 0.0;
-      if (back) { un.x = 1.0 - un.x; } // seen from behind, so the back texture reads the right way round
+      if (back) { if (c.obj.w > 0.5) { un.y = 1.0 - un.y; } else { un.x = 1.0 - un.x; } } // seen from behind (turned over its horizontal or vertical axis), so the back reads the right way round
       let tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
       var cc = pow(tex.rgb, vec3f(2.2));
       ${video ? `if (!back && f32(k) == g.v.x && g.v.y > 0.0) {
@@ -885,6 +885,10 @@ let nameBox = null; // CSS px: { x, baseline, size }
 // The box has walls BOX_T deep: its front panel sits that much up and right of its base (seen from above the page's
 // middle, its open end and the wall facing down the page show), and its lid is that deep end wall plus the tuck flap.
 const BOX_T = 26;
+const STRIP = 22; // the sticky note's strip, design px (the stylesheet's .note gradient matches)
+// The sticky note turns over its top edge, about its horizontal axis, like a real one lifted to read its back; every other
+// card turns over its side.
+const hinged = (s) => s.kind === 'note';
 const boxSize = (s) => { const p = pageDeck(s.region).room; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
 function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)) {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
@@ -1504,7 +1508,7 @@ function stepCards(dt) {
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
       if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
     }
-    if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift; over its box it turns face down
+    if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(hinged(s) ? smooth(s.flip) : easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift (the note all the way: it peels up first); over its box it turns face down
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
@@ -1827,7 +1831,7 @@ function stepIn(s, k) {
   if (e < f1) { // to the open end, arriving at the speed it slides in with
     const v = e / f1, g = f1 / (1 - f1);
     Object.assign(s, { x: hermite(k.x0, mx, mx - k.x0, (px - mx) * g, v), y: hermite(k.y0, my, my - k.y0, (py - my) * g, v), rot: k.r0 + (pr - k.r0) * smooth(v / 0.8),
-      face: k.face0 + (1 - k.face0) * easeFlip(smooth((v - 0.1) / 0.7)), flyLift: 0.45 * smooth(v / 0.3) * (1 - smooth((v - 0.6) / 0.4)) });
+      face: k.face0 + (1 - k.face0) * easeFlip(smooth((v - 0.1) / 0.7)), flyLift: Math.max(0.45 * smooth(v / 0.3), k.lift0 * (1 - smooth(v / 0.3))) * (1 - smooth((v - 0.6) / 0.4)) });
   } else { // in it goes
     const v = f1 < 1 ? (e - f1) / (1 - f1) : 1;
     if (!k.inside) { k.inside = true; s.z = pileZ(d, i); }
@@ -1996,9 +2000,9 @@ function gather(cards, deck) {
 }
 // One card into a box, on top: from where it shows (mid-flip, mid-deal, or waiting at the open end), face as it is.
 function collect(s, deck, at, dur = GATHER.dur, say = '') {
-  const [x0, y0, r0] = shown(s);
+  const [sx, sy, r0] = shown(s), [fz, fv] = flipPath(s), a = (r0 * Math.PI) / 180, x0 = sx - Math.sin(a) * fv, y0 = sy + Math.cos(a) * fv; // mid-flip: from where its turn has it
   deck.pile.push(s); deck.z = ++topZ; deck.dirty = true;
-  s.fly = { in: true, deck, at, dur, x0, y0, r0, face0: s.face, open: s.flip > 0, say };
+  s.fly = { in: true, deck, at, dur, x0, y0, r0, face0: s.face, lift0: fz / T.lift, open: s.flip > 0, say };
   Object.assign(s, { deck, x: x0, y: y0, rot: r0, snap: 0, over: false, flying: true, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); s.el.classList.remove('flipped', 'turning', 'dragging'); s.hit.setAttribute('aria-expanded', 'false');
 }
@@ -2271,7 +2275,7 @@ function drawCard(s0, S0) {
   x.fillStyle = s.kind === 'note' ? TOK.note : TOK.stock;
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
-  if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, 22 * S); // the sticky strip is a touch darker
+  if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, STRIP * S); // the sticky strip is a touch darker
   let mediaPx = null;
   if (s.media) {
     const m = s.media;
@@ -2368,9 +2372,9 @@ function backLayout(s, b = s) {
     const hand = st.note !== 'icons', f = hand ? TYPE.noteHand : TYPE.noteLink, x0 = pad + (hand ? 0 : 20);
     m.font = f.font;
     // Tighter backs set the list in two columns when one would not fit.
-    const n = s.backLinks.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom > b.h, per = two ? Math.ceil(n / 2) : n;
+    const n = s.backLinks.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
     const links = s.backLinks.map((a, i) => linkAt(a, x0 + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), BK.first + (i % per) * row, m.measureText(a.textContent).width));
-    return { st, lines: [], links, w, h: b.h, need: BK.first + (per - 1) * row + BK.bottom };
+    return { st, lines: [], links, w, h: b.h, need: BK.first + (per - 1) * row + BK.bottom + STRIP }; // clear of the strip along its bottom
   }
   // No label line: it only repeated the front's caption (Clark: no redundancy).
   const title = T.backTitle ? s.backTitle ?? (b.title || b.lines?.join(' ') || '') : '', label = ''; // the title can stay on the front only
@@ -2522,7 +2526,7 @@ function drawBack(s0, S0) {
   if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
-  if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, w, 22); } // the same sticky strip as the front
+  if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
   x.textBaseline = 'alphabetic';
   if (L.postcard) { drawPostcard(x, s, L); return { canvas: c, links, w, h }; }
   // index: the label strip, the header rule, and faint rules under every line to the bottom of the card
@@ -2755,6 +2759,7 @@ function paintPlainBack(s, S) {
   const cs = view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
   x.scale(S, S); x.fillStyle = STOCK[s.kind] || TOK.stock; x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
+  if (hinged(s)) { x.translate(w, h); x.rotate(Math.PI); } // the note is seen turned over its top edge, not its side
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
   // shows and the name is written upside down there; a portrait card's left part shows, the name turned to read up.
@@ -2851,16 +2856,26 @@ function mildInk(hex, baseHex, mix = 1) {
   const h = Math.atan2(c[2], c[1]);
   return absorbance(fromOklab([L, a0 + mix * (C * Math.cos(h) - a0), b0 + mix * (C * Math.sin(h) - b0)]));
 }
+// A click's flip, off the desk: how high its middle is (CSS px) and how far it is from where the card lies, along the
+// card's vertical axis. A card lifts in the first ~22%, turns over in the middle, and lays back down in the last ~22% (the
+// same path in reverse). The note peels up from its strip (turning about its top edge, which stays down), then lifts clear
+// and turns on over in the air, so it lays back down where it was, back up, its strip now along its bottom.
+function flipPath(s) {
+  if (!(s.flip > 0 && s.flip < 1)) return [0, 0];
+  if (!hinged(s)) return [(view.phone ? 0.3 : 0.9) * T.lift * smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)), 0]; // on a phone a flip lifts less, so the card stays inside the screen
+  const a = Math.PI * s.face, r = s.h / 2, b = smooth((s.face - 0.2) / 0.6); // b: from turning about its top edge to about its middle
+  return [((1 - b) * r + b * (r + 0.45 * T.lift)) * Math.sin(a), (1 - b) * r * (Math.cos(a) - 1)];
+}
 function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
-  // Flip: lift in the first ~22%, turn over in the middle, lay back down in the last ~22% (same path in reverse).
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
-  const up = s.flip > 0 && s.flip < 1 ? smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)) : 0;
-  const lift = Math.max(s.lift, (view.phone ? 0.3 : 0.9) * up, s.flyLift); // on a phone a flip lifts less, so the card stays inside the screen
-  const [sx, sy, sr] = shown(s), th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
+  const [fz, fv] = flipPath(s), lift = Math.max(s.lift, fz / T.lift, s.flyLift);
+  let [sx, sy, sr] = shown(s);
+  const th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
+  sx -= Math.sin(th) * fv; sy += Math.cos(th) * fv;
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
-  // Never exactly edge-on, where the homography would be singular.
-  const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1);
-  if (s.face > 0 || s.flipA) mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe));
+  // Never exactly edge-on, where the homography would be singular. The note's lower edge rises as it turns.
+  const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1), hz = hinged(s);
+  if (s.face > 0 || s.flipA) { if (hz) mv = rodrigues(mv, mu.map((v) => v / sc), Math.atan2(fs, fe)); else mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe)); }
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   const zh = lift * T.lift * dpr, f = 1800 * dpr - zh, cx = (sx - originX) * dpr, cy = sy * dpr; // page-local; the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
@@ -2874,7 +2889,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2, 0] : [0, 0, 0, 0]),
-    ...boxShadow(s, dpr, hw, hh)];
+    ...boxShadow(s, dpr, hw, hh).slice(0, 7), hz ? 1 : 0];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
 }
