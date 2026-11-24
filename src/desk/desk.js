@@ -12,6 +12,7 @@
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
 import { clips, mediaUrl } from 'virtual:desk-media';
+import { TALLY_PARAMS, tallySurface, paintTally } from './tally.js';
 
 export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;
@@ -144,6 +145,7 @@ const GROUPS = {
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
   ],
+  Tally: TALLY_PARAMS, // the pencil tally on each card box's label (tally.js)
 };
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
 // four corners | center: one blob under the card | ring2: max plus a second ridge farther out
@@ -1985,6 +1987,7 @@ function moveDeck(d) {
 function stepDecks(dt) {
   for (const d of sources) {
     if (!d.more || view.phone || !d.slide || !dealing) continue;
+    stepTally(d, dt);
     if (d.launch) { stepLaunch(d, dt); continue; }
     const v = d.slide;
     if (v.wait > 0) v.wait -= dt;
@@ -2012,6 +2015,44 @@ function stepBox(d, dt) {
   if (d.gatherAsk && b.t >= 1 && d.lidT === 0) { d.gatherAsk = false; boxGather(d); } // out and open: in they come
 }
 const arriving = (d) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait > 0; // the box is still sliding in
+// ---------- the tally ----------
+// Each box's label carries a pencil tally of the cards in it (tally.js paints it into the box's own texture). One hand per
+// box: a card going in gets a stroke drawn as it slides in, and a card dealt out has the last stroke rubbed out as it
+// lifts off. Strokes follow one another; one that falls behind (a gather) is drawn quicker to keep up. Out of sight (the
+// other page, a box still arriving), on the first frame, or with reduced motion, marks come and go at once.
+const inBox = (s, d) => (s.deck === d ? !(s.fly?.in && !s.fly.inside) : !!(s.fly?.out && s.fly.deck === d && !s.fly.up));
+function tallySetup(d, canvas, S) {
+  const t = BOX_T, ds = design(d), fh = ds.h - t, lid = Math.round((ds.h - 12 - t) * 0.13), m = measure(); // as paintBox writes the label
+  m.font = font(500, 26, 'Caveat');
+  const frame = { cx: t + lid + 19, cy: fh / 2, half: m.measureText(BOX_NAMES[d.region]).width / 2, top: 9, cap: sources.filter((s) => s.region === d.region && decked(s)).length };
+  const x = Math.floor((frame.cx - 22) * S), y = Math.floor(frame.top * S), rect = { x, y, w: Math.ceil(44 * S), h: Math.floor((frame.cy - frame.half - 1) * S) - y };
+  d.tally ??= { t: 0, free: 0, gen: 0, marks: [], shown: false };
+  Object.assign(d.tally, { surf: tallySurface(canvas, rect, S, frame), dirty: true });
+}
+function stepTally(d, dt) {
+  const tl = d.tally;
+  if (!tl?.surf) return;
+  tl.t += dt;
+  const n = T.tally ? sources.reduce((c, s) => c + inBox(s, d), 0) : 0, live = tl.marks.filter((m) => !m.gone);
+  const anim = tl.shown && !reduced && d.region === page && !arriving(d);
+  const hand = (dur) => {
+    if (!anim) return { start: -1e3, dur: 1e-3 };
+    const start = Math.max(tl.t, tl.free), late = start - tl.t;
+    tl.free = start + Math.max(0.4 * dur, dur - late);
+    return { start, dur: tl.free - start };
+  };
+  while (live.length < n) { const m = { slot: live.length, gen: tl.gen++, gone: null, ...hand(T.tallyDrawS) }; tl.marks.push(m); live.push(m); }
+  while (live.length > n) live.pop().gone = hand(T.tallyEraseS);
+  const end = (m) => (m.gone ? m.gone.start + m.gone.dur + T.tallyFadeS : m.start + m.dur);
+  const kept = tl.marks.filter((m) => !m.gone || end(m) > tl.t);
+  if (kept.length !== tl.marks.length) { tl.marks = kept; tl.dirty = true; }
+  tl.shown = true;
+  if (!tl.dirty && !kept.some((m) => end(m) > tl.t - dt)) return;
+  tl.dirty = false;
+  const { rect } = tl.surf, at = d.atlasAt;
+  gpu.device.queue.writeTexture({ texture: shared.atlas, origin: [at.x + rect.x, at.y + rect.y] }, paintTally(tl.surf, kept, tl.t, T), { bytesPerRow: rect.w * 4 }, [rect.w, rect.h]);
+  redraw = true;
+}
 // The page's box: click deals the top card (to its slot, or the best free spot); double-click gathers every card on the
 // page into it, or deals them all when none are on the desk; a card dropped on it goes in on top. Enter deals,
 // Shift+Enter gathers or deals; on an empty box, double-click or Enter gathers.
@@ -2859,6 +2900,7 @@ async function buildAtlas(g) {
     const p = places[i], src = sources[i];
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     src.atlasAt = { x: p.x, y: p.y };
+    if (src.more) tallySetup(src, c, S * (src.k || 1));
     src.uv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     src.mediaUV = mediaPx ? [mediaPx.x / (src.w * S), mediaPx.y / (src.h * S), (mediaPx.x + mediaPx.w) / (src.w * S), (mediaPx.y + mediaPx.h) / (src.h * S)] : [0, 0, 0, 0];
   });
@@ -3265,6 +3307,7 @@ function tweakPanel() {
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
     if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel'].includes(k)) && gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
+    if (k.startsWith('tally')) for (const d of sources) if (d.tally) d.tally.dirty = true;
   };
   for (const [name, params] of Object.entries(GROUPS)) {
     const group = Object.assign(document.createElement('details'), { open: name === 'Agents' || name === 'Card outlines' });
