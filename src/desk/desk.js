@@ -249,12 +249,13 @@ const lin = (c) => Math.pow(c / 255, 2.2);
 
 const COMMON = /* wgsl */ `
 struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f };
-// imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S)
+// imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S); w: how far its shadow has faded (a box flying off)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
-// z = how much higher than a flat card its far shadow falls from (CSS px), w = it turns about its horizontal axis (the note)
+// z = how much higher than a flat card its far shadow falls from (CSS px), w = 4 x flags + how long its vertical axis looks
+// (0 to 1, as it turns); flags: 1 its back is turned over its horizontal axis (the note), 2 the box it rides in has turned it over
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
-// uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, |cos flip|
+// uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, how long its horizontal axis looks (0 to 1)
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
@@ -270,7 +271,7 @@ struct G {
   v: vec4f,   // video card, video mix, crossfade to the next clip, device px per CSS px at the reference size (dev * k)
   x: vec4f,   // edge mode, ridge distance, ridge width, landing burst reach (sim px)
   y: vec4f,   // landing burst speed-up, burst decay, hover excitation, cursor excitation
-  z: vec4f,   // ink softness (texels), ink grain, unused, on-screen card count
+  z: vec4f,   // ink softness (texels), ink grain, cards flying off the page you left (after this page's in ord), on-screen card count
   w: vec4f,   // second ring on, second ring at (x ridge distance), corner emphasis, ink opacity
   u: vec4f,   // shadow softness, shadow strength, release window (s), tiles per row (TILE device px each)
   st: vec4f,  // style (0 paper, 1 spectrum, 2 j), glow, halo, page clock (s)
@@ -529,7 +530,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let lo = vec2f(f32(gid.x % tx), f32(gid.x / tx)) * ${TILE}.0 * q;
   let hi = lo + vec2f(${TILE}.0 * q);
   var m = vec2u(0u);
-  for (var j = 0u; j < u32(g.z.w); j++) {
+  for (var j = 0u; j < u32(g.z.w + g.z.z); j++) { // the page's cards and the box flying off it
     let k = u32(g.ord[j / 4u][j % 4u]);
     let reach = g.cards[k].bound.x + (40.0 + 60.0 * g.cards[k].geo.w) * s * max(g.u.x, 1.0);
     if (rectDist(g.cards[k].flat.xy, lo, hi) <= reach + 1.0) { m.x |= 1u << j; }
@@ -600,7 +601,7 @@ fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
 // Soft shadow of card c's flat footprint, offset by o and blurred by b (sim px).
 fn shadow(c: Card, p: vec2f, o: vec2f, b: f32) -> f32 {
   let q = p - c.flat.xy - o;
-  let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / select(vec2f(max(c.bound.w, 0.05), 1.0), vec2f(1.0, max(c.bound.w, 0.05)), c.obj.w > 0.5);
+  let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / max(vec2f(c.bound.w, fract(c.obj.w * 0.25) * 4.0), vec2f(0.05)); // squashed as the card turns
   return 1.0 - smoothstep(-b, b, boxSd(l - c.shd.xy, c.shd.zw, c.geo.z) * c.misc.x);
 }
 
@@ -685,6 +686,76 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
   return c;
 }
 
+// One card over col at p (sim px): its soft shadow, then the card. gr, t4, conc, localInk, fadeIn: the paper and ink under it.
+fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, localInk: f32, fadeIn: f32) -> vec3f {
+  var col = col0;
+  let q = g.n.w; let s = g.a.w;
+  let spectrum = g.st.x > 0.5 && g.st.x < 1.5;
+  let jmode = g.st.x > 1.5;
+  let c = g.cards[k];
+  let lift = c.geo.w;
+  if (distance(p, c.flat.xy) > c.bound.x + (40.0 + 60.0 * lift) * s * max(g.u.x, 1.0)) { return col; }
+  let lp = toLocal(c, p);
+  let d = boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x;
+  if (jmode) {
+    // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
+    if (d > -1.0) {
+      let dd = max(d, 0.0) / s;
+      let contact = (exp(-dd / 1.1) * (0.13 + 0.45 * localInk) + exp(-dd / (3.0 + 6.0 * localInk)) * (0.04 + 0.3 * localInk)) * (1.0 - min(lift * 2.5, 1.0));
+      var ls = 0.0;
+      if (lift > 0.001) { let b = (2.0 + 20.0 * lift) * s; ls = shadow(c, p, vec2f(0.35, 1.0) * c.misc.w * 1.3, b) * 0.24 * lift; }
+      col *= (1.0 - contact * (1.0 - c.imp.w)) * (1.0 - ls * (1.0 - c.imp.w));
+    }
+  } else {
+    // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
+    let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - 0.6 * lift) * g.u.y;
+    let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x) * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
+    col *= (1.0 - near * (1.0 - c.imp.w)) * (1.0 - far * (1.0 - c.imp.w)); // imp.w: its shadow fades as it flies off
+  }
+  let cov = clamp(0.5 - d / q, 0.0, 1.0);
+  if (cov > 0.0) {
+    var un = lp / (2.0 * c.geo.xy) + 0.5;
+    let back = c.bound.y < 0.0;
+    let ow = u32(c.obj.w * 0.25);
+    if (back) { if ((ow & 1u) != 0u) { un.y = 1.0 - un.y; } else { un.x = 1.0 - un.x; } } // seen from behind (turned over its horizontal or vertical axis), so the back reads the right way round
+    if ((ow & 2u) != 0u) { un.y = 1.0 - un.y; } // and turned over again by the box it rides in: the same picture, upright
+    let tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
+    var cc = pow(tex.rgb, vec3f(2.2));
+    ${video ? `if (!back && f32(k) == g.v.x && g.v.y > 0.0) {
+      let mu = (un - c.media.xy) / (c.media.zw - c.media.xy);
+      if (all(mu >= vec2f(0.0)) && all(mu <= vec2f(1.0))) {
+        let vuv = g.vu.xy + mu * g.vu.zw;
+        // Video YUV->RGB can land slightly outside [0, 1] (limited-range blacks); pow() of a negative is undefined and
+        // showed up as inverted colors. Clamp each frame, then crossfade in linear light.
+        let ra = textureSampleBaseClampToEdge(vidA, samp, vuv).rgb;
+        let rb = textureSampleBaseClampToEdge(vidB, samp, vuv).rgb;
+        let la = pow(clamp(ra, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
+        let lb = pow(clamp(rb, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
+        cc = mix(cc, mix(la, lb, clamp(g.v.z, 0.0, 1.0)), clamp(g.v.y, 0.0, 1.0));
+        ${qs.has('vdebug') ? 'if (any(ra < vec3f(0.0)) || any(rb < vec3f(0.0)) || any(ra > vec3f(1.0)) || any(rb > vec3f(1.0))) { return vec4f(1.0, 0.0, 1.0, 1.0); }' : ''}
+      }
+    }` : ''}
+    let mu = (un - c.media.xy) / max(c.media.zw - c.media.xy, vec2f(1e-5));
+    if (!back && c.media.z > 0.0 && all(mu >= vec2f(0.0)) && all(mu <= vec2f(1.0))) {
+      let ms = (c.media.zw - c.media.xy) * c.geo.xy * 2.0 / s; // media size, CSS px
+      let edge = min(min(mu.x, 1.0 - mu.x) * ms.x, min(mu.y, 1.0 - mu.y) * ms.y);
+      // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
+      let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
+      cc = printed(cc, gr, edge, color);
+    }
+    cc *= (1.0 + (gr.y - 0.5) * 0.03) * (0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
+    if (jmode) {
+      // J: ink runs under the card and shows through as a light stain, soaking in harder along the border's fibers;
+      // over captions it stays faint so the text reads. A lifted card is above the ink and comes away clean.
+      let band = 1.0 - smoothstep(0.0, g.jq.y * (0.35 + 1.3 * gr.y), max(-d, 0.0));
+      let onMedia = all(un >= c.media.xy) && all(un <= c.media.zw);
+      cc *= pow(inkJ(t4, gr.y, fadeIn), vec3f(mix(g.jq.x * select(0.35, 1.0, onMedia), 0.6, band) * (1.0 - lift)));
+    }
+    col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5)); // a box's open end and cut corners are see-through
+  }
+  return col;
+}
+
 @fragment fn fs(@builtin(position) fp: vec4f) -> @location(0) vec4f {
   let q = g.n.w;           // sim px per device px
   let pd = fp.xy;          // device px on the page
@@ -754,69 +825,13 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
     col = inked(col, DARK, m.g); // the tagline
   }
 
-  var cards = tm.x;
+  // This page's cards first (g.z.w of them); the rest (g.z.z) are the page you left's card box, flying off over the turn.
+  let nPage = u32(g.z.w);
+  let pageBits = select((1u << nPage) - 1u, 0xffffffffu, nPage >= 32u);
+  var cards = tm.x & pageBits;
   while (cards != 0u) { // on-screen cards that can reach this tile, bottom to top
     let j = firstTrailingBit(cards); cards &= cards - 1u;
-    let k = u32(g.ord[j / 4u][j % 4u]);
-    let c = g.cards[k];
-    let lift = c.geo.w;
-    if (distance(p, c.flat.xy) > c.bound.x + (40.0 + 60.0 * lift) * s * max(g.u.x, 1.0)) { continue; }
-    let lp = toLocal(c, p);
-    let d = boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x;
-    if (jmode) {
-      // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
-      if (d > -1.0) {
-        let dd = max(d, 0.0) / s;
-        let contact = (exp(-dd / 1.1) * (0.13 + 0.45 * localInk) + exp(-dd / (3.0 + 6.0 * localInk)) * (0.04 + 0.3 * localInk)) * (1.0 - min(lift * 2.5, 1.0));
-        var ls = 0.0;
-        if (lift > 0.001) { let b = (2.0 + 20.0 * lift) * s; ls = shadow(c, p, vec2f(0.35, 1.0) * c.misc.w * 1.3, b) * 0.24 * lift; }
-        col *= (1.0 - contact) * (1.0 - ls);
-      }
-    } else {
-      // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
-      let near = shadow(c, p, vec2f(0.0, (0.6 + 2.0 * lift) * s), (1.2 + 3.0 * lift) * s * g.u.x) * (0.09 + 0.08 * conc + c.obj.y) * (1.0 - 0.6 * lift) * g.u.y;
-      let far = shadow(c, p, vec2f(0.25, 1.0) * (5.0 + 16.0 * lift + c.obj.z) * s, (14.0 + 22.0 * lift + c.obj.z) * s * g.u.x) * (0.06 + 0.1 * lift + 0.005 * c.obj.z) * g.u.y;
-      col *= (1.0 - near) * (1.0 - far);
-    }
-    let cov = clamp(0.5 - d / q, 0.0, 1.0);
-    if (cov > 0.0) {
-      var un = lp / (2.0 * c.geo.xy) + 0.5;
-      let back = c.bound.y < 0.0;
-      if (back) { if (c.obj.w > 0.5) { un.y = 1.0 - un.y; } else { un.x = 1.0 - un.x; } } // seen from behind (turned over its horizontal or vertical axis), so the back reads the right way round
-      let tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
-      var cc = pow(tex.rgb, vec3f(2.2));
-      ${video ? `if (!back && f32(k) == g.v.x && g.v.y > 0.0) {
-        let mu = (un - c.media.xy) / (c.media.zw - c.media.xy);
-        if (all(mu >= vec2f(0.0)) && all(mu <= vec2f(1.0))) {
-          let vuv = g.vu.xy + mu * g.vu.zw;
-          // Video YUV->RGB can land slightly outside [0, 1] (limited-range blacks); pow() of a negative is undefined and
-          // showed up as inverted colors. Clamp each frame, then crossfade in linear light.
-          let ra = textureSampleBaseClampToEdge(vidA, samp, vuv).rgb;
-          let rb = textureSampleBaseClampToEdge(vidB, samp, vuv).rgb;
-          let la = pow(clamp(ra, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
-          let lb = pow(clamp(rb, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
-          cc = mix(cc, mix(la, lb, clamp(g.v.z, 0.0, 1.0)), clamp(g.v.y, 0.0, 1.0));
-          ${qs.has('vdebug') ? 'if (any(ra < vec3f(0.0)) || any(rb < vec3f(0.0)) || any(ra > vec3f(1.0)) || any(rb > vec3f(1.0))) { return vec4f(1.0, 0.0, 1.0, 1.0); }' : ''}
-        }
-      }` : ''}
-      let mu = (un - c.media.xy) / max(c.media.zw - c.media.xy, vec2f(1e-5));
-      if (!back && c.media.z > 0.0 && all(mu >= vec2f(0.0)) && all(mu <= vec2f(1.0))) {
-        let ms = (c.media.zw - c.media.xy) * c.geo.xy * 2.0 / s; // media size, CSS px
-        let edge = min(min(mu.x, 1.0 - mu.x) * ms.x, min(mu.y, 1.0 - mu.y) * ms.y);
-        // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
-        let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
-        cc = printed(cc, gr, edge, color);
-      }
-      cc *= (1.0 + (gr.y - 0.5) * 0.03) * (0.82 + 0.18 * c.bound.w) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
-      if (jmode) {
-        // J: ink runs under the card and shows through as a light stain, soaking in harder along the border's fibers;
-        // over captions it stays faint so the text reads. A lifted card is above the ink and comes away clean.
-        let band = 1.0 - smoothstep(0.0, g.jq.y * (0.35 + 1.3 * gr.y), max(-d, 0.0));
-        let onMedia = all(un >= c.media.xy) && all(un <= c.media.zw);
-        cc *= pow(inkJ(t4, gr.y, fadeIn), vec3f(mix(g.jq.x * select(0.35, 1.0, onMedia), 0.6, band) * (1.0 - lift)));
-      }
-      col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5)); // a box's open end and cut corners are see-through
-    }
+    col = layCard(col, u32(g.ord[j / 4u][j % 4u]), p, gr, t4, conc, localInk, fadeIn);
   }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
   col = rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la);
@@ -824,6 +839,11 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
   // paper the resting corner shows to this page as the fold opens (the same 250 px as the stacked edges), so the sliver
   // never switches in one frame, at the start or when a turn by hand falls back.
   if (g.pg.w > 0.5) { col = rolled(pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt); }
+  var over = tm.x & ~pageBits; // the box you left, above both pages
+  while (over != 0u) {
+    let j = firstTrailingBit(over); over &= over - 1u;
+    col = layCard(col, u32(g.ord[j / 4u][j % 4u]), p, gr, t4, conc, localInk, fadeIn);
+  }
   var outc = vec4f(pow(clamp(col, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), 1.0);
   if (g.pg.z > 0.0) { outc = mix(outc, textureLoad(frozen, ip, 0), g.pg.z); } // crossfade from the frame before a sim resolution change
   return outc;
@@ -1199,6 +1219,7 @@ function show(region) {
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
 // cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).
 function startTurn(to, mode) {
+  launch(pageDeck(page)); // the box is not part of the page: it flies off as the page turns
   freeze();
   Object.assign(turn, { on: true, mode, from: page, to, t: 0, dur: T.turnS, d0: door.d, d: door.d, start: door.d, target: door.d, a: door.a, d1: farD(door.a) });
   show(to);
@@ -1222,6 +1243,7 @@ function stepTurn(dt) {
   if (turn.mode === 'back') { // fell back: the page you were on comes back to life as it was
     for (const s of sources) if (s.region === turn.to && s.rel < 0) s.rel = 1e3; // the other page's held agents let go
     show(turn.from);
+    if (!pageDeck(turn.from)?.launch) arriveDeck(turn.from, 0); // its box comes back in (once it has flown off)
     Object.assign(door, { amt: 1, d: turn.d, a: turn.a });
   } else pileUp(turn.from); // a page turned by hand leaves its cards on its pile
   next();
@@ -1786,7 +1808,7 @@ function pileUp(region, own = false) {
     Object.assign(s, { deck, flying: true, face: 1, flip: 0, flipTo: 0, emit: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
     s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
   }
-  if (cards.length) { deck.z = ++topZ; deck.dirty = true; moveDeck(deck); }
+  if (cards.length) { deck.z = ++topZ; deck.dirty = true; if (!deck.launch) moveDeck(deck); } // a flying box takes them once it is back
 }
 // Hermite curve from p0 to p1 with end tangents t0, t1 (one coordinate).
 const hermite = (p0, p1, t0, t1, u) => { const u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * t0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * t1; };
@@ -1868,9 +1890,10 @@ function placeDecks() {
     Object.assign(s.slide, { at, from: at, to: at, t: 1, wait: 0 }); // a new layout: where it was headed
     s.pile ??= []; s.lidT ??= 0; s.dirty = true;
     s.bx = { at: 0, from: 0, to: 0, t: 1, dur: 1, ease: easeOutQuart }; // an empty box tucks again from here
+    s.launch = null; // a new layout ends a box's flight
     s.px = s.x = s.spot + s.slide.at;
   }
-  for (const s of sources) if (s.kind === 'deck') { s.el.hidden = !dealing; s.gone = true; } // nothing to hold without the deal
+  for (const s of sources) { s.carrier = null; if (s.kind === 'deck') { s.el.hidden = !dealing; s.gone = true; } } // nothing to hold without the deal
 }
 // The box slides in from off screen right as a page's first beat (on load and when the page is turned to), on settle,
 // with its cards in it; they slide out of its open end, fan toward the page, and are dealt. Empty, it tucks off the
@@ -1899,6 +1922,46 @@ function arriveDeck(region, delay, dur = MOTION.settle) {
   Object.assign(d.slide, { want: 'off', at: deckOut(d, 'off'), to: deckOut(d, 'off'), t: 1, wait: delay, arrive: dur });
   moveDeck(d);
 }
+// ---------- the box flies off ----------
+// A page that turns leaves its card box behind, not printed on it: once its cards are in, the box leans back on its
+// bottom edge (the wind-up), then is thrown off the right edge along a short rising arc, turning end over end about its
+// horizontal axis, its shadow left on the desk and fading, while the page turns under it; its lid and the cards in it ride
+// along. One easing family (cubic, easing out): it rears back at once and holds for a beat, then is thrown. It slides in again when its page
+// next shows, like every arriving box.
+const LAUNCH = { wind: 0.15, fly: 0.8, back: 0.55, turns: 1, arc: 0.22, lift: 1.5 }; // s; s; rad leaned back; turns; rise, of the desk's height; height, in lifts
+const easeOutCubic = (u) => 1 - (1 - u) ** 3;
+function launch(d) {
+  if (!d || view.phone || !dealing) return;
+  d.launch = { t: 0, x: d.x, y: d.y };
+  const lid = lidOf(d);
+  for (const s of sources) if (s === d || s === lid || s.deck === d) s.carrier = d;
+}
+function stepLaunch(d, dt) {
+  if ((d.launch.t += dt) < LAUNCH.wind + LAUNCH.fly) return;
+  d.launch = null;
+  for (const s of sources) if (s.carrier === d) s.carrier = null;
+  arriveDeck(d.region, 0); // back in from off the right edge (out of sight, unless a turn by hand fell back)
+}
+// The flying box: its turn about its horizontal axis (rad), where its middle is (CSS px, z above the desk), and how far its
+// shadow has faded.
+function launchPose(d) {
+  const L = d.launch, h = d.h / 2, a = (d.rot * Math.PI) / 180;
+  const w = easeOutCubic(clamp(L.t / LAUNCH.wind)), p = easeOutCubic(clamp((L.t - LAUNCH.wind) / LAUNCH.fly));
+  const back = -LAUNCH.back * w, lean = h * (1 - Math.cos(back)); // leaning back on its bottom edge, which stays down
+  const bx = 2 * p * (1 - p) * 0.2 + p * p, by = 2 * p * (1 - p) * 0.75 + p * p; // a rising arc that bends right
+  const lid = lidOf(d), DX = (d.w / 2 + (lid ? lid.w : 0) + 20 * view.k) / 0.7, DY = LAUNCH.arc * view.h; // it is off the edge (its open lid too) by 70% of its throw, still quick
+  const dip = 8 * view.k * w; // and it draws back a little, down and away from where it goes
+  return { psi: back + (LAUNCH.back + 2 * Math.PI * LAUNCH.turns) * p, x: L.x - Math.sin(a) * lean - 0.6 * dip + DX * bx, y: L.y + Math.cos(a) * lean + dip - DY * by,
+    z: -h * Math.sin(back) + LAUNCH.lift * T.lift * p, fade: smooth(p / 0.5) };
+}
+// A card riding in the flying box (the box itself, its lid, the cards in it): turned with it about the box's horizontal
+// axis through its middle, and carried. Never exactly edge-on with its own turn, where the homography would be singular.
+function carried(d, { sx, sy, z, mu, mv, bw }) {
+  const P = launchPose(d), L = d.launch, a = (d.rot * Math.PI) / 180, ax = [Math.cos(a), Math.sin(a), 0];
+  const c = Math.cos(P.psi), ce = Math.sign(c || 1) * Math.max(Math.abs(c), Math.min(1, 0.02 / Math.max(bw, 0.02)));
+  const psi = Math.atan2(Math.sign(Math.sin(P.psi) || 1) * Math.sqrt(1 - ce * ce), ce), r = rodrigues([sx - L.x, sy - L.y, z], ax, psi);
+  return { sx: P.x + r[0], sy: P.y + r[1], z: P.z + r[2], mu: rodrigues(mu, ax, psi), mv: rodrigues(mv, ax, psi), over: ce < 0, fade: P.fade };
+}
 // The box to its slide's offset and its tuck, the cards in it to their places (only when something moved), and the lid
 // on its hinge (the box's open end): open, it lies flat beside the box, inside up; closing, it turns over about the hinge
 // (its free edge rising) onto the box's front.
@@ -1922,6 +1985,7 @@ function moveDeck(d) {
 function stepDecks(dt) {
   for (const d of sources) {
     if (!d.more || view.phone || !d.slide || !dealing) continue;
+    if (d.launch) { stepLaunch(d, dt); continue; }
     const v = d.slide;
     if (v.wait > 0) v.wait -= dt;
     else if (v.want === 'off') slideDeck(d, 'out', v.arrive || MOTION.settle, easeOutQuart); // the arrival
@@ -2876,18 +2940,21 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   if (s.face > 0 || s.flipA) { if (hz) mv = rodrigues(mv, mu.map((v) => v / sc), Math.atan2(fs, fe)); else mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe)); }
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
-  const zh = lift * T.lift * dpr, f = 1800 * dpr - zh, cx = (sx - originX) * dpr, cy = sy * dpr; // page-local; the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
+  let z = lift * T.lift, over = false, fade = 0; // over: the box it rides in has turned it over
+  if (s.carrier) ({ sx, sy, z, mu, mv, over, fade } = carried(s.carrier, { sx, sy, z, mu, mv, bw: Math.abs(fe) }));
+  const looks = (m) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
+  const zh = z * dpr, f = 1800 * dpr - zh, cx = (sx - originX) * dpr, cy = sy * dpr; // page-local; the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
   const inv = invert3([f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f]);
   const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2;
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
-    hw, hh, 3 * dpr, Math.min(1, lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
-    ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, Math.abs(fe),
+    hw, hh, 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
+    ...s.uv, ...s.mediaUV, Math.hypot(hw, hh) * sc * 1.04 + 2, fc < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
     ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
     // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
-    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2, 0] : [0, 0, 0, 0]),
-    ...boxShadow(s, dpr, hw, hh).slice(0, 7), hz ? 1 : 0];
+    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
+    ...boxShadow(s, dpr, hw, hh).slice(0, 7), 4 * ((hz ? 1 : 0) + (over ? 2 : 0)) + looks(mv)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   U.set(v, o);
 }
@@ -2918,10 +2985,12 @@ function writeUniforms(g, sm = sim, hold = false) {
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   const order = sources.filter((x) => {
-    if ((!view.phone && x.region !== s.page) || x.gone) return false;
+    if ((!view.phone && x.region !== s.page) || x.gone || (capturing && x.carrier)) return false;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
     return x.x + r > sx && x.x - r < sx + view.w && x.y + r > sy && x.y - r < sy + view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id);
+  // The page you left's card box flies off over the turn, above both pages (never part of the turning page's frame).
+  const over = turn.on && !capturing && !view.phone ? sources.filter((x) => x.carrier && x.region !== s.page).sort((a, b) => a.z - b.z).map((x) => x.id) : [];
   const vs = videoSrc;
   let vu = [0, 0, 1, 1];
   if (vs) {
@@ -2942,7 +3011,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     vs ? vs.id : -1, videoMix, vs?.player.fading ? clamp(vs.player.fade) : 0, dev * view.k,
     EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
-    st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, 0, order.length,
+    st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, over.length, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
     T.shadowSoft, T.shadow, T.landRelease, shared.TX,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
@@ -2956,8 +3025,8 @@ function writeUniforms(g, sm = sim, hold = false) {
     // the label sits on the flap at rest, its foot a few px from the fold
     (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
     ...shared.labelUV[page], ...shared.labelUV[turn.from],
-    ...order, ...Array(MAX - order.length).fill(0), ...vu], 0);
-  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, s.origin, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1);
+    ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
+  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
 
@@ -3469,7 +3538,7 @@ async function probeFade(key, maxFrames = 20) {
 }
 
 const bootLog = {};
-window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
+window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, LAUNCH, stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {
