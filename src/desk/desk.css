@@ -87,6 +87,14 @@ html:has(#desk.desk) body { height: 100%; overflow: hidden; }
 #desk:not(.gpu) .src.flipped .hit > * { visibility: hidden; }
 /* Without WebGPU the same drawn back is the .back's background (desk.js paintDomBack). */
 #desk:not(.gpu) .back { background: center / 100% 100% no-repeat; border-radius: 3px; }
+/* The washi tape on the photo's top edge: WebGPU draws (and peels) it; without WebGPU, a still strip with torn ends.
+   desk.js T.tape*: 100 x 30 px (the card's own px, before its scale) at -8deg, centered 5% right of the middle; face down,
+   only the half past the edge shows, mirrored. */
+#desk .tape { display: none; position: absolute; left: 55%; top: 0; width: 100px; height: 30px; translate: -50% -50%; rotate: -8deg;
+  pointer-events: none; background: linear-gradient(170deg, #cfc9ab9e, #c9c3a48a 60%, #d2cdb294);
+  clip-path: polygon(1.5% 0, 98% 0, 99.5% 14%, 98.5% 30%, 100% 47%, 98.8% 63%, 99.6% 82%, 98.6% 100%, 1% 100%, 0 84%, 1.4% 66%, 0.3% 49%, 1.6% 31%, 0 15%); }
+#desk:not(.gpu) .tape { display: block; }
+#desk .src.flipped .tape { left: 45%; rotate: 8deg; clip-path: polygon(1.5% 0, 98% 0, 99.5% 14%, 98.5% 30%, 100% 47%, 100% 50%, 0 50%, 0.3% 49%, 1.6% 31%, 0 15%); }
 
 #desk.gpu .hit { background: none; color: transparent; }
 #desk.gpu .hit > * { opacity: 0; }
