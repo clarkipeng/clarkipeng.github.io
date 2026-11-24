@@ -3276,7 +3276,7 @@ function tweakPanel() {
         input = document.createElement('select');
         for (const m of CHOICES[k]) input.append(new Option(m, m));
         input.oninput = () => set(k, input.value);
-      } else if (k === 'ink') {
+      } else if (typeof d === 'string') { // a color (hex, no #)
         input = Object.assign(document.createElement('input'), { type: 'color' });
         input.oninput = () => set(k, input.value.slice(1));
       } else if (step === 1 && max === 1) {
@@ -3325,7 +3325,7 @@ function tweakPanel() {
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
       if (el.type === 'checkbox') el.checked = !!T[k];
-      else el.value = k === 'ink' ? '#' + T[k] : T[k];
+      else el.value = el.type === 'color' ? '#' + T[k] : T[k];
       if (el.out) el.out.value = T[k];
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[page]} page)`;
