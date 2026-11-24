@@ -158,7 +158,7 @@ const GROUPS = {
     ['tapeX', 0.04, -0.4, 0.4, 0.01, 'along the top edge (of the width)'],
     ['tapeOn', 0.5, 0.2, 0.8, 0.01, 'share of its length on the photo'],
     ['tapeAngle', -8, -30, 30, 0.5, 'askew deg (off square to the edge)'],
-    ['tapeShade', 0.6, 0, 1, 0.01, 'lifted flap shadow on the photo'],
+    ['tapeShade', 0.9, 0, 1, 0.01, 'lifted flap shadow on the photo'],
     ['tapeLift', 10, -30, 80, 1, 'peeled: angle at the edge deg'],
     ['tapeCurl', 140, 0, 240, 1, 'peeled: curl deg'],
     ['tapePeel', 0.5, 0.1, 0.63, 0.01, 'lets go at a height of (x flap)'],
