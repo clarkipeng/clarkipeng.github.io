@@ -4,7 +4,7 @@
 // any lifted one, so a frame costs only what changed. A second small pass reads the slime under each chip back to the
 // physics, which eats only where it is.
 
-import { CN, NCH, FEED } from './chips.js';
+import { CN, NCH, FEED, DIST } from './chips.js';
 
 const BODY_VEC4 = 14, HEAD_VEC4 = 7, G = 40; // a chip's mesh: G x G quads
 const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell
@@ -70,9 +70,9 @@ fn rimSd(p: vec2f) -> f32 {
   let r = b.s0.x * (1.0 + b.h0.x * cos(2.0 * th + b.h0.y) + b.h0.z * cos(3.0 * th + b.h0.w) + b.h1.x * cos(4.0 * th + b.h1.y) + b.h1.z * cos(5.0 * th + b.h1.w));
   return r - length(p);
 }
-// What is left of it over p: r how much of its thickness, g the slime's stain. A cubic B-spline through the voxel columns
+// What is left of it over p: r how much of its thickness, g the slime's stain, b how far past it (chips.js maskBytes). A cubic B-spline through the voxel columns
 // (four bilinear taps), so the eaten edge is a smooth curve, never the grid.
-fn field(p: vec2f) -> vec2f {
+fn field(p: vec2f) -> vec3f {
   let b = &u.b[bi];
   let N = f32(${CN});
   let st = (p + b.s0.y) / (2.0 * b.s0.y) * N - 0.5;
@@ -83,8 +83,8 @@ fn field(p: vec2f) -> vec2f {
   let g0 = w0 + w1; let g1 = w2 + w3;
   let h0 = (i - 1.0 + w1 / g0 + 0.5) / N; let h1 = (i + 1.0 + w3 / g1 + 0.5) / N;
   let l = i32(b.c.w);
-  let a = textureSampleLevel(mask, samp, vec2f(h0.x, h0.y), l, 0.0).rg; let c = textureSampleLevel(mask, samp, vec2f(h1.x, h0.y), l, 0.0).rg;
-  let d = textureSampleLevel(mask, samp, vec2f(h0.x, h1.y), l, 0.0).rg; let e = textureSampleLevel(mask, samp, vec2f(h1.x, h1.y), l, 0.0).rg;
+  let a = textureSampleLevel(mask, samp, vec2f(h0.x, h0.y), l, 0.0).rgb; let c = textureSampleLevel(mask, samp, vec2f(h1.x, h0.y), l, 0.0).rgb;
+  let d = textureSampleLevel(mask, samp, vec2f(h0.x, h1.y), l, 0.0).rgb; let e = textureSampleLevel(mask, samp, vec2f(h1.x, h1.y), l, 0.0).rgb;
   return g0.y * (g0.x * a + g1.x * c) + g1.y * (g0.x * d + g1.x * e);
 }
 // Inside the chip (px; < 0 outside): its rim, and the edge where it has been eaten, a little ragged.
@@ -94,7 +94,7 @@ fn chipSd(p: vec2f) -> Sd {
   let fl = field(p); let cell = b.z.z;
   let q = p / cell + b.z.w;
   let rag = (vnoise(q * 0.4) * 0.7 + vnoise(q * 0.9) * 0.3 - 0.5) * u.l1.w * cell * 2.0; // soft bites, never fuzz
-  let eat = (fl.r - 0.5) * 6.0 * cell + rag * (1.0 - smoothstep(0.75, 1.0, fl.r)); // steep, so the edge stays crisp where it was eaten slowly
+  let eat = (fl.r - 0.5) * 6.0 * cell + rag * (1.0 - smoothstep(0.75, 1.0, fl.r)) - fl.b * ${DIST}.0 * cell; // steep, so the edge stays crisp where it was eaten slowly
   let rim = rimSd(p);
   return Sd(min(rim, eat), rim, eat, fl.r, fl.g);
 }
