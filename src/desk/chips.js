@@ -332,11 +332,15 @@ export function createWorld(P) {
     if (B) { const vb = pseudo ? B.vp : B.v, wb = pseudo ? B.wp : B.w; for (let i = 0; i < 3; i++) { vb[i] -= (cb[q + i] * l) / B.m; wb[i] -= mb[m + i] * l; } }
   }
 
-  // Cards nudge chips (pushers: { x, y, hw, hh, c, s, vx, vy } in desk px), and the page's edges keep them on it.
-  function push(pushers, bounds, dt) {
+  // Cards nudge chips (pushers: { x, y, hw, hh, c, s, vx, vy } in desk px), and the page's edges keep them on it. Every card
+  // a chip overlaps pushes it out at once, so one wedged between two cards (or a card and the edge) settles where the
+  // pushes balance instead of being shoved back and forth, knocked into the air every frame.
+  function push(pushers, bounds) {
+    const [x0, y0, x1, y1] = bounds;
     for (const b of bodies) {
       if (!b.m) continue;
       const r = b.foot, low = b.x[2] - b.S.hb < r * 0.5; // a card sweeps along only the chips on the desk under it
+      let tx = 0, ty = 0;
       for (const p of low ? pushers : []) {
         const dx = b.x[0] - p.x, dy = b.x[1] - p.y, lx = dx * p.c + dy * p.s, ly = -dx * p.s + dy * p.c;
         const cx = Math.max(-p.hw, Math.min(p.hw, lx)), cy = Math.max(-p.hh, Math.min(p.hh, ly));
@@ -349,20 +353,24 @@ export function createWorld(P) {
           if (d >= r * 0.92) continue;
           nx = ox / d; ny = oy / d; pen = r * 0.92 - d;
         }
-        const wx = nx * p.c - ny * p.s, wy = nx * p.s + ny * p.c; // to the desk's axes
-        const vp = p.vx * wx + p.vy * wy, want = Math.max(vp, Math.min(pen * 10, 260)), vn = b.v[0] * wx + b.v[1] * wy;
-        if (vn >= want) continue;
-        const dv = want - vn;
-        b.v[0] += wx * dv; b.v[1] += wy * dv;
-        if (dv > 60 && b.v[2] < 30) { b.v[2] += Math.min(dv, 400) * 0.15; b.w[0] += -wy * dv * 0.02; b.w[1] += wx * dv * 0.02; b.w[2] += (Math.random() - 0.5) * dv * 0.02; } // a knock tips it and turns it a little, once
-        b.wake();
+        const wx = nx * p.c - ny * p.s, wy = nx * p.s + ny * p.c, want = Math.max(p.vx * wx + p.vy * wy, Math.min(pen * 10, 260)); // to the desk's axes
+        tx += wx * want; ty += wy * want;
       }
-      const [x0, y0, x1, y1] = bounds, m = r * 0.6;
+      const card = Math.hypot(tx, ty);
+      // The edges are hard: no card pushes it past one, and one past an edge comes back.
+      const m = r * 0.6;
       for (const [d, nx, ny] of [[b.x[0] - (x0 + m), 1, 0], [x1 - m - b.x[0], -1, 0], [b.x[1] - (y0 + m), 0, 1], [y1 - m - b.x[1], 0, -1]]) {
-        if (d >= 0) continue;
-        const vn = b.v[0] * nx + b.v[1] * ny, want = Math.min(-d * 10, 200);
-        if (vn < want) { b.v[0] += nx * (want - vn); b.v[1] += ny * (want - vn); b.wake(); }
+        const lim = Math.min(-d * 10, 200), tn = tx * nx + ty * ny;
+        if (tn < lim && (d < 0 || card > 0)) { tx += nx * (lim - tn); ty += ny * (lim - tn); }
       }
+      const t = Math.hypot(tx, ty);
+      if (t < 2) continue; // balanced: at rest where it is
+      const wx = tx / t, wy = ty / t, vn = b.v[0] * wx + b.v[1] * wy;
+      if (vn >= t) continue;
+      const dv = t - vn;
+      b.v[0] += wx * dv; b.v[1] += wy * dv;
+      if (card > 60 && dv > 60 && b.v[2] < 30) { b.v[2] += Math.min(dv, 400) * 0.15; b.w[0] += -wy * dv * 0.02; b.w[1] += wx * dv * 0.02; b.w[2] += (Math.random() - 0.5) * dv * 0.02; } // a knock tips it and turns it a little, once
+      b.wake();
     }
   }
 
@@ -526,7 +534,7 @@ export function createWorld(P) {
     let any = false;
     while (acc >= STEP) {
       acc -= STEP;
-      push(pushers, bounds, STEP);
+      push(pushers, bounds);
       if (bodies.some((b) => dyn(b))) { substep(STEP); any = true; }
     }
     eatAcc += eatOn ? dt : 0;
