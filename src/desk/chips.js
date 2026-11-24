@@ -12,15 +12,19 @@ export function rng(seed) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
-// A chip's outline (radius by angle, a slightly oval, wavy rim) and its surface (a saddle, a little bowl, two slow warps).
-export function makeShape(seed, R, thick, curl) {
+// A chip's outline (radius by angle, a slightly oval, wavy rim) and its surface (a saddle, a little bowl, two slow warps,
+// one or two edges folded up).
+export function makeShape(seed, R, thick, curl, fold = 1) {
   const r = rng(seed), u = (a, b) => a + (b - a) * r(), ph = () => r() * 6.2832;
   const harm = [u(0.06, 0.13), ph(), u(0.03, 0.06), ph(), u(0.015, 0.035), ph(), u(0.008, 0.02), ph()];
   const sag = u(0.1, 0.16) * R * curl, bowl = u(-0.03, 0.03) * R * curl, ax = ph();
   const k = 6.2832 / (R * u(1.6, 2.6)), k2 = 6.2832 / (R * u(0.9, 1.4)), a1 = ph(), a2 = ph();
   const warp = [k * Math.cos(a1), k * Math.sin(a1), u(0.25, 0.5) * curl, ph(), k2 * Math.cos(a2), k2 * Math.sin(a2), u(0.1, 0.22) * curl, ph()];
-  const B = R * 1.28, slope = (2 * (sag + Math.abs(bowl)) * 1.3) / R + Math.abs(warp[2]) * k + Math.abs(warp[6]) * k2;
-  return { seed, R, B, t: thick, sag, bowl, ca: Math.cos(ax), sa: Math.sin(ax), harm, warp, slope, tone: r(), hb: sag + Math.abs(bowl) + warp[2] + warp[6] + thick };
+  const B = R * 1.28, tone = r();
+  // Its edges fold up: past a crease (o from the centre, along a direction) the surface lifts, steeper toward the rim.
+  const folds = [0, 1].flatMap((i) => { const a = ph(), o = u(0.3, 0.6) * R; return [Math.cos(a), Math.sin(a), o, u(i ? 0 : 0.3, 0.55) * R * fold]; });
+  const hb = sag + Math.abs(bowl) + warp[2] + warp[6] + folds[3] + folds[7] + thick;
+  return { seed, R, B, t: thick, sag, bowl, ca: Math.cos(ax), sa: Math.sin(ax), harm, warp, folds, tone, hb };
 }
 export function outlineR(S, x, y) {
   const th = Math.atan2(y, x), h = S.harm;
@@ -32,9 +36,15 @@ export function surf(S, x, y) {
   const p1 = w[0] * x + w[1] * y + w[3], p2 = w[4] * x + w[5] * y + w[7];
   const h = (S.sag * (u * u - v * v) + S.bowl * (x * x + y * y)) / R2 + w[2] * Math.sin(p1) + w[6] * Math.sin(p2);
   const hu = (2 * S.sag * u) / R2, hv = (-2 * S.sag * v) / R2;
-  const hx = S.ca * hu - S.sa * hv + (2 * S.bowl * x) / R2 + w[2] * w[0] * Math.cos(p1) + w[6] * w[4] * Math.cos(p2);
-  const hy = S.sa * hu + S.ca * hv + (2 * S.bowl * y) / R2 + w[2] * w[1] * Math.cos(p1) + w[6] * w[5] * Math.cos(p2);
-  return [h, hx, hy];
+  let hx = S.ca * hu - S.sa * hv + (2 * S.bowl * x) / R2 + w[2] * w[0] * Math.cos(p1) + w[6] * w[4] * Math.cos(p2);
+  let hy = S.sa * hu + S.ca * hv + (2 * S.bowl * y) / R2 + w[2] * w[1] * Math.cos(p1) + w[6] * w[5] * Math.cos(p2);
+  let hf = h;
+  for (let i = 0; i < 8; i += 4) {
+    const f = S.folds, span = S.R - f[i + 2], e = (f[i] * x + f[i + 1] * y - f[i + 2]) / span, r = Math.hypot(e, 0.2); // a rounded crease
+    const q = 0.5 * (e + r), g = (f[i + 3] * q * (1 + e / r)) / span;
+    hf += f[i + 3] * q * q; hx += g * f[i]; hy += g * f[i + 1];
+  }
+  return [hf, hx, hy];
 }
 
 // ---------- small linear algebra ----------
@@ -140,7 +150,7 @@ class Body {
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
 // ---------- the world ----------
-// P: the tunables (desk.js T): chipG gravity, chipE bounce, chipMu friction, chipRock rocking damping, chipEat eating speed,
+// P: the tunables (desk.js T): chipG gravity, chipAir air drag, chipE bounce, chipMu friction, chipRock rocking damping, chipEat eating speed,
 // chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the oldest chip over the cap.
 export function createWorld(P) {
   const bodies = [];
@@ -150,7 +160,7 @@ export function createWorld(P) {
 
   function drop(x, y, R, seed, { region = 0, born = 0, still = false } = {}) {
     const r = rng(seed ^ 0x51ed);
-    const S = makeShape(seed, R, P.chipThick * (R / 31), P.chipCurl);
+    const S = makeShape(seed, R, P.chipThick * (R / 31), P.chipCurl, P.chipFold);
     const chip = { seed, region, born, hurry: 1 };
     const b = new Body(S, chip);
     const tilt = (r() - 0.5) * 2 * 0.6, yaw = r() * 6.2832, ax = r() * 6.2832;
@@ -357,7 +367,13 @@ export function createWorld(P) {
 
   function substep(dt, settling = false) {
     const g = P.chipG, ad = Math.exp(-0.4 * dt), aw = Math.exp(-0.6 * dt);
-    for (const b of bodies) if (dyn(b) && b.m) { b.v[2] -= g * dt; for (let i = 0; i < 3; i++) { b.v[i] *= ad; b.w[i] *= aw; } }
+    for (const b of bodies) {
+      if (!dyn(b) || !b.m) continue;
+      // Air holds a light chip back (drag growing with its speed), so it drifts down tumbling instead of dropping like a stone.
+      b.v[2] -= g * dt;
+      const air = 1 / (1 + P.chipAir * Math.hypot(...b.v) * dt);
+      for (let i = 0; i < 3; i++) { b.v[i] *= ad * air; b.w[i] *= aw; }
+    }
     gather(dt);
     solve(dt);
     for (const b of bodies) {
