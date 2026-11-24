@@ -175,7 +175,7 @@ const GROUPS = {
     ['chipCrisp', 0.35, 0, 1.5, 0.01, 'browned rim'],
     ['chipRipple', 0.4, 0, 2, 0.01, 'ripples'],
     ['chipSalt', 0.6, 0, 2, 0.01, 'salt'],
-    ['chipBlister', 1, 0, 1.8, 0.01, 'blisters'],
+    ['chipBlister', 0.35, 0, 1.8, 0.01, 'blisters'],
     ['chipGlow', 0.6, 0, 1.5, 0.01, 'translucent edges'],
     ['chipSheen', 0.6, 0, 2, 0.01, 'oil sheen'],
     ['chipLight', 2, 0, 3, 0.05, 'light across the curl'],
