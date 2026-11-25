@@ -1,6 +1,5 @@
 // The card box's pencil tally: graphite marks counting the cards inside, in fives (four down, the fifth across), in rows
-// that wrap. Drawn into the texture of the surface they are on (the box or its lid), so the marks move, turn, and tumble
-// with it.
+// that wrap. Drawn into the box's texture, so the marks move, turn, and tumble with it.
 // Pure painting: desk.js decides when marks come and go; this turns marks and a time into pixels.
 //
 // How a real tally looks: each stroke is a quick pull down, leaning a little with the hand, bowed a touch, pressed hardest
@@ -9,14 +8,7 @@
 // densest. An eraser takes the grain off unevenly and leaves a soft grey smear along the stroke that fades.
 
 // [key, default, min, max, step, label]: sizes in the box's design px, times in s.
-// Where the tally sits (desk.js lays each out on the box): the front panel's top corner, the open lid's flap, the wall
-// facing down the page, or along the label.
-export const TALLY_SPOTS = ['corner', 'lid', 'wall', 'label'];
 export const TALLY_PARAMS = [
-  ['tally', 1, 0, 1, 1, 'pencil tally on the box'],
-  ['tallyAt', 'corner', 0, 0, 0, 'where'],
-  ['tallyX', 0, -20, 20, 0.5, 'nudge along the row px'],
-  ['tallyY', 0, -20, 20, 0.5, 'nudge across px'],
   ['tallyLen', 19, 8, 30, 0.5, 'stroke length px'],
   ['tallyGap', 6.6, 2, 10, 0.1, 'stroke spacing px'],
   ['tallyGroupGap', 19, 2, 24, 0.5, 'gap between fives px'],
@@ -54,13 +46,11 @@ const vnoise = (x, y, k) => {
 // One mark's random hand, the same every time for the same slot and generation (a redrawn stroke is a new stroke).
 const handOf = (seed) => { let i = 0; return () => hash2(seed, i++, 13); };
 
-// The surface: the pixels under the tally's area (canvas px rect), and the paper's tooth there. frame, in the surface's
-// design px: where the first row starts (o), the row's direction (eu) and the strokes' (ev, rows follow on that way), and
-// the room along a row (uRoom) and for rows (vRoom). Rows are laid out in u, v; a group's first stroke sits at u = gap.
-export function tallySurface(canvas, S, frame) {
-  const c = [[-4, -4], [frame.uRoom + 4, -4], [-4, frame.vRoom + 4], [frame.uRoom + 4, frame.vRoom + 4]].map(([u, v]) => [(frame.o[0] + u * frame.eu[0] + v * frame.ev[0]) * S, (frame.o[1] + u * frame.eu[1] + v * frame.ev[1]) * S]);
-  const x = Math.max(0, Math.floor(Math.min(...c.map((p) => p[0])))), y = Math.max(0, Math.floor(Math.min(...c.map((p) => p[1]))));
-  const rect = { x, y, w: Math.min(canvas.width, Math.ceil(Math.max(...c.map((p) => p[0])))) - x, h: Math.min(canvas.height, Math.ceil(Math.max(...c.map((p) => p[1])))) - y };
+// The surface: the pixels under the tally's area (area: x, y, w, h in the box's design px; S: canvas px each), and the
+// paper's tooth there. Rows of strokes run along x and follow on down; a group's first stroke sits at x = gap.
+export function tallySurface(canvas, S, area) {
+  const x = Math.max(0, Math.floor((area.x - 4) * S)), y = Math.max(0, Math.floor((area.y - 4) * S));
+  const rect = { x, y, w: Math.min(canvas.width, Math.ceil((area.x + area.w + 4) * S)) - x, h: Math.min(canvas.height, Math.ceil((area.y + area.h + 4) * S)) - y };
   const { w, h } = rect, n = w * h;
   const base = canvas.getContext('2d').getImageData(x, y, w, h).data;
   const tooth = new Float32Array(n), rub = new Float32Array(n), glint = new Float32Array(n);
@@ -70,19 +60,19 @@ export function tallySurface(canvas, S, frame) {
     rub[k] = 0.6 * hash2(px, py, 4) + 0.4 * vnoise(px / 3, py / 3, 5); // what an eraser lifts first
     glint[k] = vnoise(px / 4, py / 4, 6);
   }
-  return { rect, S, frame, base, tooth, rub, glint, D: new Float32Array(n), M: new Float32Array(n), out: new Uint8ClampedArray(n * 4) };
+  return { rect, S, area, base, tooth, rub, glint, D: new Float32Array(n), M: new Float32Array(n), out: new Uint8ClampedArray(n * 4) };
 }
 
 // The rows: how many fives fit in one (at least one), and how far apart groups and rows are.
-const rowsOf = (frame, P) => {
+const rowsOf = (area, P) => {
   const pitch = 3 * P.tallyGap + P.tallyGroupGap, width = 5.6 * P.tallyGap; // a five with its slash's overshoot
-  return { per: Math.max(1, Math.floor((frame.uRoom - width) / pitch) + 1), pitch, rowPitch: P.tallyLen + P.tallyRowGap };
+  return { per: Math.max(1, Math.floor((area.w - width) / pitch) + 1), pitch, rowPitch: P.tallyLen + P.tallyRowGap };
 };
-// A mark's centerline in the row frame (a: along the row; b: down the strokes, rows following on), as points with their
+// A mark's centerline (a: along the row; b: down the strokes, rows following on), as points with their
 // pressure and half width. slot: its place in the count (every fifth crosses the four before it).
 function markPath(slot, gen, P, R) {
   const r = handOf(slot * 977 + gen * 131 + 17), J = P.tallyJitter, j = slot % 5, g = (slot - j) / 5;
-  const gap = P.tallyGap, len = P.tallyLen, a0 = gap + (g % R.per) * R.pitch + P.tallyX, b0 = Math.floor(g / R.per) * R.rowPitch + len / 2 + P.tallyY;
+  const gap = P.tallyGap, len = P.tallyLen, a0 = gap + (g % R.per) * R.pitch, b0 = Math.floor(g / R.per) * R.rowPitch + len / 2;
   const v = () => (r() - 0.5) * J;
   let p0, p2, base, taper;
   if (j < 4) { // a pull down, leaning with the hand (its top further along)
@@ -110,10 +100,10 @@ function markPath(slot, gen, P, R) {
 
 // The box's pixels under the tally at time t. marks: { slot, gen, start, dur, gone: null | { start, dur } } (s).
 export function paintTally(surf, marks, t, P) {
-  const { rect, S, frame, base, tooth, rub, glint, D, M, out } = surf, W = rect.w, H = rect.h;
+  const { rect, S, area, base, tooth, rub, glint, D, M, out } = surf, W = rect.w, H = rect.h;
   D.fill(0); M.fill(0);
-  const R = rowsOf(frame, P), { o, eu, ev } = frame;
-  const toPx = (a, b) => [(o[0] + a * eu[0] + b * ev[0]) * S - rect.x, (o[1] + a * eu[1] + b * ev[1]) * S - rect.y];
+  const R = rowsOf(area, P);
+  const toPx = (a, b) => [(area.x + a) * S - rect.x, (area.y + b) * S - rect.y];
   for (const m of marks) {
     const draw = minJerk((t - m.start) / m.dur);
     if (draw <= 0) continue;
@@ -126,7 +116,7 @@ export function paintTally(surf, marks, t, P) {
     const x0 = Math.max(0, Math.floor(Math.min(...q.map((p) => p[0])) - pad)), x1 = Math.min(W - 1, Math.ceil(Math.max(...q.map((p) => p[0])) + pad));
     const y0 = Math.max(0, Math.floor(Math.min(...q.map((p) => p[1])) - pad)), y1 = Math.min(H - 1, Math.ceil(Math.max(...q.map((p) => p[1])) + pad));
     // the smear runs along the stroke (the eraser rubs back and forth along it): noise stretched that way
-    const sx = dir[0] * eu[0] + dir[1] * ev[0], sy = dir[0] * eu[1] + dir[1] * ev[1], sl = Math.hypot(sx, sy) || 1, sdx = sx / sl, sdy = sy / sl; // the stroke's direction in canvas px
+    const [sdx, sdy] = dir;
     for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
       const X = px + 0.5, Y = py + 0.5;
       let best = Infinity, bt = 0, bk = 0;
