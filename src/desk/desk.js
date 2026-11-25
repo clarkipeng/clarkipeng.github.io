@@ -17,7 +17,7 @@ import { createChipRenderer } from './chip-render.js';
 import { createWorld, boxShape } from './physics.ts';
 import { createCurl } from './curl.ts';
 import { createNote, NS, paperChain, stepChain } from './note.ts';
-import { TALLY_PARAMS, tallySurface, paintTally } from './tally.js';
+import { TALLY_PARAMS, tallySurface, paintTally } from './tally.ts';
 
 export function mountDesk(root, router) {
 const ac = new AbortController(), signal = ac.signal;

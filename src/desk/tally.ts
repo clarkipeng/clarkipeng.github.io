@@ -1,6 +1,6 @@
 // The card box's pencil tally: graphite marks counting the cards inside, in fives (four down, the fifth across), in rows
 // that wrap. Drawn into the box's texture, so the marks move, turn, and tumble with it.
-// Pure painting: desk.js decides when marks come and go; this turns marks and a time into pixels.
+// Pure painting: desk.ts decides when marks come and go; this turns marks and a time into pixels.
 //
 // How a real tally looks: each stroke is a quick pull down, leaning a little with the hand, bowed a touch, pressed hardest
 // where the pencil touches down and thinning as it lifts off (sometimes with a small flick). Graphite only catches the
@@ -28,31 +28,56 @@ export const TALLY_PARAMS = [
   ['tallySmudge', 0.3, 0, 1, 0.01, 'eraser smudge'],
   ['tallySmudgeW', 3, 1, 6, 0.1, 'smudge width (x line)'],
   ['tallyFadeS', 1.8, 0.2, 6, 0.1, 'smudge fades over s'],
-];
+] as const;
+export type TallyTunables = Record<(typeof TALLY_PARAMS)[number][0], number>;
 
-const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
-const smooth = (u) => { u = clamp(u); return u * u * (3 - 2 * u); };
-const minJerk = (u) => { u = clamp(u); return u * u * u * (10 - 15 * u + 6 * u * u); }; // a hand's quick stroke: speeds up, then settles
-const hash2 = (x, y, k = 0) => {
+// A rect in the box's design px.
+export interface Area { x: number; y: number; w: number; h: number }
+export interface TallySurface {
+  rect: Area; // canvas px
+  S: number;
+  area: Area;
+  base: Uint8ClampedArray;
+  tooth: Float32Array;
+  rub: Float32Array;
+  glint: Float32Array;
+  D: Float32Array;
+  M: Float32Array;
+  out: Uint8ClampedArray<ArrayBuffer>;
+}
+// One stroke: drawn from start over dur (s), and rubbed out once gone.
+export interface Mark {
+  slot: number;
+  gen: number;
+  start: number;
+  dur: number;
+  gone: null | { start: number; dur: number };
+}
+type Rows = { per: number; pitch: number; rowPitch: number };
+
+const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const smooth = (u: number) => { u = clamp(u); return u * u * (3 - 2 * u); };
+const minJerk = (u: number) => { u = clamp(u); return u * u * u * (10 - 15 * u + 6 * u * u); }; // a hand's quick stroke: speeds up, then settles
+const hash2 = (x: number, y: number, k = 0) => {
   let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(k, 1442695041);
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
-const vnoise = (x, y, k) => {
+const vnoise = (x: number, y: number, k: number) => {
   const ix = Math.floor(x), iy = Math.floor(y), fx = smooth(x - ix), fy = smooth(y - iy);
   const a = hash2(ix, iy, k), b = hash2(ix + 1, iy, k), c = hash2(ix, iy + 1, k), d = hash2(ix + 1, iy + 1, k);
   return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
 };
 // One mark's random hand, the same every time for the same slot and generation (a redrawn stroke is a new stroke).
-const handOf = (seed) => { let i = 0; return () => hash2(seed, i++, 13); };
+const handOf = (seed: number) => { let i = 0; return () => hash2(seed, i++, 13); };
 
 // The surface: the pixels under the tally's area (area: x, y, w, h in the box's design px; S: canvas px each), and the
 // paper's tooth there. Rows of strokes run along x and follow on down; a group's first stroke sits at x = gap.
-export function tallySurface(canvas, S, area) {
+export function tallySurface(canvas: OffscreenCanvas, S: number, area: Area): TallySurface {
   const x = Math.max(0, Math.floor((area.x - 4) * S)), y = Math.max(0, Math.floor((area.y - 4) * S));
   const rect = { x, y, w: Math.min(canvas.width, Math.ceil((area.x + area.w + 4) * S)) - x, h: Math.min(canvas.height, Math.ceil((area.y + area.h + 4) * S)) - y };
   const { w, h } = rect, n = w * h;
-  const base = canvas.getContext('2d').getImageData(x, y, w, h).data;
+  const base = canvas.getContext('2d')!.getImageData(x, y, w, h).data;
   const tooth = new Float32Array(n), rub = new Float32Array(n), glint = new Float32Array(n);
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const px = x + i, py = y + j, k = j * w + i;
@@ -64,17 +89,17 @@ export function tallySurface(canvas, S, area) {
 }
 
 // The rows: how many fives fit in one (at least one), and how far apart groups and rows are.
-const rowsOf = (area, P) => {
+const rowsOf = (area: Area, P: TallyTunables): Rows => {
   const pitch = 3 * P.tallyGap + P.tallyGroupGap, width = 5.6 * P.tallyGap; // a five with its slash's overshoot
   return { per: Math.max(1, Math.floor((area.w - width) / pitch) + 1), pitch, rowPitch: P.tallyLen + P.tallyRowGap };
 };
 // A mark's centerline (a: along the row; b: down the strokes, rows following on), as points with their
 // pressure and half width. slot: its place in the count (every fifth crosses the four before it).
-function markPath(slot, gen, P, R) {
+function markPath(slot: number, gen: number, P: TallyTunables, R: Rows) {
   const r = handOf(slot * 977 + gen * 131 + 17), J = P.tallyJitter, j = slot % 5, g = (slot - j) / 5;
   const gap = P.tallyGap, len = P.tallyLen, a0 = gap + (g % R.per) * R.pitch, b0 = Math.floor(g / R.per) * R.rowPitch + len / 2;
   const v = () => (r() - 0.5) * J;
-  let p0, p2, base, taper;
+  let p0: number[], p2: number[], base: number, taper: number;
   if (j < 4) { // a pull down, leaning with the hand (its top further along)
     const l = len * (1 + 0.14 * v()), a = a0 + j * gap + 0.15 * gap * v(), top = b0 - l / 2 + 1.6 * v();
     const lean = Math.tan(((P.tallySlant + 4 * v()) * Math.PI) / 180) * l;
@@ -89,7 +114,7 @@ function markPath(slot, gen, P, R) {
   const bow = P.tallyBow * (0.5 + r()) * (r() < 0.75 ? 1 : -1) * Math.min(1, J + 0.2);
   const c = [(p0[0] + p2[0]) / 2 + nx * bow * 2, (p0[1] + p2[1]) / 2 + ny * bow * 2]; // a quadratic's middle sits half way to its control point
   const flick = P.tallyFlick * (0.3 + r()), wob = r() * 6.28, hw = P.tallyWidth / 2;
-  const N = 18, pts = [];
+  const N = 18, pts: { a: number; b: number; p: number; w: number }[] = [];
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1), u = 1 - t, f = smooth((t - 0.82) / 0.18) ** 2 * flick; // the flick: the end turns along the label
     const pr = base * (1 + 0.18 * Math.exp(-(((t - 0.05) / 0.06) ** 2))) * (1 - taper * smooth((t - 0.55) / 0.45)) * (1 - 0.6 * smooth((t - 0.88) / 0.12)) * (1 + 0.07 * Math.sin(t * 9 + wob)); // touch-down, then lifting off to nothing
@@ -99,11 +124,11 @@ function markPath(slot, gen, P, R) {
 }
 
 // The box's pixels under the tally at time t. marks: { slot, gen, start, dur, gone: null | { start, dur } } (s).
-export function paintTally(surf, marks, t, P) {
+export function paintTally(surf: TallySurface, marks: Mark[], t: number, P: TallyTunables) {
   const { rect, S, area, base, tooth, rub, glint, D, M, out } = surf, W = rect.w, H = rect.h;
   D.fill(0); M.fill(0);
   const R = rowsOf(area, P);
-  const toPx = (a, b) => [(area.x + a) * S - rect.x, (area.y + b) * S - rect.y];
+  const toPx = (a: number, b: number) => [(area.x + a) * S - rect.x, (area.y + b) * S - rect.y];
   for (const m of marks) {
     const draw = minJerk((t - m.start) / m.dur);
     if (draw <= 0) continue;
