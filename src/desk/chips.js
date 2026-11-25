@@ -67,7 +67,7 @@ class Body {
         this.px[k] = x; this.py[k] = y; this.pz[k] = h + ((l + 0.5) / CL - 0.5) * S.t; this.d[k] = inside ? 1 : 0; this.mass0 += this.d[k];
       }
     }
-    this.p = null; this.c = [0, 0, 0]; this.landed = false; this.pulse = 0; this.vz = 0; this.dirty = true; this.cutT = -1;
+    this.p = null; this.c = [0, 0, 0]; this.landed = false; this.dirty = true; this.cutT = -1;
     this.feed = null; // the slime under it, read back from the GPU: { cx, cy, h, v: Float32Array(FEED * FEED) }
   }
   // Its pose and motion are its body's in the shared sim (physics.js).
@@ -270,13 +270,9 @@ export function createChips(P, world) {
     }
   }
 
-  // After the sim has advanced: a chip's first touch is its landing (a hard one stirs the slime); then eating.
+  // After the sim has advanced: a chip's first touch is its landing; then eating.
   function step(dt, eatOn) {
-    for (const b of bodies) {
-      b.pulse *= Math.exp(-dt * 3);
-      if (b.landed || b.frozen) continue;
-      if (b.p.touch) { b.landed = true; b.pulse = b.vz < -150 ? Math.min(1, -b.vz / 900) : 0; } else b.vz = b.v[2];
-    }
+    for (const b of bodies) if (!b.frozen && b.p.touch) b.landed = true;
     clock += dt;
     if (eatOn) eat(dt);
   }
