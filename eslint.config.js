@@ -26,4 +26,8 @@ export default defineConfig([
       reactRefresh.configs.vite,
     ],
   },
+  {
+    files: ['src/desk/**'],
+    rules: { 'prefer-const': ['error', { destructuring: 'all' }] }, // a destructured let may mix values that change with ones that do not
+  },
 ])
