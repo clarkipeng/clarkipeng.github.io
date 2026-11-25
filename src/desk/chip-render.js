@@ -1,8 +1,8 @@
 // Drawing the chips (chips.js): each one as a fine mesh of its curved surface, posed in 3D, so its voxels never show and
 // its curl shows in its shading and its shadow. A small pass draws each chip that changed, with its shadow, into its own
-// layer of a small texture array; the desk's render lays the tiles over the resting cards (lowest chip first) and under
-// any lifted one, so a frame costs only what changed. A second small pass reads the slime under each chip back to the
-// physics, which eats only where it is.
+// layer of a small texture array, with the height of what it shows at each pixel; the desk's render lays the tiles over
+// the resting cards (at each pixel, the lowest chip first) and under any lifted one, so a frame costs only what changed.
+// A second small pass reads the slime under each chip back to the physics, which eats only where it is.
 
 import { CN, NCH, FEED, DIST } from './chips.js';
 
@@ -133,8 +133,11 @@ struct VO { @builtin(position) pos: vec4f, @location(0) p: vec2f, @location(1) z
   let h = max(w.z, 0.0);
   return VO(clip(w.xy + LS * h, 0.0), p, h, ii);
 }
+// What a layer holds at a pixel: its color, and the height of what shows there (the chip's surface, or for its shadow,
+// the part of it that casts it), so the desk's render lays the chips there in order of height.
+struct FO { @location(0) col: vec4f, @location(1) z: f32 };
 // Tight and dark where it touches the desk; under a lifted rim, fainter, softer and shifted along the light.
-@fragment fn fsShadow(v: VO) -> @location(0) vec4f {
+@fragment fn fsShadow(v: VO) -> FO {
   bi = v.id;
   let s = chipSd(v.p).all; let h = v.z;
   let contact = exp(-h / 2.0) * smoothstep(-(1.0 + 0.4 * h), 0.5, s);
@@ -142,13 +145,13 @@ struct VO { @builtin(position) pos: vec4f, @location(0) p: vec2f, @location(1) z
   let soft = smoothstep(-ws, ws, s) / (1.0 + h / 20.0);
   let room = smoothstep(-u.a.z, 0.0, s) * exp(-h / 30.0); // the room's light, blocked a little all round it
   let fade = 1.0 - smoothstep(0.5, 1.0, h / u.a.w);
-  return vec4f(0.0, 0.0, 0.0, clamp(u.l1.x * (0.55 * u.l3.z * contact + 0.6 * soft + 0.2 * room * room) * fade, 0.0, 1.0));
+  return FO(vec4f(0.0, 0.0, 0.0, clamp(u.l1.x * (0.55 * u.l3.z * contact + 0.6 * soft + 0.2 * room * room) * fade, 0.0, 1.0)), h);
 }
 
 const GOLD0 = vec3f(0.90, 0.74, 0.30); const GOLD1 = vec3f(0.80, 0.55, 0.14); // pale and deep gold (linear)
 const BROWN = vec3f(0.42, 0.21, 0.06); const OLIVE = vec3f(0.36, 0.37, 0.20);
 
-@fragment fn fsChip(v: VO) -> @location(0) vec4f {
+@fragment fn fsChip(v: VO) -> FO {
   bi = v.id; let b = &u.b[bi];
   let l = v.p;
   let sd = chipSd(l);
@@ -183,7 +186,7 @@ const BROWN = vec3f(0.42, 0.21, 0.06); const OLIVE = vec3f(0.36, 0.37, 0.20);
   let cq = l / 4.0; let ci = floor(cq); let sp = hash2(ci + b.z.w); let dd = length((cq - ci - (0.2 + 0.6 * sp)) * 4.0);
   let salt = select(0.0, 1.0 - smoothstep(0.2, 0.75, dd), hash(ci * 1.7 + 4.2 + b.z.w) < 0.12 * u.l0.z);
   col = mix(col, vec3f(0.95, 0.92, 0.84) * (0.8 + 0.4 * lam), salt * 0.35);
-  return vec4f(col * cover, cover);
+  return FO(vec4f(col * cover, cover), v.z);
 }`;
 
 // The slime under each chip, FEED x FEED over its square, back to the physics.
@@ -218,14 +221,15 @@ function valueNoise() {
 export async function createChipRenderer(device) {
   const mod = (code) => device.createShaderModule({ code });
   const cm = mod(CHIP_WGSL), over = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, max = { operation: 'max', srcFactor: 'one', dstFactor: 'one' };
-  // The shadow first (the darkest of where its surface falls), then the chip over it, its nearest surface in front.
-  const draw = (vs, fs, blend, depthWriteEnabled, depthCompare) => device.createRenderPipelineAsync({
-    layout: 'auto', vertex: { module: cm, entryPoint: vs }, fragment: { module: cm, entryPoint: fs, targets: [{ format: 'rgba8unorm-srgb', blend }] },
+  // The shadow first (the darkest of where its surface falls, and the highest part casting it), then the chip over it,
+  // its nearest surface in front.
+  const draw = (vs, fs, blend, zBlend, depthWriteEnabled, depthCompare) => device.createRenderPipelineAsync({
+    layout: 'auto', vertex: { module: cm, entryPoint: vs }, fragment: { module: cm, entryPoint: fs, targets: [{ format: 'rgba8unorm-srgb', blend }, { format: 'r16float', blend: zBlend }] },
     depthStencil: { format: 'depth16unorm', depthWriteEnabled, depthCompare },
   });
   const [shadowPipe, pipe, feedPipe] = await Promise.all([
-    draw('vsShadow', 'fsShadow', { color: max, alpha: max }, false, 'always'),
-    draw('vsChip', 'fsChip', { color: over, alpha: over }, true, 'less'),
+    draw('vsShadow', 'fsShadow', { color: max, alpha: max }, { color: max, alpha: max }, false, 'always'),
+    draw('vsChip', 'fsChip', { color: over, alpha: over }, undefined, true, 'less'),
     device.createComputePipelineAsync({ layout: 'auto', compute: { module: mod(FEED_WGSL), entryPoint: 'main' } }),
   ]);
   const U = new Float32Array((HEAD_VEC4 + NCH * BODY_VEC4) * 4);
@@ -238,9 +242,9 @@ export async function createChipRenderer(device) {
   const bgOf = (p) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }, { binding: 1, resource: masks.createView({ dimension: '2d-array' }) }, { binding: 2, resource: sampler },
     { binding: 3, resource: noise.createView() }, { binding: 4, resource: wrap }] });
   const bg = bgOf(pipe), sbg = bgOf(shadowPipe);
-  const blank = device.createTexture({ size: [1, 1, 1], format: 'rgba8unorm-srgb', usage: 0x04 });
-  let layers = null, depth = null, side = 0, look0 = '', pending = [], tiles = [];
-  const drawn = new Map(); // each body as last drawn: pose, when, its tile's corner and size
+  const blank = device.createTexture({ size: [1, 1, 1], format: 'rgba8unorm-srgb', usage: 0x04 }), blankZ = device.createTexture({ size: [1, 1, 1], format: 'r16float', usage: 0x04 });
+  let layers = null, zs = null, depth = null, side = 0, look0 = '', pending = [], tiles = [];
+  const drawn = new Map(); // each body as last drawn: pose, its tile's corner and size
   const slots = new Map(), bytes = new Uint8Array(CN * CN * 4);
   // Feed read-back: one in flight at a time.
   const FU = new Float32Array(4 + NCH * 4), fbuf = device.createBuffer({ size: FU.byteLength, usage: 0x40 | 0x08 });
@@ -259,9 +263,9 @@ export async function createChipRenderer(device) {
     }
   }
   // Place the chips (bodies, desk px) in their layers: x0 the page's left edge (desk px), dev device px per CSS px. Returns
-  // each tile, lowest first: its corner and size on the canvas (device px), its layer. A chip is redrawn only when it
-  // shows: it moved by a tenth of a px, or was eaten, or the look changed. A pile lying still costs nothing.
-  function place(world, { x0, dev, T, t }) {
+  // each tile: its corner and size on the canvas (device px), its layer. A chip is redrawn only when it shows: it moved by
+  // a tenth of a px, or was eaten, or the look changed. A pile lying still costs nothing.
+  function place(world, { x0, dev, T }) {
     const look = [T.chipGold, T.chipCrisp, T.chipSalt, T.chipEdge, T.chipShadow, T.chipNibble, T.chipStain, T.chipLight,
       T.chipRelief, T.chipGloss, T.chipCam, T.chipSoft, T.chipContact, T.chipBend, T.chipFill, 0, 0, 0];
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box);
@@ -287,8 +291,9 @@ export async function createChipRenderer(device) {
     let all = `${x0} ${dev} ${look}` !== look0;
     look0 = `${x0} ${dev} ${look}`;
     if (need > side || (need < side / 2 && bodies.every((b) => b.sleep || b.landed))) {
-      layers?.destroy(); depth?.destroy(); side = need; all = true;
+      layers?.destroy(); zs?.destroy(); depth?.destroy(); side = need; all = true;
       layers = device.createTexture({ size: [side, side, NCH], format: 'rgba8unorm-srgb', usage: 0x04 | 0x10 });
+      zs = device.createTexture({ size: [side, side, NCH], format: 'r16float', usage: 0x04 | 0x10 });
       depth = device.createTexture({ size: [side, side], format: 'depth16unorm', usage: 0x10 });
     }
     const L = Math.hypot(LS[0], LS[1]);
@@ -299,25 +304,23 @@ export async function createChipRenderer(device) {
       const dq = Math.abs(b.q[0] * d.q[0] + b.q[1] * d.q[1] + b.q[2] * d.q[2] + b.q[3] * d.q[3]);
       return Math.abs(o[0] - d.o[0]) + Math.abs(o[1] - d.o[1]) + Math.abs(o[2] - d.o[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq)));
     };
-    // Redraws a frame are capped, the longest waiting first, so many chips moving at once (or a pile being eaten) never
-    // land in one frame. A chip in motion goes a little ahead of the queue.
-    const fast = (b) => Math.hypot(...b.v) + Math.hypot(...b.w) * b.S.B > 6;
-    const due = (x) => x.b.dirty || moved(x, drawn.get(x.b.id)) > 0.12;
-    const wait = (x) => drawn.get(x.b.id).at - (fast(x.b) ? 0.1 : 0);
-    const fresh = boxes.filter((x) => !drawn.has(x.b.id)); // new ones (drops, and a body and the pieces it split into) count against the cap
-    const turn = new Set(all ? boxes : [...fresh, ...boxes.filter((x) => drawn.has(x.b.id) && due(x)).sort((p, q) => wait(p) - wait(q)).slice(0, Math.max(0, T.chipRedraws - fresh.length))]);
+    // Drawn again: each chip that moved enough to show (or was eaten), and with it every chip its tile overlaps that moved
+    // at all, so no layer shows a chip where its neighbours, drawn now, disagree.
+    const turn = new Set(all ? boxes : boxes.filter((x) => !drawn.has(x.b.id) || x.b.dirty || moved(x, drawn.get(x.b.id)) > 0.12));
+    const meets = (x, y) => x.c[0] < y.c[0] + y.size && y.c[0] < x.c[0] + x.size && x.c[1] < y.c[1] + y.size && y.c[1] < x.c[1] + x.size;
+    for (let grew = true; grew;) { grew = false; for (const x of boxes) if (!turn.has(x) && moved(x, drawn.get(x.b.id)) > 0 && [...turn].some((y) => meets(x, y))) { turn.add(x); grew = true; } }
     for (const x of boxes) {
       if (!turn.has(x)) continue;
       const { b, lo, hi, c, o, size } = x, sl = slots.get(b.id);
       if (b.dirty) { device.queue.writeTexture({ texture: masks, origin: [0, 0, sl] }, world.maskBytes(b, bytes), { bytesPerRow: CN * 4 }, [CN, CN, 1]); b.dirty = false; }
-      drawn.set(b.id, { o, q: [...b.q], at: t, c, n: Math.min(size, side) });
+      drawn.set(b.id, { o, q: [...b.q], c, n: Math.min(size, side) });
       const R = b.R, S = b.S;
       U.set([R[0], R[1], R[2], b.x[0] - x0, R[3], R[4], R[5], b.x[1], R[6], R[7], R[8], b.x[2], ...b.c, sl,
         S.R, S.B, S.t, S.sag, S.bowl, S.ca, S.sa, S.tone, ...S.harm, ...S.warp, ...S.folds, lo, hi, b.cell, (S.seed % 997) * 0.137,
         ...c, 0, 0], (HEAD_VEC4 + sl * BODY_VEC4) * 4);
       if (!pending.includes(sl)) pending.push(sl);
     }
-    tiles = boxes.sort((a, b) => a.b.x[2] - b.b.x[2]).map(({ b }) => { const d = drawn.get(b.id); return [...d.c, d.n, slots.get(b.id)]; });
+    tiles = boxes.map(({ b }) => { const d = drawn.get(b.id); return [...d.c, d.n, slots.get(b.id)]; });
     return tiles;
   }
   // Draw the chips place() found changed, each into its own layer.
@@ -326,7 +329,7 @@ export async function createChipRenderer(device) {
     device.queue.writeBuffer(ubuf, 0, U);
     for (const sl of pending) {
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: layers.createView({ dimension: '2d', baseArrayLayer: sl, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }],
+        colorAttachments: [layers, zs].map((x) => ({ view: x.createView({ dimension: '2d', baseArrayLayer: sl, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] })),
         depthStencilAttachment: { view: depth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
       });
       pass.setPipeline(shadowPipe); pass.setBindGroup(0, sbg); pass.draw(G * G * 6, 1, 0, sl);
@@ -358,6 +361,7 @@ export async function createChipRenderer(device) {
   return {
     place, encode, feed,
     view: () => (layers || blank).createView({ dimension: '2d-array' }),
-    destroy() { for (const t of [layers, depth, blank, masks, ubuf, fbuf, fout, fread]) t?.destroy(); },
+    zView: () => (zs || blankZ).createView({ dimension: '2d-array' }),
+    destroy() { for (const t of [layers, zs, depth, blank, blankZ, masks, ubuf, fbuf, fout, fread]) t?.destroy(); },
   };
 }

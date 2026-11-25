@@ -206,7 +206,6 @@ const GROUPS = {
     ['chipShadow', 0.6, 0, 1.5, 0.01, 'shadow'],
     ['chipSoft', 0.5, 0, 2, 0.01, 'shadow softens per px of height'],
     ['chipShadowH', 80, 20, 300, 1, 'shadow fades out by height px'],
-    ['chipRedraws', 3, 1, 12, 1, 'chip redraws per frame at most'],
     ['chipContact', 1, 0, 2, 0.01, 'contact shadow'],
     ['chipNibble', 0.6, 0, 1.5, 0.01, 'nibbled edges'],
     ['chipStain', 0.4, 0, 1, 0.01, 'slime stain'],
@@ -358,7 +357,7 @@ struct G {
   cards: array<Card, ${MAX}>,
   ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, chips thrown off the page you left
   chipf: array<vec4f, ${NCH}>, // per chip: center, food radius, food strength (sim px)
-  chipt: array<vec4f, ${NCH}>, // each chip's tile, lowest first: its corner and size on the canvas (device px), its layer in chipTex
+  chipt: array<vec4f, ${NCH}>, // each chip's tile: its corner and size on the canvas (device px), its layer in chipTex
 };
 @group(0) @binding(0) var<uniform> g: G;
 
@@ -657,14 +656,24 @@ const renderWGSL = (video) => COMMON + /* wgsl */ `
 ${video ? '@group(0) @binding(7) var vidA: texture_external;\n@group(0) @binding(8) var vidB: texture_external;' : ''}
 @group(0) @binding(9) var<storage, read> tiles: array<vec4u>;
 @group(0) @binding(10) var chipTex: texture_2d_array<f32>;
-// The chips, drawn on their own (chip-render.js) as premultiplied linear color, over the desk and the resting cards.
+@group(0) @binding(11) var chipZ: texture_2d_array<f32>;
+// The chips, drawn on their own (chip-render.js) as premultiplied linear color, over the desk and the resting cards: at
+// each pixel, the lowest of what they show there first.
 fn chipsAt(ip: vec2i, near: u32) -> vec4f {
-  var o = vec4f(0.0); var m = near;
-  while (m != 0u) { // the chips whose tiles reach this screen tile, lowest first
+  var cs: array<vec4f, ${NCH}>; var zs: array<f32, ${NCH}>; var n = 0u; var m = near;
+  while (m != 0u) { // the chips whose tiles reach this screen tile, in order of height here
     let i = firstTrailingBit(m); m &= m - 1u;
     let t = g.chipt[i]; let p = vec2f(ip) - t.xy;
-    if (all(p >= vec2f(0.0)) && all(p < vec2f(t.z))) { let c = textureLoad(chipTex, vec2i(p), i32(t.w), 0); o = o * (1.0 - c.a) + c; }
+    if (any(p < vec2f(0.0)) || any(p >= vec2f(t.z))) { continue; }
+    let c = textureLoad(chipTex, vec2i(p), i32(t.w), 0);
+    if (c.a <= 0.0) { continue; }
+    let z = textureLoad(chipZ, vec2i(p), i32(t.w), 0).r;
+    var k = n;
+    while (k > 0u && zs[k - 1u] > z) { cs[k] = cs[k - 1u]; zs[k] = zs[k - 1u]; k--; }
+    cs[k] = c; zs[k] = z; n++;
   }
+  var o = vec4f(0.0);
+  for (var k = 0u; k < n; k++) { o = o * (1.0 - cs[k].a) + cs[k]; }
   return o;
 }
 fn layChips(col: vec3f, c: vec4f) -> vec3f { return col * (1.0 - c.a) + c.rgb; }
@@ -3196,7 +3205,7 @@ function renderEntries(g, sm, extra = []) {
     { binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: sm.trail[sm.parity].createView() },
     { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared.atlas.createView() }, { binding: 4, resource: g.sampler },
     { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } },
-    { binding: 10, resource: g.chipR.view() }, ...extra];
+    { binding: 10, resource: g.chipR.view() }, { binding: 11, resource: g.chipR.zView() }, ...extra];
 }
 // A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
 // on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
@@ -3467,7 +3476,7 @@ function chipUniforms(s) {
   U.fill(0, CHIP_OFF, CHIP_OFF + CHIP_VEC4 * 4);
   if (s !== sim || capturing || !chips.bodies.length) return; // never in the frozen frame a turn starts from
   const own = chipRegion() === page, bs = own ? chips.bodies.slice(0, NCH) : [];
-  const tiles = gpu.chipR.place(chips, { x0: chipX0(), dev: shared.dev, T, t: clock.t });
+  const tiles = gpu.chipR.place(chips, { x0: chipX0(), dev: shared.dev, T });
   U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
   tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH + i) * 4));
   bs.forEach((b, i) => {
