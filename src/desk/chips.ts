@@ -227,6 +227,7 @@ function chamfer(D: Float32Array) {
 // it stops rocking, chipEat eating speed, chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the
 // oldest chip over the cap.
 // world: () => the shared sim (physics.ts) they fall, tumble and are thrown in.
+export type Chips = ReturnType<typeof createChips>;
 export function createChips(P: ChipTunables, world: () => World) {
   const bodies: Body[] = [];
   let clock = 0;
@@ -367,7 +368,7 @@ export function createChips(P: ChipTunables, world: () => World) {
   // The eaten field (r: how much of the column's thickness is left, g: slime stain, b: how far past what is left, in DIST
   // columns), r dilated one column past the rim so the analytic outline, not the voxels, decides the edge. b makes the
   // eaten edge a true distance, so the soft shadow fades away from it instead of veiling the eaten part.
-  function maskBytes(b: Body, out: Uint8Array) {
+  function maskBytes(b: Body, out: Uint8Array<ArrayBuffer>) {
     const N = CN * CN, m = new Float32Array(N), D = new Float32Array(N), S = b.S;
     if (!S.inside) { S.inside = new Uint8Array(N); for (let ci = 0; ci < N; ci++) S.inside[ci] = outlineR(S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0 ? 1 : 0; } // the outline never changes
     for (let ci = 0; ci < N; ci++) { let s = 0; for (let l = 0; l < CL; l++) s += b.d[ci * CL + l]; m[ci] = s / CL; D[ci] = m[ci] >= 0.5 && S.inside[ci] ? 0 : 1e9; }

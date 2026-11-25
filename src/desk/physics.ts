@@ -19,7 +19,7 @@
 //     render,          // optional (b) => void, after each advance it moved in: read world.pose(b, pos, rot)
 //   });
 //   world.surface = { top, speed, prepare(t), at(io, vel), moving(x, y, r) }: what everything rests on (the desk and the
-//     turning page, curl.js). top: its highest point; speed: its fastest; prepare(t): set it to time t; at: io[0..1] x, y
+//     turning page, curl.ts). top: its highest point; speed: its fastest; prepare(t): set it to time t; at: io[0..1] x, y
 //     in; out, its height and normal (io[0..3]) there and, if vel, its velocity (io[4..6]); moving: whether it moves under
 //     a circle (a body asleep there wakes).
 //   Floats cross these calls in arrays, not as arguments or return values: V8 allocates for those (and for Math.hypot).

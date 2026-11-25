@@ -13,7 +13,7 @@
 
 import { clips, mediaUrl } from 'virtual:desk-media';
 import { createChips, NCH } from './chips.ts';
-import { createChipRenderer } from './chip-render.js';
+import { createChipRenderer } from './chip-render.ts';
 import { createWorld, boxShape } from './physics.ts';
 import { createCurl } from './curl.ts';
 import { createNote, NS, paperChain, stepChain } from './note.ts';
@@ -664,7 +664,7 @@ ${video ? '@group(0) @binding(7) var vidA: texture_external;\n@group(0) @binding
 @group(0) @binding(10) var chipTex: texture_2d_array<f32>;
 @group(0) @binding(11) var chipZ: texture_2d_array<f32>;
 @group(0) @binding(12) var noteTex: texture_2d<f32>; // the turning note, drawn as paper (note.js)
-// The chips, drawn on their own (chip-render.js) as premultiplied linear color, over the desk and the resting cards: at
+// The chips, drawn on their own (chip-render.ts) as premultiplied linear color, over the desk and the resting cards: at
 // each pixel, the lowest of what they show there first.
 fn chipsAt(ip: vec2i, near: u32) -> vec4f {
   var cs: array<vec4f, ${NCH}>; var zs: array<f32, ${NCH}>; var n = 0u; var m = near;
@@ -3558,7 +3558,7 @@ function writeUniforms(g, sm = sim, hold = false) {
 }
 
 // ---------- chips ----------
-// Potato chips (chips.js, drawn by chip-render.js): click the bare desk to drop one. They live on the page you see, in the
+// Potato chips (chips.ts, drawn by chip-render.ts): click the bare desk to drop one. They live on the page you see, in the
 // same sim as the card box (physics.js): a page turn throws them with it. A chip is gone once it is wholly off the screen
 // or eaten, never sooner.
 const chips = createChips(T, () => throwWorld().world);

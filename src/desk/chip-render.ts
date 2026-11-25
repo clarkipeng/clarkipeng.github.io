@@ -1,10 +1,19 @@
-// Drawing the chips (chips.js): each one as a fine mesh of its curved surface, posed in 3D, so its voxels never show and
+// Drawing the chips (chips.ts): each one as a fine mesh of its curved surface, posed in 3D, so its voxels never show and
 // its curl shows in its shading and its shadow. A small pass draws each chip that changed, with its shadow, into its own
 // layer of a small texture array, with the height of what it shows at each pixel; the desk's render lays the tiles over
 // the resting cards (at each pixel, the lowest chip first) and under any lifted one, so a frame costs only what changed.
 // A second small pass reads the slime under each chip back to the physics, which eats only where it is.
 
-import { CN, NCH, FEED, DIST } from './chips.ts';
+import { CN, NCH, FEED, DIST, type Body, type Chips } from './chips.ts';
+
+// The tunables the chips' look reads (desk.ts T).
+type LookKey = 'chipGold' | 'chipCrisp' | 'chipSalt' | 'chipEdge' | 'chipShadow' | 'chipNibble' | 'chipStain' | 'chipLight' | 'chipRelief' | 'chipGloss' |
+  'chipCam' | 'chipSoft' | 'chipContact' | 'chipBend' | 'chipFill' | 'chipSize' | 'chipShadowH';
+// A body's tile this frame (place): its pose's height span, tile corner and size (device px), and its origin in the world.
+interface Box { b: Body; lo: number; hi: number; c: number[]; o: number[]; size: number }
+// A body as last drawn: origin, orientation, tile corner and size.
+interface Drawn { o: number[]; q: number[]; c: number[]; n: number }
+export type ChipRenderer = Awaited<ReturnType<typeof createChipRenderer>>;
 
 const BODY_VEC4 = 14, HEAD_VEC4 = 6, G = 40; // a chip's mesh: G x G quads
 const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell
@@ -208,8 +217,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 // Smooth value noise over a wrapping NP-cell lattice, sampled NT times a cell (r8, row by row).
 function valueNoise() {
-  const lat = Float32Array.from({ length: NP * NP }, () => Math.random()), at = (i, j) => lat[((j + NP) % NP) * NP + ((i + NP) % NP)];
-  const out = new Uint8Array(NP * NT * NP * NT), n = NP * NT, sm = (f) => f * f * (3 - 2 * f);
+  const lat = Float32Array.from({ length: NP * NP }, () => Math.random()), at = (i: number, j: number) => lat[((j + NP) % NP) * NP + ((i + NP) % NP)];
+  const out = new Uint8Array(NP * NT * NP * NT), n = NP * NT, sm = (f: number) => f * f * (3 - 2 * f);
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
     const px = (x + 0.5) / NT, py = (y + 0.5) / NT, i = Math.floor(px), j = Math.floor(py), sx = sm(px - i), sy = sm(py - j);
     const a = at(i, j) + (at(i + 1, j) - at(i, j)) * sx, b = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * sx;
@@ -218,12 +227,12 @@ function valueNoise() {
   return out;
 }
 
-export async function createChipRenderer(device) {
-  const mod = (code) => device.createShaderModule({ code });
-  const cm = mod(CHIP_WGSL), over = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, max = { operation: 'max', srcFactor: 'one', dstFactor: 'one' };
+export async function createChipRenderer(device: GPUDevice) {
+  const mod = (code: string) => device.createShaderModule({ code });
+  const cm = mod(CHIP_WGSL), over: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, max: GPUBlendComponent = { operation: 'max', srcFactor: 'one', dstFactor: 'one' };
   // The shadow first (the darkest of where its surface falls, and the highest part casting it), then the chip over it,
   // its nearest surface in front.
-  const draw = (vs, fs, blend, zBlend, depthWriteEnabled, depthCompare) => device.createRenderPipelineAsync({
+  const draw = (vs: string, fs: string, blend: GPUBlendState, zBlend: GPUBlendState | undefined, depthWriteEnabled: boolean, depthCompare: GPUCompareFunction) => device.createRenderPipelineAsync({
     layout: 'auto', vertex: { module: cm, entryPoint: vs }, fragment: { module: cm, entryPoint: fs, targets: [{ format: 'rgba8unorm-srgb', blend }, { format: 'r16float', blend: zBlend }] },
     depthStencil: { format: 'depth16unorm', depthWriteEnabled, depthCompare },
   });
@@ -239,20 +248,20 @@ export async function createChipRenderer(device) {
   const noise = device.createTexture({ size: [NP * NT, NP * NT], format: 'r8unorm', usage: 0x04 | 0x02 });
   device.queue.writeTexture({ texture: noise }, valueNoise(), { bytesPerRow: NP * NT }, [NP * NT, NP * NT]);
   const wrap = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
-  const bgOf = (p) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }, { binding: 1, resource: masks.createView({ dimension: '2d-array' }) }, { binding: 2, resource: sampler },
+  const bgOf = (p: GPURenderPipeline) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }, { binding: 1, resource: masks.createView({ dimension: '2d-array' }) }, { binding: 2, resource: sampler },
     { binding: 3, resource: noise.createView() }, { binding: 4, resource: wrap }] });
   const bg = bgOf(pipe), sbg = bgOf(shadowPipe);
   const blank = device.createTexture({ size: [1, 1, 1], format: 'rgba8unorm-srgb', usage: 0x04 }), blankZ = device.createTexture({ size: [1, 1, 1], format: 'r16float', usage: 0x04 });
-  let layers = null, zs = null, depth = null, side = 0, look0 = '', pending = [], tiles = [];
-  const drawn = new Map(); // each body as last drawn: pose, its tile's corner and size
-  const slots = new Map(), bytes = new Uint8Array(CN * CN * 4);
+  let layers: GPUTexture | null = null, zs: GPUTexture | null = null, depth: GPUTexture | null = null, side = 0, look0 = '', pending: number[] = [], tiles: number[][] = [];
+  const drawn = new Map<number, Drawn>(); // each body as last drawn: pose, its tile's corner and size
+  const slots = new Map<number, number>(), bytes = new Uint8Array(CN * CN * 4);
   // Feed read-back: one in flight at a time.
   const FU = new Float32Array(4 + NCH * 4), fbuf = device.createBuffer({ size: FU.byteLength, usage: 0x40 | 0x08 });
   const fout = device.createBuffer({ size: NCH * FEED * FEED * 4, usage: 0x80 | 0x04 }), fread = device.createBuffer({ size: NCH * FEED * FEED * 4, usage: 0x01 | 0x08 });
   let busy = false;
 
   // Every chip's mask layer: a body keeps its slot while it lives; a new one (a drop, a piece that broke off) takes a free one.
-  function assign(bodies) {
+  function assign(bodies: Body[]) {
     const live = new Set(bodies.map((b) => b.id));
     for (const id of slots.keys()) if (!live.has(id)) slots.delete(id);
     const used = new Set(slots.values());
@@ -265,7 +274,7 @@ export async function createChipRenderer(device) {
   // Place the chips (bodies, desk px) in their layers: x0 the page's left edge (desk px), dev device px per CSS px. Returns
   // each tile: its corner and size on the canvas (device px), its layer. A chip is redrawn only when it shows: it moved by
   // a tenth of a px, or was eaten, or the look changed. A pile lying still costs nothing.
-  function place(world, { x0, dev, T }) {
+  function place(world: Chips, { x0, dev, T }: { x0: number; dev: number; T: Record<LookKey, number> }) {
     const look = [T.chipGold, T.chipCrisp, T.chipSalt, T.chipEdge, T.chipShadow, T.chipNibble, T.chipStain, T.chipLight,
       T.chipRelief, T.chipGloss, T.chipCam, T.chipSoft, T.chipContact, T.chipBend, T.chipFill, 0, 0, 0];
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box);
@@ -273,7 +282,7 @@ export async function createChipRenderer(device) {
     for (const id of drawn.keys()) if (!slots.has(id)) drawn.delete(id);
     const F = T.chipCam, M = 3 + T.chipSize * 0.3; // the camera's height, the shadow's margin past the rim
     const HS = T.chipShadowH; // the shadow fades out by this height, so a chip high in the air needs no larger tile
-    const boxes = bodies.map((b) => {
+    const boxes = bodies.map((b): Box => {
       const [rx0, ry0, rx1, ry1] = world.rect(b), [lo, hi] = world.zspan(b), m = F / Math.max(F - hi, F * 0.25), pad = 2;
       const r = [b.x[0] + (rx0 - b.x[0]) * m - x0 - pad, b.x[1] + (ry0 - b.x[1]) * m - pad, b.x[0] + (rx1 - b.x[0]) * m - x0 + pad, b.x[1] + (ry1 - b.x[1]) * m + pad];
       // The shadow: its box, widened by the margin, laid along the light.
@@ -300,18 +309,18 @@ export async function createChipRenderer(device) {
     U.set([dev, side, M, HS, ...look.slice(0, 8), -LS[0] / L, -LS[1] / L, ...look.slice(8)]);
     // How far its shape moved since it was drawn (px, its rim's travel included). Its shape's origin, not its centre of
     // mass, which shifts as it is eaten.
-    const moved = ({ b, o }, d) => {
+    const moved = ({ b, o }: Box, d: Drawn) => {
       const dq = Math.abs(b.q[0] * d.q[0] + b.q[1] * d.q[1] + b.q[2] * d.q[2] + b.q[3] * d.q[3]);
       return Math.abs(o[0] - d.o[0]) + Math.abs(o[1] - d.o[1]) + Math.abs(o[2] - d.o[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq)));
     };
     // Drawn again: each chip that moved enough to show (or was eaten), and with it every chip its tile overlaps that moved
     // at all, so no layer shows a chip where its neighbours, drawn now, disagree.
-    const turn = new Set(all ? boxes : boxes.filter((x) => !drawn.has(x.b.id) || x.b.dirty || moved(x, drawn.get(x.b.id)) > 0.12));
-    const meets = (x, y) => x.c[0] < y.c[0] + y.size && y.c[0] < x.c[0] + x.size && x.c[1] < y.c[1] + y.size && y.c[1] < x.c[1] + x.size;
-    for (let grew = true; grew;) { grew = false; for (const x of boxes) if (!turn.has(x) && moved(x, drawn.get(x.b.id)) > 0 && [...turn].some((y) => meets(x, y))) { turn.add(x); grew = true; } }
+    const turn = new Set(all ? boxes : boxes.filter((x) => !drawn.has(x.b.id) || x.b.dirty || moved(x, drawn.get(x.b.id)!) > 0.12));
+    const meets = (x: Box, y: Box) => x.c[0] < y.c[0] + y.size && y.c[0] < x.c[0] + x.size && x.c[1] < y.c[1] + y.size && y.c[1] < x.c[1] + x.size;
+    for (let grew = true; grew;) { grew = false; for (const x of boxes) if (!turn.has(x) && moved(x, drawn.get(x.b.id)!) > 0 && [...turn].some((y) => meets(x, y))) { turn.add(x); grew = true; } }
     for (const x of boxes) {
       if (!turn.has(x)) continue;
-      const { b, lo, hi, c, o, size } = x, sl = slots.get(b.id);
+      const { b, lo, hi, c, o, size } = x, sl = slots.get(b.id)!; // assign gave every body a slot
       if (b.dirty) { device.queue.writeTexture({ texture: masks, origin: [0, 0, sl] }, world.maskBytes(b, bytes), { bytesPerRow: CN * 4 }, [CN, CN, 1]); b.dirty = false; }
       drawn.set(b.id, { o, q: [...b.q], c, n: Math.min(size, side) });
       const R = b.R, S = b.S;
@@ -320,17 +329,17 @@ export async function createChipRenderer(device) {
         ...c, 0, 0], (HEAD_VEC4 + sl * BODY_VEC4) * 4);
       if (!pending.includes(sl)) pending.push(sl);
     }
-    tiles = boxes.map(({ b }) => { const d = drawn.get(b.id); return [...d.c, d.n, slots.get(b.id)]; });
+    tiles = boxes.map(({ b }) => { const d = drawn.get(b.id)!; return [...d.c, d.n, slots.get(b.id)!]; });
     return tiles;
   }
   // Draw the chips place() found changed, each into its own layer.
-  function encode(enc) {
+  function encode(enc: GPUCommandEncoder) {
     if (!pending.length) return;
     device.queue.writeBuffer(ubuf, 0, U);
     for (const sl of pending) {
       const pass = enc.beginRenderPass({
-        colorAttachments: [layers, zs].map((x) => ({ view: x.createView({ dimension: '2d', baseArrayLayer: sl, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] })),
-        depthStencilAttachment: { view: depth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+        colorAttachments: [layers!, zs!].map((x) => ({ view: x.createView({ dimension: '2d', baseArrayLayer: sl, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] })),
+        depthStencilAttachment: { view: depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
       });
       pass.setPipeline(shadowPipe); pass.setBindGroup(0, sbg); pass.draw(G * G * 6, 1, 0, sl);
       pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.draw(G * G * 6, 1, 0, sl); pass.end();
@@ -338,7 +347,7 @@ export async function createChipRenderer(device) {
     pending = [];
   }
   // The slime under each chip, read back a few times a second into body.feed.
-  function feed(world, trail, { x0, dpr, gain }) {
+  function feed(world: Chips, trail: GPUTexture, { x0, dpr, gain }: { x0: number; dpr: number; gain: number }) {
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box).slice(0, NCH);
     if (busy || !bodies.length) return;
     busy = true;
