@@ -49,7 +49,7 @@ const DeskPage = () => {
     root.dataset.mounted = '1';
     let destroy: (() => void) | undefined;
     let gone = false;
-    Promise.all([import('../desk/desk.js'), fontSheet()]).then(([{ mountDesk }]) => {
+    Promise.all([import('../desk/desk.ts'), fontSheet()]).then(([{ mountDesk }]) => {
       if (!gone)
         destroy = mountDesk(root, {
           push: (path, state) => router.current.navigate(path, { state }),

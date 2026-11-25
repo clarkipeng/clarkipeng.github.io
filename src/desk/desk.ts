@@ -14,14 +14,20 @@
 import { clips, mediaUrl } from 'virtual:desk-media';
 import { createChips, NCH } from './chips.ts';
 import { createChipRenderer } from './chip-render.ts';
-import { createWorld, boxShape } from './physics.ts';
-import { createCurl } from './curl.ts';
-import { createNote, NS, paperChain, stepChain } from './note.ts';
-import { TALLY_PARAMS, tallySurface, paintTally } from './tally.ts';
+import { createWorld, boxShape, type Body as PBody, type World } from './physics.ts';
+import { createCurl, type Curl } from './curl.ts';
+import { createNote, NS, paperChain, stepChain, type Chain } from './note.ts';
+import { TALLY_PARAMS, tallySurface, paintTally, type Mark, type TallySurface } from './tally.ts';
 
-export function mountDesk(root, router) {
+/** The site's router, as the desk uses it: push an address (with history state), and read the current state. */
+declare global { interface Window { __j?: { at?: number; freeze?: boolean } & Record<string, unknown> } } // the test hook
+export type DeskRouter = { push: (path: string, state?: object) => void; state: () => { fromMain?: boolean } | null };
+
+/** Runs the desk inside root (which holds desk.html's markup); returns the teardown. */
+export function mountDesk(root: HTMLElement, router: DeskRouter): () => void {
 const ac = new AbortController(), signal = ac.signal;
-const addEventListener = (type, fn, opts) => window.addEventListener(type, fn, { ...opts, signal });
+const addEventListener = <K extends keyof WindowEventMap>(type: K, fn: (e: WindowEventMap[K]) => void, opts?: AddEventListenerOptions) =>
+  window.addEventListener(type, fn, { ...opts, signal });
 let dead = false;
 
 const MAX = 32; // cards and decks the uniforms hold (room for overflow projects)
@@ -41,7 +47,7 @@ const TOK = {
 // type, padding and frames with it; only the type stops at 12 px on screen, so below 12/13 of full size the type grows
 // within the card by TS (in design px) while the card keeps its size.
 let TS = 1;
-const font = (weight, px = TOK.fs * TS, family = 'Inter') => `${weight} ${px}px ${family}`;
+const font = (weight: number, px = TOK.fs * TS, family = 'Inter') => `${weight} ${px}px ${family}`;
 const HAND = font(500, TOK.fsHand, 'Caveat');
 // Motion: a few durations and two curves. Things the user triggers respond in `respond`; cards that come down onto the
 // desk take `settle`; moves across the desk take `travel`. Arrivals decelerate (ease-out quart); turns and pans ease in
@@ -156,7 +162,7 @@ const GROUPS = {
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
     ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
   ],
-  // Throw: the card box as a rigid body the turning page throws off (physics.js, curl.js).
+  // Throw: the card box as a rigid body the turning page throws off (physics.ts, curl.ts).
   Throw: [
     ['throwG', 9000, 2000, 20000, 100, 'gravity px/s²'],
     ['throwMass', 1, 0.1, 5, 0.05, 'box mass (against what it hits)'],
@@ -176,8 +182,8 @@ const GROUPS = {
     ['lidS', 0.25, 0.05, 1, 0.05, 'card box flap folds open or shut s'],
     ['lidWait', 0.3, 0, 1.5, 0.05, 'flap waits before shutting s'],
   ],
-  Tally: TALLY_PARAMS, // the pencil tally on each card box (tally.js)
-  // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.js).
+  Tally: TALLY_PARAMS, // the pencil tally on each card box (tally.ts)
+  // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.ts).
   Chips: [
     ['chips', 1, 0, 1, 1, 'click the desk to drop a chip'],
     ['chipSize', 31, 15, 60, 0.5, 'radius px'],
@@ -216,7 +222,12 @@ const GROUPS = {
     ['chipNibble', 0.6, 0, 1.5, 0.01, 'nibbled edges'],
     ['chipStain', 0.4, 0, 1, 0.01, 'slime stain'],
   ],
-};
+} as const;
+// Every tunable's current value: a number, or a string for the selects and the ink color.
+type Param = (typeof GROUPS)[keyof typeof GROUPS][number];
+// A panel row as the panel reads it: key, default, min, max, step, label.
+type ParamRow = readonly [string, number | string, number, number, number, string];
+type Tunables = { [P in Param as P[0]]: P[1] extends string ? string : number } & Record<string, number | string>;
 // none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
 // four corners | center: one blob under the card | ring2: max plus a second ridge farther out
 const EDGE_MODES = ['none', 'max', 'plus', 'corners', 'center', 'ring2'];
@@ -226,23 +237,23 @@ const glide = (() => {
   const N = 512, acc = [0];
   let sum = 0;
   for (let i = 1; i <= N; i++) { const u = (i - 0.5) / N; sum += u ** 1.5 * (1 - u) ** 3; acc.push(sum); }
-  return (u) => { const x = Math.min(1, Math.max(0, u)) * N, i = Math.floor(x); return i >= N ? 1 : (acc[i] + (acc[i + 1] - acc[i]) * (x - i)) / sum; };
+  return (u: number) => { const x = Math.min(1, Math.max(0, u)) * N, i = Math.floor(x); return i >= N ? 1 : (acc[i] + (acc[i + 1] - acc[i]) * (x - i)) / sum; };
 })();
 const EASES = {
   glide,
-  cubic: (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2),
-  quint: (u) => (u < 0.5 ? 16 * u ** 5 : 1 - (-2 * u + 2) ** 5 / 2),
-  sine: (u) => -(Math.cos(Math.PI * u) - 1) / 2,
-  linear: (u) => u,
+  cubic: (u: number) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2),
+  quint: (u: number) => (u < 0.5 ? 16 * u ** 5 : 1 - (-2 * u + 2) ** 5 / 2),
+  sine: (u: number) => -(Math.cos(Math.PI * u) - 1) / 2,
+  linear: (u: number) => u,
 };
-const PRINTS = {
+const PRINTS: Record<string, Record<string, number>> = {
   print: { pDesat: 0.22, pWarm: 0.7, pBlack: 0.03, pGrain: 1, pMatte: 1.5, pDuo: 0 },
   duotone: { pDesat: 0.22, pWarm: 0.7, pBlack: 0.03, pGrain: 1, pMatte: 1.5, pDuo: 1 }, // full color fades in as the card plays
   'as-is': { pDesat: 0, pWarm: 0, pBlack: 0, pGrain: 0, pMatte: 0, pDuo: 0 },
 };
 // Looks: presets for the agents and both pages' ink (the research page keeps its own project color). original: the first desk (b-desk.html: 26k agents on a 0.45x
 // grid (agents count at 0.5x, so 32.1k here), soft pale veins drawn at half opacity, big open cells); k8: Clark's K8 tuning (denser, finer olive veins).
-const LOOKS = {
+const LOOKS: Record<string, { T: Record<string, number>; main: Record<string, number | string> }> = {
   original: { T: { res: 0.45, agents: 32100, speed: 147, turn: 0.35, sa: 0.5, sd: 26.7, decay: 0.9, deposit: 0.045, diffuse: 1, respawn: 0, edge: 0.14 },
     main: { ink: 'b0b993', opacity: 1, gain: 1.1, gamma: 1.8, soft: 0.4, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
@@ -250,19 +261,19 @@ const LOOKS = {
 };
 // Card size presets: compact (Clark's pick, 2026-11-23, the default) shows cards at 0.75 with the title on the front
 // only, tighter backs, and thumbnails framed on their subject; as-is is the full-size card from before.
-const CARD_PRESETS = {
+const CARD_PRESETS: Record<string, Record<string, number>> = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
   compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
-const CHOICES = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
+const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
-const T = { ...DEFAULTS };
+const T = { ...DEFAULTS } as Tunables;
 for (const k of Object.keys(DEFAULTS)) {
   if (!qs.has(k)) continue;
-  T[k] = typeof DEFAULTS[k] === 'string' ? qs.get(k) : parseFloat(qs.get(k));
+  T[k] = typeof DEFAULTS[k] === 'string' ? qs.get(k)! : parseFloat(qs.get(k)!);
 }
-for (const [k, list] of Object.entries(CHOICES)) if (!list.includes(T[k])) T[k] = DEFAULTS[k];
+for (const [k, list] of Object.entries(CHOICES)) if (!list.includes(T[k] as string)) T[k] = DEFAULTS[k];
 for (const [k, v] of Object.entries(PRINTS[T.print])) if (!qs.has(k)) T[k] = v;
 for (const [k, v] of Object.entries(CARD_PRESETS[T.cards])) if (!qs.has(k)) T[k] = v;
 const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
@@ -270,7 +281,7 @@ const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the 
 // ...). paper: light paper, one muted ink that darkens like dye. spectrum: a dark surface where each card's veins glow
 // in the card's own hue and add like light where they meet.
 const PAGE_NAMES = ['main', 'research'];
-const STYLE_PARAMS = [
+const STYLE_PARAMS: [string, number | string, number, number, number, string][] = [
   ['mode', 'paper', 0, 0, 0, 'style'],
   ['bg', 'f3f1ea', 0, 0, 0, 'background'],
   ['ink', 'a5a970', 0, 0, 0, 'ink'],
@@ -291,31 +302,34 @@ const STYLE_PARAMS = [
 ];
 const J_KEYS = ['stain', 'bleed', 'bloom'];
 const J_DEFAULTS = { stain: 0.1, bleed: 7, bloom: 1.5 };
-const STYLE_DEFAULTS = {
+// A page's style: its mode, background and ink are strings, the rest numbers.
+type Style = { mode: string; bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number; glow: number;
+  halo: number; tint: number; hueMix: number; stain: number; bleed: number; bloom: number } & Record<string, number | string>;
+const STYLE_DEFAULTS: Record<string, Style> = {
   // main: Clark's K8 look (light olive veins, no glow or halo, no project color until a card is opened)
   main: { mode: 'paper', bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.8, grain: 0.16, glow: 0, halo: 0, tint: 0, hueMix: 0.3, ...J_DEFAULTS },
   // research: the same K8 paper, with each paper always emitting a soft wash of its own ink; spectrum and j are one mode switch away
   research: { mode: 'paper', bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0.8, hueMix: 0.8, ...J_DEFAULTS },
 };
-const STYLE = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => {
+const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => {
   const v = qs.get(`${pg}.${k}`);
   return [k, v == null ? d : typeof d === 'string' ? v : parseFloat(v)];
-}))]));
+})) as Style]));
 for (const pg of PAGE_NAMES) if (!CHOICES.mode.includes(STYLE[pg].mode)) STYLE[pg].mode = STYLE_DEFAULTS[pg].mode;
 // A look sets its agents and both pages' ink (research keeps its project color); values given in the URL win.
-function applyLook(name, fromUrl = false) {
+function applyLook(name: string, fromUrl = false) {
   for (const [k, v] of Object.entries(LOOKS[name].T)) if (!fromUrl || !qs.has(k)) T[k] = v;
   for (const pg of PAGE_NAMES) for (const [k, v] of Object.entries(LOOKS[name].main)) {
     if ((pg === 'main' || k !== 'tint') && (!fromUrl || !qs.has(`${pg}.${k}`))) STYLE[pg][k] = v;
   }
 }
 applyLook(T.look, true);
-const hexRGB = (h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
+const hexRGB = (h: string) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
 
-const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
-const smooth = (u) => { u = clamp(u); return u * u * (3 - 2 * u); };
-const lerp = (a, b, t) => a + (b - a) * t;
-const lin = (c) => Math.pow(c / 255, 2.2);
+const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const smooth = (u: number) => { u = clamp(u); return u * u * (3 - 2 * u); };
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const lin = (c: number) => Math.pow(c / 255, 2.2);
 
 // ---------- WGSL ----------
 
@@ -410,7 +424,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   textureStore(edst, p, vec4f(min(v, 1.0), 0.0, 0.0, 1.0));
 }`;
 
-const SLOW = Math.max(0, Math.round(+qs.get('slow') || 0)); // test hook: artificial GPU work per agent
+const SLOW = Math.max(0, Math.round(Number(qs.get('slow')) || 0)); // test hook: artificial GPU work per agent
 const AGENT_WGSL = COMMON + /* wgsl */ `
 @group(0) @binding(1) var<storage, read_write> agents: array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dep: array<atomic<u32>>;
@@ -652,7 +666,7 @@ fn grain(pc: vec2f) -> vec2f {
 const GRAIN_WGSL = COMMON + PAPER_FNS + /* wgsl */ `
 @fragment fn fs(@builtin(position) fp: vec4f) -> @location(0) vec4f { return vec4f(grain(fp.xy * g.n.w / g.a.w), 0.0, 1.0); }`;
 
-const renderWGSL = (video) => COMMON + /* wgsl */ `
+const renderWGSL = (video: boolean) => COMMON + /* wgsl */ `
 @group(0) @binding(1) var trail: texture_2d<f32>;
 @group(0) @binding(2) var mask: texture_2d<f32>;
 @group(0) @binding(3) var atlas: texture_2d<f32>;
@@ -1004,32 +1018,103 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
 // ---------- page ----------
 
 const body = root;
-const canvas = root.querySelector('#field');
-const nameEl = root.querySelector('.name');
-const taglineEl = root.querySelector('.tagline');
-const linksEl = root.querySelector('.links');
-const regionLabel = root.querySelector('.region-label');
-const pageEl = root.querySelector('#page');
-const doorEl = root.querySelector('.door');
+// desk.html holds every one of these
+const canvas = root.querySelector<HTMLCanvasElement>('#field')!;
+const nameEl = root.querySelector<HTMLElement>('.name')!;
+const taglineEl = root.querySelector<HTMLElement>('.tagline')!;
+const linksEl = root.querySelector<HTMLElement>('.links')!;
+const regionLabel = root.querySelector<HTMLElement>('.region-label')!;
+const pageEl = root.querySelector<HTMLElement>('#page')!;
+const doorEl = root.querySelector<HTMLElement>('.door')!;
 const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
 // Each page's deck; cards without a data-slot (more than the hand-placed slots) start in it.
 {
-  const list = pageEl.querySelector('.sources');
+  const list = pageEl.querySelector('.sources')!;
   for (const region of ['main', 'research']) { // every page has a deck for its cards, and a card box (its body and its lid) for when it is empty
     list.insertAdjacentHTML('beforeend', `<li class="src deck more" data-key="deck-${region}" data-region="${region}" data-slot="0,0,170,0" data-order="99"><div class="hit" role="button" tabindex="0" aria-label="Card box"></div></li>`);
     list.insertAdjacentHTML('beforeend', `<li class="src deck lid" data-key="lid-${region}" data-region="${region}" data-slot="0,0,40,0" data-order="98" aria-hidden="true"><div class="hit"></div></li>`);
   }
 }
-const sources = [...root.querySelectorAll('.src')].map((el, id) => {
+// ---------- types ----------
+
+type Ease = (u: number) => number;
+type V3 = number[]; // [x, y, z]
+// A rectangle (CSS or design px).
+interface Rect { x: number; y: number; w: number; h: number }
+// A card's size and what it shows, for one width (cardBox, fitCard; design px).
+interface CardBox { w: number; h: number; media: Rect | null; lines?: string[]; sub?: string; titled?: boolean; baseline?: number }
+// The cards dealt together off one box: this card is k of n, fanning from at (s).
+interface Stack { k: number; n: number; at: number }
+// A card being dealt out of its box to (x, y, r) (deal).
+interface OutFlight { out: true; in?: undefined; at: number; x: number; y: number; r: number; deck: Card; stack: Stack; i: number; ur: number; pw: number; up?: boolean; clear?: boolean }
+// A card going into its box (collect).
+interface InFlight { in: true; out?: undefined; deck: Card; at: number; dur: number; x0: number; y0: number; r0: number; face0: number; lift0: number; open: boolean; say: string;
+  up?: boolean; inside?: boolean }
+type Flight = OutFlight | InFlight;
+// A card pushed aside from (fx, fy) to (tx, ty) (shove).
+interface Shove { fx: number; fy: number; tx: number; ty: number; dist: number; t: number; dur: number }
+// A tween of one value (the card box's tuck).
+interface Tween { at: number; from: number; to: number; t: number; dur: number; ease: Ease }
+// The card box sliding in or out ('out': in place; 'off': off screen), after `wait` s.
+interface Slide extends Tween { want: string; wait: number; arrive?: number }
+// A page turn's curve, for the thrown box's paper (turnAt).
+interface Seg { t0: number; d0: number; d1: number; dur: number; a: number; ease: Ease; mode?: string }
+// The thrown box this frame (poseThrow).
+interface ThrowPose { X: V3; Y: V3; w: number; C: V3; M: number[]; low: number; foot: number[] | null; fade: number }
+// A card box thrown off by the page turn (launch): its body in the physics world, and the turn under it.
+interface Launch {
+  d: Card; body: PBody; x: number; y: number; wt: number; t: number;
+  seg: Seg | null; keys: number[]; kj: number; mode: string; end: string | null;
+  home: { t: number; q: number[] } | null; out: { t: number } | null; sv: Float64Array; P: ThrowPose; hull: number[][] | null;
+}
+// The card box's pencil tally (tallySetup).
+interface Tally { t: number; free: number; gen: number; marks: Mark[]; shown: boolean; surf?: TallySurface; dirty?: boolean }
+// A clip: its address and where it starts (s).
+interface Clip { src: string; start: number }
+// A video element with its queued play/pause/seek chain and the start of the clip it holds.
+type Video = HTMLVideoElement & { op?: Promise<unknown>; clipStart: number };
+// A card on the desk, or a page's card box (more) or its lid (lid). Fields after the DOM's are set by layout,
+// placeDecks, buildAtlas and the like before anything reads them.
+interface Card {
+  id: number; el: HTMLElement; hit: HTMLElement; img: HTMLImageElement | null; key: string; kind: string;
+  backEl: HTMLElement | null; backTitle: string | null | undefined; backParas: string[] | null;
+  region: number; featured: boolean; hueHex: string; inkHex: string | undefined; emit: number; jinkHex: string | undefined; still: string | undefined;
+  backLinks: HTMLAnchorElement[] | null; flip: number; flipTo: number; face: number; deck: Card | null;
+  frame: number[]; baseFrame: number[]; focus: number[] | null;
+  slot: { x: number; y: number; w: number; r: number } | null; baseW: number; order: number; more: boolean; lid: boolean;
+  overflow: boolean; aspect: number; shape: number;
+  x: number; y: number; w: number; h: number; rot: number; home: number; vx: number; vy: number; lift: number; liftV: number;
+  tilt: number[]; tiltV: number[]; sway: number; swayV: number;
+  hover: number; hoverOn: boolean; burst: number; z: number; dragging: boolean; released: boolean;
+  landK: boolean; landS: number; rel: number; flying: boolean; flyLift: number; shoveOnLand?: boolean;
+  videoSrc?: string; ts?: number;
+  // layout
+  k: number; media: Rect | null; lines?: string[]; sub?: string; titled?: boolean; baseline?: number; px?: number; py?: number;
+  // the desk
+  fly?: Flight | null; shove?: Shove | null; kb?: { tx: number; ty: number } | null; keyHeld?: boolean; keyTimer?: number;
+  ch?: Chain | null; imp?: { x: number; y: number; t: number } | null; over?: boolean; snap?: number; squash: number; squashV: number;
+  said?: number; suppressClick?: boolean; bounced?: boolean; edgePen?: boolean; dropS?: number; rotFrom: number; rotTo: number; hoverSince: number;
+  focused?: boolean; carrier?: Card | null; gone?: boolean; flyH?: number[]; plane?: { dc: V3; n: V3 }; flipA?: number;
+  // media
+  playlist: Clip[] | null; player?: Player;
+  // the atlas (buildAtlas)
+  atlasAt: { x: number; y: number }; uv: number[]; buv: number[]; puv: number[]; mediaUV: number[]; raster: OffscreenCanvas;
+  // a card box
+  spot: number; slide: Slide; pile: Card[]; lidT: number; dirty: boolean; bx: Tween; room: { pw: number; ph: number };
+  launch?: Launch | null; tally?: Tally; faceUV: { front: number[]; [face: string]: number[] }; outFor: number; gatherAsk: boolean; drawAsk: { all: boolean } | null;
+  welcome?: boolean; near?: boolean;
+}
+
+const sources = [...root.querySelectorAll<HTMLElement>('.src')].map((el, id) => {
   const d = el.dataset;
   const [sx, sy, sw, sr] = (d.slot || `0,0,${d.w || 260},0`).split(',').map(Number); // no slot: an overflow card
-  const backEl = el.querySelector('.back');
+  const backEl = el.querySelector<HTMLElement>('.back');
   const kind = ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo';
   return {
-    id, el, hit: el.querySelector('.hit'), img: el.querySelector('img'), key: d.key, kind,
+    id, el, hit: el.querySelector<HTMLElement>('.hit')!, img: el.querySelector('img'), key: d.key, kind,
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
-    backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent) : null,
+    backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent!) : null, // an element's text is never null
     region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'), hueHex: d.hue || '888888', // the card's own hue (spectrum style)
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
     jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
@@ -1038,18 +1123,21 @@ const sources = [...root.querySelectorAll('.src')].map((el, id) => {
     // focus: the framing option's zoom and crop on the picture's subject, for the poster and the clips alike (so the
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
-    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: +d.order, more: el.classList.contains('more'), lid: el.classList.contains('lid'),
+    slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: Number(d.order), more: el.classList.contains('more'), lid: el.classList.contains('lid'),
     overflow: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
     landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0,
-  };
+  } as Card; // the rest: see Card
 });
 
-let view = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, docH: innerHeight, dpr: 1 };
-let nameBox = null; // CSS px: { x, baseline, size }
+// The window: CSS px, whether it is a phone's column, the desk's scale (k) and the cards' (cs); phones: research's label
+// and the cards' column height.
+interface View { w: number; h: number; phone: boolean; k: number; docH: number; dpr: number; cs?: number; labelY?: number; cardsH?: number }
+let view: View = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, docH: innerHeight, dpr: 1 };
+let nameBox: { x: number; baseline: number; size: number } | null = null; // CSS px: { x, baseline, size }
 
 // Card geometry in CSS px. Media rect is where the image (or video) sits.
 // The card box, a little bigger than a postcard all round so a card inside it is hidden; its lid lies open beside it.
@@ -1060,18 +1148,18 @@ const BOX_T = 26;
 const STRIP = 22; // the sticky note's strip, design px (the stylesheet's .note gradient matches)
 // The sticky note turns over its top edge, about its horizontal axis, like a real one lifted to read its back; every other
 // card turns over its side.
-const hinged = (s) => s.kind === 'note';
-// Its strip stays stuck: the rest of it turns over it as paper (s.ch, note.js) and lies on it, back up.
-const noteMesh = (s) => hinged(s) && s.ch && !s.fly && !s.deck && !s.carrier;
-const paperL = (s) => s.h / (s.k || 1) - STRIP; // the sheet past the strip, design px
+const hinged = (s: Card) => s.kind === 'note';
+// Its strip stays stuck: the rest of it turns over it as paper (s.ch, note.ts) and lies on it, back up.
+const noteMesh = (s: Card) => hinged(s) && s.ch && !s.fly && !s.deck && !s.carrier;
+const paperL = (s: Card) => s.h / (s.k || 1) - STRIP; // the sheet past the strip, design px
 // The sheet's profile for the mesh (CSS px from the strip's edge, along the note and up, and its angle there): the
 // chain's joints, through a Catmull-Rom spline, at NS + 1 even steps along it.
 const NOTE_P = new Float32Array((NS + 1) * 4);
-function noteProfile(s) {
-  const { n, x } = s.ch, k = s.k || 1, q = (j, a) => (j < 0 ? 2 * x[a] - x[2 + a] : j > n ? 2 * x[2 * n + a] - x[2 * n - 2 + a] : x[2 * j + a]);
+function noteProfile(s: Card) {
+  const { n, x } = s.ch!, k = s.k || 1, q = (j: number, a: number) => (j < 0 ? 2 * x[a] - x[2 + a] : j > n ? 2 * x[2 * n + a] - x[2 * n - 2 + a] : x[2 * j + a]);
   for (let i = 0, th = 0; i <= NS; i++) {
     const t = (i * n) / NS, j = Math.min(Math.floor(t), n - 1), u = t - j;
-    const cr = (a) => { // the spline through joints j-1..j+2 at u, and its slope
+    const cr = (a: number) => { // the spline through joints j-1..j+2 at u, and its slope
       const p0 = q(j - 1, a), p1 = q(j, a), p2 = q(j + 1, a), p3 = q(j + 2, a), b = p2 - p0, c = 2 * p0 - 5 * p1 + 4 * p2 - p3, d = 3 * (p1 - p2) + p3 - p0;
       return [p1 + 0.5 * u * (b + u * (c + u * d)), b + u * (2 * c + 3 * u * d)];
     };
@@ -1081,16 +1169,16 @@ function noteProfile(s) {
   }
   return NOTE_P;
 }
-const boxSize = (s) => { const p = pageDeck(s.region).room; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
-function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)) {
+const boxSize = (s: Card): [number, number] => { const p = pageDeck(s.region)!.room; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
+function cardBox(s: Card, w: number, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)): CardBox {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
     return { w, h: h || 28 + lines.length * 26.5, media: null, lines }; // the one card size, or (phones) as tall as its words
   }
   if (s.kind === 'paper') {
-    const lines = wrapLines(s.hit.querySelector('b').textContent, w - 39, '600 16px Inter');
-    return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small').textContent };
+    const lines = wrapLines(s.hit.querySelector('b')!.textContent!, w - 39, '600 16px Inter'); // a paper card has its title and venue
+    return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small')!.textContent! };
   }
   const { side, top, bottom } = borders(s, w, Math.max(w, h || w / s.shape));
   if (s.kind === 'polaroid' && !h) h = top + (w - 2 * side) / s.aspect + bottom; // phones: its picture at its own aspect
@@ -1100,13 +1188,13 @@ function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math
 }
 // A photo card's caption lines at tw wide (design px): the title's, then the line under it; or the polaroid's one line.
 const CAP_LH = () => 18 * TS;
-function capLines(s, tw) {
-  if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand').textContent] };
-  const title = s.el.querySelector('.cap b').textContent, sub = s.el.querySelector('.cap span').textContent;
+function capLines(s: Card, tw: number): { lines: string[]; titled?: boolean } {
+  if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand')!.textContent!] }; // a photo card has its caption
+  const title = s.el.querySelector('.cap b')!.textContent!, sub = s.el.querySelector('.cap span')!.textContent!;
   return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
 }
 // The film's borders for a photo card w wide with longest side L (design px); the strip fits its page's longest caption.
-function borders(s, w, L) {
+function borders(s: Card, w: number, L: number) {
   const side = Math.round(T.frameSide * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
     .map((o) => capLines(o, (o === s || view.phone ? w : o.shape >= 1 ? L : L * o.shape) - 2 * side).lines.length);
   return { side, top: Math.round(T.frameTop * L), bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(...rows) * CAP_LH() + 20)) };
@@ -1114,8 +1202,8 @@ function borders(s, w, L) {
 // Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
 // the one card size.)
-const capped = (s) => s.kind === 'photo' || s.kind === 'polaroid';
-const cappedDims = (s, cap) => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
+const capped = (s: Card) => s.kind === 'photo' || s.kind === 'polaroid';
+const cappedDims = (s: Card, cap: number): [number, number] => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
 // Each page's pile, upright: as wide as its widest card's short side and as tall as its longest long side (design px).
 function pileSizes() {
   for (const d of sources) if (d.more) {
@@ -1126,26 +1214,26 @@ function pileSizes() {
 // The polaroid and the note keep their own shapes, one size for both faces: the front's own size when the back's copy
 // fits on it at the shared type scale; otherwise the polaroid becomes the smallest card (up to maxW wide) that fits it,
 // its image cropped (cover framing) to at most 25% wider or taller than its own aspect, and the note grows taller.
-function fitCard(s, w0, maxW = Math.round(w0 * 1.5)) {
+function fitCard(s: Card, w0: number, maxW = Math.round(w0 * 1.5)) {
   const box = cardBox(s, w0);
   if (!s.backEl || backLayout(s, box).need <= box.h) return box;
   if (!s.media) return { ...box, h: backLayout(s, box).need };
-  let best = null;
+  let best: CardBox | null = null;
   for (let w = w0; w <= maxW; w += 2) {
-    const b = cardBox(s, w), chrome = b.h - b.media.h, mw = b.media.w;
+    const b = cardBox(s, w), chrome = b.h - b.media!.h, mw = b.media!.w; // a card with media has it at every width
     const mh = Math.max(backLayout(s, b).need - chrome, mw / (s.aspect * 1.25));
     if (mh > (mw * 1.25) / s.aspect) continue; // the image would be cropped too narrow
-    if (!best || w * (chrome + mh) < best.w * best.h) best = { ...b, h: chrome + mh, media: { ...b.media, h: mh } };
+    if (!best || w * (chrome + mh) < best.w * best.h) best = { ...b, h: chrome + mh, media: { ...b.media!, h: mh } };
   }
   if (best) return best;
   const b = cardBox(s, maxW), extra = backLayout(s, b).need - b.h; // last resort: as wide as allowed, then taller
-  return extra > 0 ? { ...b, h: b.h + extra, media: { ...b.media, h: b.media.h + extra } } : b;
+  return extra > 0 ? { ...b, h: b.h + extra, media: { ...b.media!, h: b.media!.h + extra } } : b;
 }
-let measureCtx = null;
-const measure = () => (measureCtx ||= new OffscreenCanvas(8, 8).getContext('2d'));
-function wrapLines(text, maxW, font) {
+let measureCtx: OffscreenCanvasRenderingContext2D | null = null;
+const measure = () => (measureCtx ||= new OffscreenCanvas(8, 8).getContext('2d')!);
+function wrapLines(text: string, maxW: number, font: string) {
   const m = measure(); m.font = font;
-  const out = []; let line = '';
+  const out: string[] = []; let line = '';
   for (const word of text.split(' ')) {
     if (word === '\n') { out.push(line.trim()); line = ''; continue; }
     const test = line ? line + ' ' + word : word;
@@ -1177,17 +1265,17 @@ function layout() {
     const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c))])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
     Object.assign(T, opts); TS = Math.max(1, 12 / (TOK.fs * c)); view.cs = c;
     // The longest side (design px) scales with the desk like the layout, but never below the smallest at which every back fits.
-    const fitsAt = (cp) => sources.every((s) => !capped(s) || !s.backEl || ((b) => backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
+    const fitsAt = (cp: number) => sources.every((s) => !capped(s) || !s.backEl || ((b: CardBox) => backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
     let lo = 120, hi = 900; while (hi - lo > 0.5) { const mid = (lo + hi) / 2; if (fitsAt(mid)) hi = mid; else lo = mid; }
     const cap = Math.max((T.cardMax * k) / c, Math.ceil(hi));
-    for (const s of sources) if (s.kind !== 'deck') { const box = capped(s) ? cardBox(s, ...cappedDims(s, cap)) : fixed.get(s); Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
+    for (const s of sources) if (s.kind !== 'deck') { const box = capped(s) ? cardBox(s, ...cappedDims(s, cap)) : fixed.get(s)!; Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
     pileSizes();
     for (const s of sources) {
       if (s.kind === 'deck') { const box = cardBox(s, ...boxSize(s)); Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
       if (s.slot) { [s.x, s.y, s.rot] = homeOf(s); s.home = s.rot; } // cards without a slot wait on their deck
     }
     placeDecks();
-    for (const s of sources) if (!s.slot && s.kind !== 'deck' && dealing) { const d = pageDeck(s.region); Object.assign(s, { x: d.x, y: d.y, rot: d.rot }); } // a card without a slot waits on its deck
+    for (const s of sources) if (!s.slot && s.kind !== 'deck' && dealing) { const d = pageDeck(s.region)!; Object.assign(s, { x: d.x, y: d.y, rot: d.rot }); } // a card without a slot waits on its deck
     for (const r of [0, 1]) pileUp(r); // each deck holds its page's cards that are not on the desk
   } else {
     const pad = 22;
@@ -1222,12 +1310,12 @@ function layout() {
     Object.assign(linksEl.style, { left: nameBox.x + 6 + 'px', top: linksTop + 'px', maxWidth: view.w - 2 * nameBox.x + 'px' });
     const top = linksTop + linksEl.getBoundingClientRect().height + 36;
     for (const s of sources) { s.x = s.px ?? -1e4; s.y = (s.py ?? 0) + top; }
-    Object.assign(regionLabel.style, { left: nameBox.x + 6 + 'px', top: top + view.labelY + 'px' });
-    view.docH = Math.ceil(top + view.cardsH + 40);
-    root.querySelector('#page').style.height = view.docH + 'px';
+    Object.assign(regionLabel.style, { left: nameBox.x + 6 + 'px', top: top + view.labelY! + 'px' }); // set above
+    view.docH = Math.ceil(top + view.cardsH! + 40);
+    root.querySelector<HTMLElement>('#page')!.style.height = view.docH + 'px';
   } else {
     Object.assign(linksEl.style, { left: '', top: '', maxWidth: '' });
-    root.querySelector('#page').style.height = '';
+    root.querySelector<HTMLElement>('#page')!.style.height = '';
   }
   // Without the deal (no WebGPU, reduced motion) a card that would wait on its deck lies in the best free spot instead,
   // found once everything else (cards, name, tagline, links, corner) is in its final place on this layout.
@@ -1242,10 +1330,10 @@ function layout() {
   for (const s of sources) {
     if (s.media) {
       const [z, px, py] = s.frame, v = 1 / z;
-      Object.assign(s.img.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`,
+      Object.assign(s.img!.style, { height: s.media.h + 'px', objectPosition: `${px * 100}% ${py * 100}%`, // a card with media has its image
         objectViewBox: z > 1 ? `inset(${py * (1 - v) * 100}% ${(1 - px) * (1 - v) * 100}% ${(1 - py) * (1 - v) * 100}% ${px * (1 - v) * 100}%)` : '' });
       const m = s.media; // the DOM still and the no-WebGPU fallback take the same film frame
-      for (const [k, v] of [['--fx', m.x], ['--ft', m.y], ['--fb', s.h / (s.k || 1) - m.y - m.h]]) s.el.style.setProperty(k, v + 'px');
+      for (const [k, v] of [['--fx', m.x], ['--ft', m.y], ['--fb', s.h / (s.k || 1) - m.y - m.h]] as const) s.el.style.setProperty(k, v + 'px');
     }
     if (!gpu && s.flipTo) paintDomBack(s); // the still fallback's open backs follow the new size
     placeDom(s);
@@ -1258,26 +1346,26 @@ function placeDoor() {
   const k = view.k, c = T.cornerSize * k * Math.SQRT2, S = Math.ceil((2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R + 14) * k * Math.SQRT2);
   // The focus ring traces the folded corner at rest, 3 px out: the flap's edges out to its tip, and the page's edges.
   const m = 3, tip = S - ((2 * T.cornerSize - Math.PI * DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
-  const svg = doorEl.querySelector('svg'), set = (sel, d) => svg.querySelector(sel).setAttribute('d', d);
-  for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(a, v);
+  const svg = doorEl.querySelector('svg')!, set = (sel: string, d: string) => svg.querySelector(sel)!.setAttribute('d', d);
+  for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(String(a), String(v));
   const ch = (T.cornerSize + T.cornerLift) * k * Math.SQRT2, tipH = S - ((2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * k) / Math.SQRT2;
   set('.hit', `M${S} ${S - ch}L${tipH} ${tipH}L${S - ch} ${S}H${S}Z`); // the pointer's area: the fold as drawn when hovered (the sliver and the flap), not the larger triangle
   set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
   // Without WebGPU the fold itself, flat, from the corner's state: it lifts and leans toward the pointer like the drawn one
   // (the sliver under it, the flap reflected over the fold, the label printed on the flap).
   const d = door.d || T.cornerSize * k, a = door.a, [dx, dy] = dirOf(a), far = 2 * d - Math.PI * DOOR.R * k;
-  const B = [S - d / Math.cos(a), S], Rt = [S, S - d / Math.sin(a)], tipF = [S + far * dx, S + far * dy], P = (q) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`;
+  const B = [S - d / Math.cos(a), S], Rt = [S, S - d / Math.sin(a)], tipF = [S + far * dx, S + far * dy], P = (q: number[]) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`;
   set('.sliver', `M${P(Rt)}L${S} ${S}L${P(B)}Z`); set('.flap', `M${P(Rt)}L${P(tipF)}L${P(B)}Z`);
-  const t = svg.querySelector('text'), at = far - (T.cornerSize - Math.PI * DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
+  const t = svg.querySelector('text')!, at = far - (T.cornerSize - Math.PI * DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
   Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
-  for (const [n, v] of [['x', cx], ['y', cy], ['transform', `rotate(${(-45 - (2 * (a - Math.PI / 4) * 180) / Math.PI).toFixed(2)} ${cx} ${cy})`]]) t.setAttribute(n, v);
+  for (const [n, v] of [['x', cx], ['y', cy], ['transform', `rotate(${(-45 - (2 * (a - Math.PI / 4) * 180) / Math.PI).toFixed(2)} ${cx} ${cy})`]]) t.setAttribute(String(n), String(v));
 }
 // No frame loop without WebGPU: the flat corner runs its own while it moves.
 let flatDoor = 0;
 function animateFlatDoor() {
   if (gpu || flatDoor || !body.classList.contains('nogpu')) return;
   let last = performance.now();
-  const tick = (now) => {
+  const tick = (now: number) => {
     const d0 = door.d, a0 = door.a;
     stepDoor(Math.min(0.05, (now - last) / 1000)); last = now; placeDoor();
     flatDoor = Math.abs(door.d - d0) + Math.abs(door.a - a0) > 1e-3 ? requestAnimationFrame(tick) : 0;
@@ -1285,40 +1373,41 @@ function animateFlatDoor() {
   flatDoor = requestAnimationFrame(tick);
 }
 // Where a card shows: where it is, or, while it waits over its box (s.snap), easing into the box's open end, upright.
-function shown(s) {
+function shown(s: Card) {
   const e = smooth(s.snap || 0);
   if (!e) return [s.x, s.y, s.rot];
-  const d = pageDeck(s.region), [mx, my, mr] = mouthPose(d, d.pile.length, s);
+  const d = pageDeck(s.region)!, [mx, my, mr] = mouthPose(d, d.pile.length, s); // over its box
   return [lerp(s.x, mx, e), lerp(s.y, my, e), lerp(s.rot, mr, e)];
 }
 // The DOM box (hit area and focus ring) follows the drawn card: a card is one size wherever it is (lifted or not), so
 // only the box's nudge squash scales it; the 3D tilt is left out.
-function placeDom(s) {
+function placeDom(s: Card) {
   const sc = 1 - 0.014 * (s.squash || 0);
   const [x, y, rot] = shown(s), r = rot + (s.sway * 180) / Math.PI, k = s.k || 1, w = s.w / k, h = s.h / k; // design px, scaled to the card scale
   s.el.style.width = w + 'px'; s.el.style.height = h + 'px';
   s.el.style.transform = `translate(${(x - w / 2).toFixed(2)}px, ${(y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${(sc * k).toFixed(4)})`;
-  if (s.ts !== TS) { s.ts = TS; s.el.style.setProperty('--ts', TS); } // the DOM still's captions take the same type
-  s.el.style.zIndex = Math.round(s.z);
+  if (s.ts !== TS) { s.ts = TS; s.el.style.setProperty('--ts', String(TS)); } // the DOM still's captions take the same type
+  s.el.style.zIndex = String(Math.round(s.z));
   if (hinged(s) && s.backEl) placeFold(s);
 }
 // The note lying folded over its strip: its hit area and its back (the links; without WebGPU the drawn back) move up
 // onto the sheet, and the back's strip band (under the strip, never seen) is cut off. Design px.
-function placeFold(s) {
+function placeFold(s: Card) {
   const k = s.k || 1, C = s.flip === 1 && s.ch ? STRIP + s.ch.x[2 * s.ch.n] : 0;
-  s.backEl.style.transform = C ? `translateY(${C}px)` : '';
-  s.backEl.style.clipPath = C ? `inset(0 0 ${STRIP}px)` : '';
+  const backEl = s.backEl!; // placeDom calls this only for the note with its back
+  backEl.style.transform = C ? `translateY(${C}px)` : '';
+  backEl.style.clipPath = C ? `inset(0 0 ${STRIP}px)` : '';
   Object.assign(s.hit.style, { top: C ? C + 'px' : '', bottom: C ? s.h / k - STRIP + 'px' : '' });
 }
 
 // ---------- color ----------
 
-const absorbance = (ink) => ink.map((c, i) => -Math.log(Math.max(lin(c), 1e-4) / lin(PAPER[i])));
+const absorbance = (ink: number[]) => ink.map((c, i) => -Math.log(Math.max(lin(c), 1e-4) / lin(PAPER[i])));
 
 // ---------- interaction ----------
 
 const cursor = { x: -1e4, y: -1e4, amt: 0 };
-let topZ = sources.length, hovered = null;
+let topZ = sources.length, hovered: Card | null = null;
 // Focus: the background eases from sharp to soft while a card is hovered (like depth of field), and back after.
 let focus = 0, focusAt = 0;
 
@@ -1326,34 +1415,34 @@ let focus = 0, focusAt = 0;
 // moves it in one jump (the turning page covers the change).
 const cam = { x: 0 };
 const PATHS = ['/', '/publications']; // the desk, and research
-const regionOf = (path) => { const i = PATHS.indexOf(path.replace(/(.)\/+$/, '$1')); return i < 0 ? null : i; };
+const regionOf = (path: string) => { const i = PATHS.indexOf(path.replace(/(.)\/+$/, '$1')); return i < 0 ? null : i; };
 const regionFromUrl = () => regionOf(location.pathname) ?? 0;
 const WARM_STEPS = 150; // with reduced motion, a page you have not seen yet is formed before it is drawn
 let page = 0, dest = 0; // the page you see, and the page you are on your way to
 const NAMES = ['research', 'desk']; // written on each page's corner: where it leads
 // Tab stays on the page you see: the other page's cards are inert (focusing one would scroll the desk sideways), and so
 // are cards lying in a deck (face down, nothing to show; the deck itself is the way to them).
-const inertFor = (s, region) => !view.phone && (s.region !== region || !!s.deck);
+const inertFor = (s: Card, region: number) => !view.phone && (s.region !== region || !!s.deck);
 const syncInert = () => { for (const s of sources) { const v = inertFor(s, page); if (s.el.inert !== v) s.el.inert = v; } };
-const setInert = (region) => {
+const setInert = (region: number) => {
   for (const s of sources) s.el.inert = inertFor(s, region);
   doorEl.setAttribute('aria-label', region ? 'Back to the desk' : 'Go to research');
-  doorEl.querySelector('text').textContent = NAMES[region];
+  doorEl.querySelector('text')!.textContent = NAMES[region];
 };
 function placePage() { pageEl.style.transform = view.phone ? '' : `translate3d(${(-cam.x).toFixed(2)}px, 0, 0)`; }
 function drawStill() {
-  const enc = gpu.device.createCommandEncoder();
-  for (; sim.warm > 0; sim.warm--) { writeUniforms(gpu); encodeStep(enc); }
-  writeUniforms(gpu);
-  encodeRender(enc, gpu.ctx.getCurrentTexture().createView());
-  gpu.device.queue.submit([enc.finish()]);
+  const enc = gpu!.device.createCommandEncoder();
+  for (; sim!.warm > 0; sim!.warm--) { writeUniforms(gpu!); encodeStep(enc); }
+  writeUniforms(gpu!);
+  encodeRender(enc, gpu!.ctx.getCurrentTexture().createView());
+  gpu!.device.queue.submit([enc.finish()]);
 }
 // Clear a page's ink and hold its agents, each for the nearest card about to land (cards with rel < 0): one sim step.
-function holdPage(sm) {
-  writeUniforms(gpu, sm, true);
-  const enc = gpu.device.createCommandEncoder();
+function holdPage(sm: Sim) {
+  writeUniforms(gpu!, sm, true);
+  const enc = gpu!.device.createCommandEncoder();
   encodeStep(enc, 'ad', null, sm, sm.n);
-  gpu.device.queue.submit([enc.finish()]);
+  gpu!.device.queue.submit([enc.finish()]);
   sm.t = Math.max(sm.t, 4.5); sm.warm = 0; // nothing to fade in or catch up: the ink shows from its first deposit
 }
 
@@ -1365,16 +1454,18 @@ function holdPage(sm) {
 // deals its cards to their homes. Dragging the corner turns it by hand: let go past halfway and it completes, else it
 // falls back.
 const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are T.cornerSize and T.cornerLift)
-const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null, press: null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
-const turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
-const dirOf = (a) => [-Math.cos(a), -Math.sin(a)]; // from the bottom-right corner, up and left
-const rollR = (d) => view.k * clamp(DOOR.R + 0.06 * (d / view.k - T.cornerSize), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
-const span = (a) => view.w * Math.cos(a) + view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
-const farD = (a) => span(a) + (Math.PI / 2) * DOOR.rMax * view.k + 8; // the fold's distance once the page is all off screen
-const restD = (hover) => view.k * (T.cornerSize + (hover ? T.cornerLift : 0));
+const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null as { x: number; y: number } | null, press: null as { x: number; y: number; d: number; moved: boolean } | null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
+type Turn = { on: boolean; mode: string; t: number; dur: number; d0: number; d1: number; d: number; start: number; target: number; a: number; from: number; to: number;
+  links?: { left: number; top: number; width: number; height: number } };
+const turn: Turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
+const dirOf = (a: number) => [-Math.cos(a), -Math.sin(a)]; // from the bottom-right corner, up and left
+const rollR = (d: number) => view.k * clamp(DOOR.R + 0.06 * (d / view.k - T.cornerSize), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
+const span = (a: number) => view.w * Math.cos(a) + view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
+const farD = (a: number) => span(a) + (Math.PI / 2) * DOOR.rMax * view.k + 8; // the fold's distance once the page is all off screen
+const restD = (hover: boolean) => view.k * (T.cornerSize + (hover ? T.cornerLift : 0));
 // The fold leans a little toward the pointer, between 25 and 65 degrees.
-const leanTo = (x, y) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
-function stepDoor(dt) {
+const leanTo = (x: number, y: number) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(view.h - y, Math.max(view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
+function stepDoor(dt: number) {
   if (!turn.on) door.amt = Math.min(1, door.amt + dt / 0.5); // a page's corner folds back once it is shown
   doorEl.classList.toggle('folding', turn.on || door.amt < 1); // no focus ring around a fold that is not there (mid-turn, folding back)
   doorEl.classList.toggle('flat', (turn.on && turn.mode !== 'drag') || (!turn.on && door.amt < 0.5)); // no pointer, and clicks pass through, while no corner is drawn
@@ -1387,13 +1478,13 @@ const busy = () => turn.on || flights.on || !!door.press || sources.some((s) => 
 const turns = () => !!gpu && !reduced && !view.phone && sims.length > 1; // phones, reduced motion, and no WebGPU just show the other page
 // The page you see, frozen as it was last drawn, but without its corner: the turn draws that, from the same fold.
 function freeze() {
-  capturing = true; writeUniforms(gpu); capturing = false;
-  const enc = gpu.device.createCommandEncoder();
-  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
-  gpu.device.queue.submit([enc.finish()]);
-  shared.fz = 1 - shared.fz; redraw = true;
+  capturing = true; writeUniforms(gpu!); capturing = false;
+  const enc = gpu!.device.createCommandEncoder();
+  encodeRender(enc, shared!.frozenTex[1 - shared!.fz].createView());
+  gpu!.device.queue.submit([enc.finish()]);
+  shared!.fz = 1 - shared!.fz; redraw = true;
 }
-function show(region) {
+function show(region: number) {
   for (const s of sources) if (s.player && s.player.state !== 'rest') { s.player.state = 'rest'; s.player.mix = 0; s.player.reset(); } // no decoding off-page
   videoSrc = null; videoMix = 0;
   if (sim) sim.ready = false; // the page you leave stops; it is warmed again before it next shows
@@ -1405,7 +1496,7 @@ function show(region) {
 }
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
 // cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).
-function startTurn(to, mode) {
+function startTurn(to: number, mode: string) {
   launch(pageDeck(page)); // the box is not part of the page: it flies off as the page turns
   freeze();
   Object.assign(turn, { on: true, mode, from: page, to, t: 0, dur: T.turnS, d0: door.d, d: door.d, start: door.d, target: door.d, a: door.a, d1: farD(door.a) });
@@ -1416,12 +1507,12 @@ function startTurn(to, mode) {
   arriveDeck(to, mode === 'drag' ? 0 : ARRIVE_AT * T.turnS, MOTION.respond);
   if (mode !== 'drag') drawFrom(to, { delay: ARRIVE_AT * T.turnS + MOTION.respond, hold: false }); // a turn by hand deals once let go past halfway
 }
-function stepTurn(dt) {
+function stepTurn(dt: number) {
   if (!turn.on) return;
   if (turn.mode === 'drag') turn.d += (turn.target - turn.d) * (1 - Math.exp(-dt / 0.03));
   else {
     turn.t = Math.min(1, window.__j?.at != null ? window.__j.at / turn.dur : turn.t + dt / turn.dur); // test hook: hold the turn at one moment
-    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase](turn.t) : 1 - (1 - turn.t) ** 3);
+    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase as keyof typeof EASES](turn.t) : 1 - (1 - turn.t) ** 3);
   }
   if (turn.mode === 'drag' || turn.t < 1) return;
   turn.on = false;
@@ -1436,8 +1527,10 @@ function stepTurn(dt) {
 // The links (DOM, on the main page) turn with it: while a turn shows the main page they stay put on screen, clipped to
 // where its paper shows. As it leaves: past the fold, but not under the flap (the sheet's corner, turned over the fold);
 // as it comes back: behind the roll. A thrown box is above them: never where it is drawn.
-const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
-  const out = [];
+type Pt = number[];
+type Poly = Pt[];
+const clipPoly = (poly: Poly, f: (p: Pt) => number) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
+  const out: Poly = [];
   poly.forEach((p, i) => {
     const q = poly[(i + 1) % poly.length], a = f(p), b = f(q);
     if (a >= 0) out.push(p);
@@ -1446,16 +1539,16 @@ const clipPoly = (poly, f) => { // a convex polygon cut by a line, keeping f >= 
   return out;
 };
 // A convex polygon's edges as lines, f >= 0 inside (either winding); convex A less convex U, as disjoint convex pieces.
-const halves = (poly) => {
+const halves = (poly: Poly) => {
   const area = poly.reduce((s2, p, i) => { const q = poly[(i + 1) % poly.length]; return s2 + p[0] * q[1] - q[0] * p[1]; }, 0);
-  return poly.map((p, i) => { const q = poly[(i + 1) % poly.length]; return (r) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])); });
+  return poly.map((p, i) => { const q = poly[(i + 1) % poly.length]; return (r: Pt) => Math.sign(area) * ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])); });
 };
-const minus = (A, U) => halves(U).map((f, i, fs) => fs.slice(0, i).reduce(clipPoly, clipPoly(A, (r) => -f(r))));
+const minus = (A: Poly, U: Poly) => halves(U).map((f, i, fs) => fs.slice(0, i).reduce(clipPoly, clipPoly(A, (r) => -f(r))));
 // The convex hull of points (monotone chain).
-const turnsLeft = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) > 0;
-function hull(pts) {
+const turnsLeft = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) > 0;
+function hull(pts: Poly) {
   pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const h = [];
+  const h: Poly = [];
   for (const run of [pts, pts.slice().reverse()]) {
     const k = h.length;
     for (const p of run) { while (h.length >= k + 2 && !turnsLeft(h[h.length - 2], h[h.length - 1], p)) h.pop(); h.push(p); }
@@ -1464,15 +1557,15 @@ function hull(pts) {
   return h;
 }
 function clipLinks() {
-  const st = linksEl.style, box = sources.find((s) => s.launch?.hull)?.launch.hull;
+  const st = linksEl.style, box = sources.find((s) => s.launch?.hull)?.launch!.hull;
   if (view.phone || !turn.links || (turn.on ? turn.from && turn.to : !box || page)) { st.clipPath = st.translate = ''; return; }
   const out = turn.on && turn.from === 0, { left: L, top: Tp, width: w, height: h } = turn.links; // on screen at L, Tp
-  const rect = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
+  const rect = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly: Poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
   let shown = rect;
-  const holes = box ? [box.map(([x, y]) => [x - L, y - Tp])] : [];
+  const holes: Poly[] = box ? [box.map(([x, y]) => [x - L, y - Tp])] : [];
   if (turn.on) {
     const [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d;
-    const X = ([u, v]) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
+    const X = ([u, v]: Pt) => dx * (L + u - view.w) + dy * (Tp + v - view.h); // from the page's corner along the fold's direction
     if (!out) shown = clipPoly(rect, (p) => d - R - X(p));
     else {
       shown = clipPoly(rect, (p) => X(p) - d);
@@ -1493,7 +1586,7 @@ function clipLinks() {
   st.clipPath = shown.length > 2 ? `path(evenodd, '${polys.map((poly) => `M ${fmt(poly)} Z`).join(' ')}')` : 'polygon(0 0, 0 0, 0 0)';
 }
 // The corner by hand. A drag keeps the paper under the pointer: the flap moves twice as fast as the fold.
-const hitEl = doorEl.querySelector('.hit');
+const hitEl = doorEl.querySelector<SVGPathElement>('.hit')!;
 hitEl.addEventListener('pointerenter', () => { door.hover = true; prewarm(1 - page); animateFlatDoor(); });
 hitEl.addEventListener('pointermove', animateFlatDoor);
 hitEl.addEventListener('pointerleave', () => { door.hover = false; animateFlatDoor(); });
@@ -1533,12 +1626,12 @@ doorEl.addEventListener('click', (e) => {
   navigate(1 - dest);
 });
 // The address follows the page: research is /publications, and going back to the desk pops it (the back button turns back).
-function record(to) {
+function record(to: number) {
   if (to === 1) router.push(PATHS[1] + location.search, { fromMain: true });
   else if (router.state()?.fromMain) history.back();
   else router.push(PATHS[0] + location.search);
 }
-function navigate(to) {
+function navigate(to: number) {
   const popped = to === 0 && router.state()?.fromMain; // the popstate it fires turns the page
   record(to);
   if (!popped) go(to);
@@ -1546,8 +1639,8 @@ function navigate(to) {
 addEventListener('popstate', () => { const r = regionOf(location.pathname); if (r != null) go(r); }); // not when leaving the desk
 // Every page change: gather this page's cards, turn the page, deal the other's. One change at a time; the last asked for
 // waits its turn.
-let pendingNav = null;
-function go(region) {
+let pendingNav: number | null = null;
+function go(region: number) {
   dest = region;
   if (busy()) { pendingNav = region; return; }
   if (region === page) return;
@@ -1555,7 +1648,7 @@ function go(region) {
   prewarm(region, 3); // a turn is coming: hurry
   const out = sources.filter((s) => s.region === page && decked(s) && !s.deck && !s.dragging);
   if (!out.length) { startTurn(region, 'auto'); return; }
-  gather(out, pageDeck(page)); flights.then = () => startTurn(region, 'auto'); // the page turns once every card is in its box
+  gather(out, pageDeck(page)!); flights.then = () => startTurn(region, 'auto'); // the page turns once every card is in its box
 }
 function next() {
   if (busy() || pendingNav == null) return;
@@ -1568,45 +1661,45 @@ function next() {
 // from scattered agents, about 3 s of sim time), one step a frame, two while you hover the corner, three once a turn is
 // asked for; a page shown again catches up half a second. Otherwise only the page you see steps.
 const WARM = { fresh: 180, again: 30 };
-function prewarm(region, rate = 2) {
+function prewarm(region: number, rate = 2) {
   const sm = sims[region];
   if (turns() && !phys) idle(throwWorld); // the page turn's physics, ready before the turn
   if (!turns() || !sm || sm === sim || sm.ready) return;
-  if (sm.pre) { sm.rate = Math.max(sm.rate, rate); return; }
+  if (sm.pre) { sm.rate = Math.max(sm.rate!, rate); return; }
   Object.assign(sm, { pre: true, rate, warm: Math.max(sm.warm, sm.t < 3 ? WARM.fresh : WARM.again) });
 }
 function stepWarm() {
   const sm = sims.find((x) => x !== sim && x.pre);
   if (!sm) return;
-  const n = Math.min(sm.warm, sm.rate);
+  const n = Math.min(sm.warm, sm.rate!);
   if (n > 0) {
-    atHome(sm.page, () => writeUniforms(gpu, sm));
-    const enc = gpu.device.createCommandEncoder();
+    atHome(sm.page, () => writeUniforms(gpu!, sm));
+    const enc = gpu!.device.createCommandEncoder();
     for (let k = 0; k < n; k++) encodeStep(enc, 'ead', null, sm);
-    gpu.device.queue.submit([enc.finish()]);
+    gpu!.device.queue.submit([enc.finish()]);
     sm.warm -= n;
   }
   if (sm.warm <= 0) Object.assign(sm, { pre: false, ready: true, warm: 0 });
 }
 // Without the turn the other page is just there, and the cards of the page you leave go home.
-function jump(region) {
+function jump(region: number) {
   if (view.phone) return;
   for (const s of sources) if (s.region === page && s.slot && !s.deck) { [s.x, s.y, s.rot] = homeOf(s); placeDom(s); }
   show(region);
   if (reduced && gpu && sim) drawStill(); // no frame loop with reduced motion: settle this page and draw it once
 }
 // Pointer position on the desk (CSS px), accounting for the camera on desktop and the scroll on phones.
-const deskX = (e) => (view.phone ? e.pageX : e.clientX + cam.x);
-const deskY = (e) => (view.phone ? e.pageY : e.clientY);
+const deskX = (e: MouseEvent) => (view.phone ? e.pageX : e.clientX + cam.x);
+const deskY = (e: MouseEvent) => (view.phone ? e.pageY : e.clientY);
 
 // The mouse pointer on screen (null when it is not over the page). Hover is derived from it every frame, so a missed
 // pointerenter/leave (or one that fires before the media is ready) can never leave a card stuck.
-let mouse = null;
+let mouse: { x: number; y: number } | null = null;
 addEventListener('pointermove', (e) => {
   cursor.x = deskX(e); cursor.y = deskY(e);
   if (e.pointerType === 'mouse') mouse = { x: e.clientX, y: e.clientY };
   door.at = { x: e.clientX, y: e.clientY };
-  if (!e.target.closest?.('.src')) cursor.amt = 1;
+  if (!(e.target as Partial<Element>).closest?.('.src')) cursor.amt = 1;
 }, { passive: true });
 document.documentElement.addEventListener('pointerleave', () => (mouse = null), { signal });
 function syncHover() {
@@ -1616,7 +1709,7 @@ function syncHover() {
   for (const s of sources) setHover(s, s === over);
 }
 
-function setHover(s, on) {
+function setHover(s: Card, on: boolean) {
   if (view.phone || s.hoverOn === on || (on && (s.flipTo || s.flying || s.kind === 'deck'))) return; // a deck does not lift: its pile or its box and lid stay together
   s.hoverOn = on;
   if (on && s.playlist && !s.player) makePlayer(s);
@@ -1629,11 +1722,11 @@ for (const s of sources) {
     e.preventDefault();
     if (s.suppressClick) { s.suppressClick = false; return; }
     if (s.flying) return;
-    s.more ? deckClick(s, e) : flip(s);
+    if (s.more) deckClick(s, e); else flip(s);
   });
   if (s.more) { hit.addEventListener('focus', () => (s.focused = hit.matches(':focus-visible'))); hit.addEventListener('blur', () => (s.focused = false)); } // a tucked box comes out for the keyboard
   hit.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); s.more ? deckClick(s, e) : s.over ? putBack(s, pageDeck(s.region)) : flip(s); } // over its box, it goes in
+    if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); if (s.more) deckClick(s, e); else if (s.over) putBack(s, pageDeck(s.region)!); else flip(s); } // over its box, it goes in
     else if (ARROWS[e.key] && T.keyMove && gpu && !view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
   });
   hit.addEventListener('pointerdown', (e) => {
@@ -1641,7 +1734,7 @@ for (const s of sources) {
     const press = { x: deskX(e), y: deskY(e), ox: s.x - deskX(e), oy: s.y - deskY(e), moved: false };
     hit.setPointerCapture(e.pointerId);
     let lt = performance.now();
-    const move = (m) => {
+    const move = (m: PointerEvent) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
       if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.bounced = s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
@@ -1662,7 +1755,7 @@ for (const s of sources) {
         deck.welcome = s.over;
       }
     };
-    const up = (ev) => {
+    const up = () => {
       hit.removeEventListener('pointermove', move);
       const deck = press.moved && dealing && pageDeck(s.region), over = s.over;
       for (const o of sources) if (o.more) o.welcome = o.near = false;
@@ -1690,7 +1783,7 @@ for (const s of sources) {
 // Click turns a card over to its details (and back): it lifts, turns, and lays back down, a little differently turned
 // each time (its slot's angle plus a fresh jitter, so nothing drifts), and lands. While it is off the desk it leaves the
 // slime alone (no outline food).
-function flip(s) {
+function flip(s: Card) {
   if (!s.backEl) return;
   s.flipTo = s.flipTo ? 0 : 1;
   s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
@@ -1710,9 +1803,9 @@ function flip(s) {
 }
 
 // Hover's clock: the card's own response and the background's focus ease in together, and let go a little faster.
-const hoverTau = (rising) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION.exit);
+const hoverTau = (rising: boolean) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION.exit);
 // Springs: lift rises while dragging, tilt leans toward velocity (max ~8 deg), released cards glide and settle.
-function stepCards(dt) {
+function stepCards(dt: number) {
   const maxTilt = (T.tilt * Math.PI) / 180;
   for (const s of sources) {
     if (s.shove) stepShove(s, dt);
@@ -1757,7 +1850,7 @@ function stepCards(dt) {
     s.burst *= Math.exp(-dt * 7);
     if (s.imp && (s.imp.t += dt) >= IMPRINT_S) s.imp = null; // the veins have reclaimed it
     if (s.released && !s.kb && !s.over && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
-      const k = s.bounced ? Math.min(s.dropS, 0.45) : s.dropS; s.released = false; s.bounced = false;
+      const k = s.bounced ? Math.min(s.dropS!, 0.45) : s.dropS!; s.released = false; s.bounced = false;
       if (!offCorner(s)) { land(s, k); shove(s); } } // touched down, shoving the cards under it (or sliding off the corner first)
   }
 }
@@ -1766,11 +1859,11 @@ function stepCards(dt) {
 // Edges push back: a released card that runs past the screen's margin meets a stiff, well-damped spring (zeta 0.7) that
 // turns it around; on the way back it is no faster than an ease-out onto the margin (83 ms), so it is not flung back
 // across the desk. No hard stop anywhere: a card dragged off the edge glides back in the same way.
-function edgeSpring(s, x0, dt) {
+function edgeSpring(s: Card, x0: number, dt: number) {
   const r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), m = 12 * view.k, k = 1600, c = 56, back = 12;
   const lo = x0 + ex + m, hi = x0 + view.w - ex - m, top = ey + m, bot = view.h - ey - m;
   const px = s.x < lo ? lo - s.x : s.x > hi ? hi - s.x : 0, py = s.y < top ? top - s.y : s.y > bot ? bot - s.y : 0;
-  const push = (v, p) => { v += (k * p - c * v) * dt; return Math.sign(v) === Math.sign(p) ? Math.sign(p) * Math.min(Math.abs(v), Math.abs(p) * back) : v; };
+  const push = (v: number, p: number) => { v += (k * p - c * v) * dt; return Math.sign(v) === Math.sign(p) ? Math.sign(p) * Math.min(Math.abs(v), Math.abs(p) * back) : v; };
   if (px) s.vx = push(s.vx, px);
   if (py) s.vy = push(s.vy, py);
   if (px || py) s.bounced = true;
@@ -1780,8 +1873,8 @@ function edgeSpring(s, x0, dt) {
 
 // Keyboard moving: arrow keys nudge the focused card (Shift for bigger steps). It lifts a little and follows the keys
 // closely; once they stop it comes down with the same settle and shove as a drop. With reduced motion it just moves.
-const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-function nudge(s, [dx, dy], big) {
+const ARROWS: Record<string, number[]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+function nudge(s: Card, [dx, dy]: number[], big: boolean) {
   const step = (big ? 40 : 8) * view.k, x0 = s.region * view.w, r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), m = 12 * view.k;
   const k = s.kb || { tx: s.shove ? s.shove.tx : s.x, ty: s.shove ? s.shove.ty : s.y };
   k.tx = clamp(k.tx + dx * step, Math.min(x0 + ex + m, s.x), Math.max(x0 + view.w - ex - m, s.x)); // stays on screen
@@ -1794,15 +1887,15 @@ function nudge(s, [dx, dy], big) {
   s.keyTimer = setTimeout(() => { s.keyHeld = false; if (reduced) { s.kb = null; shove(s); drawStill(); } }, 300);
   if (reduced) { Object.assign(s, { x: k.tx, y: k.ty }); placeDom(s); drawStill(); } else s.released = true;
 }
-function stepKey(s, dt) {
-  const k = s.kb, e = 1 - Math.exp(-dt / 0.06);
+function stepKey(s: Card, dt: number) {
+  const k = s.kb!, e = 1 - Math.exp(-dt / 0.06);
   s.x += (k.tx - s.x) * e; s.y += (k.ty - s.y) * e;
   if (!s.keyHeld && Math.hypot(k.tx - s.x, k.ty - s.y) < 0.5) Object.assign(s, { x: k.tx, y: k.ty, kb: null });
 }
 
-// The note turns as paper (note.js): the finger lets go past upright and the sim does the rest. Its free edge slapping
+// The note turns as paper (note.ts): the finger lets go past upright and the sim does the rest. Its free edge slapping
 // down is its landing; it rests once it lies still, on whichever side it fell.
-function stepPaper(s, dt) {
+function stepPaper(s: Card, dt: number) {
   const c = s.ch;
   if (!c || c.rest) return;
   const v = stepChain(c, dt, { g: T.paperG, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
@@ -1821,7 +1914,7 @@ function stepPaper(s, dt) {
 // The one thing that happens whenever a card comes down onto the desk: the next sim step sends the agents under and just
 // around it out through its edge with a burst of speed (scaled by strength), the ink there gets a pulse of excitation,
 // and agents held for it (a page whose cards fly in) leave from its edge.
-function land(s, strength) {
+function land(s: Card, strength: number) {
   const k = clamp(strength, 0.1, 1.5);
   Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k) });
   if (s.rel < 0) s.rel = 0;
@@ -1833,14 +1926,16 @@ function land(s, strength) {
 // A dropped card shoves the cards it comes down on out of its way. Each is pushed straight away from its pusher's center
 // just far enough to clear it (further after a throw), and a pushed card can push the next. Targets are solved once, at
 // touch-down, kept on screen and clear of the name, tagline, and links; then each card slides there and lands softly.
-const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1];
-function obb(s, x = s.x, y = s.y) {
+const dot2 = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1];
+interface Obb { x: number; y: number; hw: number; hh: number; u: number[]; v: number[] } // a card's oriented box
+interface Edges { l: number; t: number; r: number; b: number }
+function obb(s: Card, x = s.x, y = s.y): Obb {
   const a = (s.rot * Math.PI) / 180, c = Math.cos(a), n = Math.sin(a);
   return { x, y, hw: s.w / 2, hh: s.h / 2, u: [c, n], v: [-n, c] };
 }
-const reach = (r, n) => r.hw * Math.abs(dot2(r.u, n)) + r.hh * Math.abs(dot2(r.v, n)); // half extent along axis n
+const reach = (r: Obb, n: number[]) => r.hw * Math.abs(dot2(r.u, n)) + r.hh * Math.abs(dot2(r.v, n)); // half extent along axis n
 // How far rectangle b must move along unit d to clear rectangle a by pad (separating axes); 0 if they do not overlap.
-function clearance(a, b, d, pad) {
+function clearance(a: Obb, b: Obb, d: number[], pad: number) {
   let t = Infinity;
   for (const n of [a.u, a.v, b.u, b.v]) {
     const ca = a.x * n[0] + a.y * n[1], ra = reach(a, n) + pad, cb = b.x * n[0] + b.y * n[1], rb = reach(b, n);
@@ -1852,7 +1947,7 @@ function clearance(a, b, d, pad) {
   return t;
 }
 // Boxes no shoved card may end on (desk px): the name, the tagline, the links, the corner and the card box.
-function keepOut(x0) {
+function keepOut(x0: number) {
   const p = 10 * view.k, out = [nameEl, taglineEl].map((el) => ({ l: el.offsetLeft, t: el.offsetTop, r: el.offsetLeft + el.offsetWidth, b: el.offsetTop + el.offsetHeight }));
   const lb = linksEl.getBoundingClientRect();
   out.push({ l: x0 + lb.left, t: lb.top, r: x0 + lb.right, b: lb.bottom });
@@ -1862,23 +1957,23 @@ function keepOut(x0) {
   return out.map((b) => ({ l: b.l - p, t: b.t - p, r: b.r + p, b: b.b + p }));
 }
 // The page corner's square, out to its hovered fold's tip, padded by p.
-function cornerBox(x0, p = 10 * view.k) {
+function cornerBox(x0: number, p = 10 * view.k): Edges {
   const c = (2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * view.k / Math.SQRT2 + p;
   return { l: x0 + view.w - c, t: view.h - c, r: x0 + view.w, b: view.h };
 }
 // A card that comes to rest over the page corner or its box slides off it (the corner would fold over it and take its
 // pointer; the box would be hidden).
-function offCorner(s) {
+function offCorner(s: Card) {
   if (view.phone || s.kind === 'deck') return false;
-  const x0 = s.region * view.w, [tx, ty] = placeable(s, s.x, s.y, x0, [cornerBox(x0), deckRect(s.region)].filter(Boolean)), dist = Math.hypot(tx - s.x, ty - s.y);
+  const x0 = s.region * view.w, [tx, ty] = placeable(s, s.x, s.y, x0, [cornerBox(x0), deckRect(s.region)].filter(Boolean) as Edges[]), dist = Math.hypot(tx - s.x, ty - s.y);
   if (dist < 0.5) return false;
   s.shove = { fx: s.x, fy: s.y, tx, ty, dist, t: 0, dur: MOTION.settle };
   return true;
 }
 // A shoved card's spot, moved fully on screen (unless it already hung off) and then out of the text the shortest way.
-function placeable(s, x, y, x0, boxes) {
+function placeable(s: Card, x: number, y: number, x0: number, boxes: Edges[]) {
   const r = obb(s), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]), m = 12 * view.k;
-  const onScreen = (px, py) => px - ex >= x0 + m - 0.5 && px + ex <= x0 + view.w - m + 0.5 && py - ey >= m - 0.5 && py + ey <= view.h - m + 0.5;
+  const onScreen = (px: number, py: number) => px - ex >= x0 + m - 0.5 && px + ex <= x0 + view.w - m + 0.5 && py - ey >= m - 0.5 && py + ey <= view.h - m + 0.5;
   x = clamp(x, Math.min(x0 + ex + m, s.x), Math.max(x0 + view.w - ex - m, s.x));
   y = clamp(y, Math.min(ey + m, s.y), Math.max(view.h - ey - m, s.y));
   for (const b of boxes) {
@@ -1888,18 +1983,18 @@ function placeable(s, x, y, x0, boxes) {
   }
   return [x, y];
 }
-function shove(p) {
+function shove(p: Card) {
   if (!T.shove || view.phone) return;
   const x0 = p.region * view.w, pad = 6 * view.k, boxes = keepOut(x0);
-  const m = T.shove * (1 + 0.8 * clamp(p.dropS - 0.25)); // dropS - 0.25 is the release speed over landThrow
-  const at = (s) => (s.shove ? [s.shove.tx, s.shove.ty] : [s.x, s.y]);
+  const m = T.shove * (1 + 0.8 * clamp(p.dropS! - 0.25)); // dropS - 0.25 is the release speed over landThrow
+  const at = (s: Card) => (s.shove ? [s.shove.tx, s.shove.ty] : [s.x, s.y]);
   const others = sources.filter((s) => s !== p && s.region === p.region && !s.dragging && !s.flying && s.kind !== 'deck' && !s.deck);
   const pos = new Map([[p, [p.x + p.vx / 7, p.y + p.vy / 7]]]), depth = new Map([[p, 0]]); // p's resting spot
   let front = [p];
   for (let it = 0; it < 5 && front.length; it++) { // chains: whoever moved this pass pushes on the next
-    const next = new Set();
+    const next = new Set<Card>();
     for (const a of front) {
-      const [ax, ay] = pos.get(a), A = obb(a, ax, ay);
+      const [ax, ay] = pos.get(a)!, A = obb(a, ax, ay);
       for (const b of others) {
         if (b === a) continue;
         let [bx, by] = pos.get(b) || at(b);
@@ -1908,7 +2003,7 @@ function shove(p) {
         if (!t || !Number.isFinite(t)) continue;
         [bx, by] = placeable(b, bx + d[0] * t * m, by + d[1] * t * m, x0, boxes);
         pos.set(b, [bx, by]);
-        if (!depth.has(b)) depth.set(b, depth.get(a) + 1);
+        if (!depth.has(b)) depth.set(b, depth.get(a)! + 1);
         next.add(b);
       }
     }
@@ -1918,13 +2013,13 @@ function shove(p) {
     const dist = Math.hypot(tx - b.x, ty - b.y);
     if (b === p || dist < 0.5) continue;
     if (reduced) { Object.assign(b, { x: tx, y: ty }); placeDom(b); continue; } // no motion: it is just out of the way
-    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b) - 1), dur: MOTION.settle * (0.8 + 0.4 * clamp(dist / (250 * view.k))) };
+    b.shove = { fx: b.x, fy: b.y, tx, ty, dist, t: -0.07 * (depth.get(b)! - 1), dur: MOTION.settle * (0.8 + 0.4 * clamp(dist / (250 * view.k))) };
     b.vx = b.vy = 0;
   }
 }
 // A shoved card slides out with an ease-out (chained cards a beat later) and just stops: only the card you drop bursts.
-function stepShove(s, dt) {
-  const v = s.shove;
+function stepShove(s: Card, dt: number) {
+  const v = s.shove!;
   v.t += dt;
   const e = easeOutQuart(clamp(v.t / v.dur));
   s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
@@ -1934,7 +2029,7 @@ function stepShove(s, dt) {
 
 // ---------- tidy ----------
 // A card's home: its slot on this layout, at its slot's angle.
-const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H) * view.h, s.slot.r];
+const homeOf = (s: Card): [number, number, number] => [(s.region + s.slot!.x / REF_W) * view.w, (s.slot!.y / REF_H) * view.h, s.slot!.r]; // a card with a home has a slot
 
 
 // ---------- drawing ----------
@@ -1946,18 +2041,18 @@ const homeOf = (s) => [(s.region + s.slot.x / REF_W) * view.w, (s.slot.y / REF_H
 // lifts, turns face down and upright, reaches the box's open end, and slides in on top. The first visit, a deep link,
 // and every page turn deal this way.
 const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, rotA: 0.06, rotB: 0.6, fan: 0.26 }; // s, then fractions of the travel, s to fan open
-const upright = (s) => (s.w > s.h ? 90 : 0); // deg: a card in a box stands upright; a landscape one turns a quarter turn
+const upright = (s: Card) => (s.w > s.h ? 90 : 0); // deg: a card in a box stands upright; a landscape one turns a quarter turn
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's box fans: it slides in first
 // One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
 // follows once every card is down: the page turn after a gather.
-const flights = { on: false, t: 0, then: null };
+const flights = { on: false, t: 0, then: null as (() => void) | null };
 const now = () => (flights.on ? flights.t : (flights.t = 0));
-const easeOutQuart = (u) => 1 - (1 - u) ** 4;
-function cubicBezier(x1, y1, x2, y2) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
+const easeOutQuart = (u: number) => 1 - (1 - u) ** 4;
+function cubicBezier(x1: number, y1: number, x2: number, y2: number) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
   const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
-  const sx = (t) => ((ax * t + bx) * t + cx) * t, sy = (t) => ((ay * t + by) * t + cy) * t, dx = (t) => (3 * ax * t + 2 * bx) * t + cx;
-  return (x) => {
+  const sx = (t: number) => ((ax * t + bx) * t + cx) * t, sy = (t: number) => ((ay * t + by) * t + cy) * t, dx = (t: number) => (3 * ax * t + 2 * bx) * t + cx;
+  return (x: number) => {
     if (x <= 0) return 0;
     if (x >= 1) return 1;
     let t = x;
@@ -1971,14 +2066,14 @@ const drawEase = cubicBezier(0.25, 1, 0.5, 1);
 // out at `delay` (s).
 // hold: the page starts from bare paper and its slime grows out of the cards as they land (the first visit); a page turned
 // to keeps the network it was warmed with, and the cards land on it.
-function drawFrom(region, { delay = 0, hold = true } = {}) {
+function drawFrom(region: number, { delay = 0, hold = true }: { delay?: number; hold?: boolean } = {}) {
   endFlights(region);
   const deck = pageDeck(region);
   if (view.phone || !gpu || reduced || !deck) return;
   pileUp(region, true); // the page's own cards go in first (the first visit)
   const cards = deck.pile.filter((s) => s.featured).reverse(); // the box is a stack: the top card, the last put in, first
   if (!cards.length) return;
-  if (hold) { for (const s of cards) s.rel = -1; atHome(region, () => holdPage(sim)); } // each agent waits for the card that will land nearest it
+  if (hold) { for (const s of cards) s.rel = -1; atHome(region, () => holdPage(sim!)); } // each agent waits for the card that will land nearest it
   const t0 = now() + delay;
   cards.forEach((s, k) => deal(s, deck, t0 + DRAW.fan + k * T.drawStagger, { k, n: cards.length, at: t0 }, homeOf(s)));
   deck.z = ++topZ; // they slide out from under its front
@@ -1986,7 +2081,7 @@ function drawFrom(region, { delay = 0, hold = true } = {}) {
   stepFlights(0);
 }
 // Runs fn with a page's featured cards lying at home (its slime sees them there while they are in its box).
-function atHome(region, fn) {
+function atHome(region: number, fn: () => void) {
   const cards = sources.filter((s) => s.region === region && s.featured);
   const was = cards.map(({ x, y, rot, flying }) => ({ x, y, rot, flying }));
   for (const s of cards) { [s.x, s.y, s.rot] = homeOf(s); s.flying = false; }
@@ -1995,7 +2090,7 @@ function atHome(region, fn) {
 }
 // One card out of its box toward `to` (its home, or a free spot): it leaves the pile now (card k of the n dealt together,
 // the first on top; they fan from stack.at) and is dealt at `at`.
-function deal(s, deck, at, stack, [x, y, r]) {
+function deal(s: Card, deck: Card, at: number, stack: Stack, [x, y, r]: number[]) {
   const i = deck.pile.indexOf(s);
   deck.pile.splice(i, 1); deck.dirty = true;
   s.fly = { out: true, at, x, y, r, deck, stack, i, ur: upright(s), pw: Math.min(s.w, s.h) };
@@ -2005,33 +2100,33 @@ function deal(s, deck, at, stack, [x, y, r]) {
 }
 // Where a card in a box lies: the box's axis (its rotation), and positions along it from the box's open end.
 const BOX_STEP = 1.4; // px each card in a box sits further out of its open end than the one below, so the pile shows its thickness
-const along = (d, off, up = 0) => { const a = (d.rot * Math.PI) / 180, c = Math.cos(a), n = Math.sin(a); return [d.x - off * c + up * n, d.y - off * n - up * c]; };
+const along = (d: { x: number; y: number; rot: number }, off: number, up = 0) => { const a = (d.rot * Math.PI) / 180, c = Math.cos(a), n = Math.sin(a); return [d.x - off * c + up * n, d.y - off * n - up * c]; };
 // Card i in the box: squared with it, its edge out of the open end by a few px (a little more, and a little higher, for
 // each card above), under the box's front.
-function pilePose(d, i, s, ur = upright(s)) {
+function pilePose(d: Card, i: number, s: Card, ur = upright(s)) {
   const pw = Math.min(s.w, s.h), out = (2 + i * BOX_STEP) * view.k;
   return [...along(d, d.w / 2 - pw / 2 + out, i * 0.5 * view.k), d.rot + ur];
 }
 // The box's open end, for card i: square with the box and just touching it, so sliding in is all that is left.
-function mouthPose(d, i, s) {
+function mouthPose(d: Card, i: number, s: Card) {
   const [x, y, r] = pilePose(d, i, s), pw = Math.min(s.w, s.h), off = pw - (2 + i * BOX_STEP) * view.k;
   return [...along({ ...d, x, y }, off), r];
 }
-const pileZ = (d, i) => d.z - 1 + (i + 1) * 1e-3; // under the box's front, the top card highest
+const pileZ = (d: Card, i: number) => d.z - 1 + (i + 1) * 1e-3; // under the box's front, the top card highest
 // How far a card being dealt is through its fan (0 to 1), and how far out of the box's open end (it slides out first).
-const fanOf = (k, t = flights.t) => { const f = k.stack, a = 1 - (1 - clamp((t - f.at - f.k * 0.03) / DRAW.fan)) ** 3; return [clamp((a - 0.4) / 0.6), clamp(a / 0.6)]; };
+const fanOf = (k: OutFlight, t = flights.t) => { const f = k.stack, a = 1 - (1 - clamp((t - f.at - f.k * 0.03) / DRAW.fan)) ** 3; return [clamp((a - 0.4) / 0.6), clamp(a / 0.6)]; };
 // A dealt card waiting to go: out of the box's open end (clear of it), then fanned toward the page around its outer edge.
-function waitPose(s, k, t = flights.t) {
+function waitPose(s: Card, k: OutFlight, t = flights.t) {
   const d = k.deck, f = k.stack, [px, py, pr] = pilePose(d, k.i, s, k.ur), [a, o] = fanOf(k, t);
   const [cx, cy] = along({ ...d, x: px, y: py }, smooth(o) * (k.pw - (2 + k.i * BOX_STEP) * view.k + 6 * view.k)); // clear of the box
-  const { k: j, n } = f, deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = d.room.pw * view.cs, ph = d.room.ph * view.cs;
+  const { k: j, n } = f, deg = a * (j - (n - 1) / 2) * Math.min(9, 40 / n), th = (deg * Math.PI) / 180, pw = d.room.pw * view.cs!, ph = d.room.ph * view.cs!;
   const ox = -0.62 * pw, oy = -0.18 * ph; // from the pivot (outer edge, a little low) to the pile's center
   return [cx + 0.62 * pw + ox * Math.cos(th) - oy * Math.sin(th) - (a * 30 * (n - j)) / n, cy + 0.18 * ph + ox * Math.sin(th) + oy * Math.cos(th), pr + deg];
 }
 // A page's cards that are not on the desk go in its box (each page's cards wait there until it is shown); own: the page's
 // own cards too (before a first visit's deal). Each goes in on top, the last in order first, so the first in order is
 // on top. Only cards not in it yet.
-function pileUp(region, own = false) {
+function pileUp(region: number, own = false) {
   const deck = pageDeck(region);
   if (view.phone || !gpu || reduced || !deck) return;
   if (region !== page) resetBox(deck); // out of sight, a box puts itself away at once
@@ -2044,8 +2139,8 @@ function pileUp(region, own = false) {
   if (cards.length) { deck.z = ++topZ; deck.dirty = true; if (!deck.launch) moveDeck(deck); } // a flying box takes them once it is back
 }
 // Hermite curve from p0 to p1 with end tangents t0, t1 (one coordinate).
-const hermite = (p0, p1, t0, t1, u) => { const u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * t0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * t1; };
-function stepFlights(dt) {
+const hermite = (p0: number, p1: number, t0: number, t1: number, u: number) => { const u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * t0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * t1; };
+function stepFlights(dt: number) {
   if (!flights.on) return;
   flights.t += dt;
   let busy = false;
@@ -2063,7 +2158,7 @@ function stepFlights(dt) {
 }
 // A card dealt: it waits in the fan, then lifts off (8% of the draw) and travels home, so it rises up and over the cards
 // below; it turns face up and to its desk angle on the way, and lands.
-function stepOut(s, k) {
+function stepOut(s: Card, k: OutFlight) {
   const d = k.deck, [wx, wy, wr] = waitPose(s, k), u = clamp((flights.t - k.at) / DRAW.dur), e = drawEase(clamp((u - 0.08) / 0.92));
   if (u > 0 && !k.up) { k.up = true; s.z = ++topZ; } // off the top
   else if (!k.up && !k.clear && fanOf(k)[1] >= 1) { k.clear = true; s.z = d.z + 0.6 + (k.stack.n - k.stack.k) * 1e-3; } // out of the box, over it
@@ -2076,7 +2171,7 @@ function stepOut(s, k) {
 }
 // A card going into its box, on one clock: from where it was (lifting, turning face down and upright) to the box's open
 // end, then straight in under its front to its place on top; a card already waiting at the open end only slides in.
-function stepIn(s, k) {
+function stepIn(s: Card, k: InFlight) {
   const d = k.deck, i = d.pile.indexOf(s), [px, py, pr] = pilePose(d, i, s), [mx, my] = mouthPose(d, i, s);
   const u = clamp((flights.t - k.at) / k.dur);
   if (u <= 0) return true; // its turn in the gather has not come yet
@@ -2097,7 +2192,7 @@ function stepIn(s, k) {
   return false;
 }
 // Finishes every card in the air (on one page, if given): one going into a box is in it, one being dealt is home.
-function endFlights(region = null) {
+function endFlights(region: number | null = null) {
   for (const s of sources) {
     if (region != null && s.region !== region) continue;
     if (s.shove) { Object.assign(s, { x: s.shove.tx, y: s.shove.ty, shove: null }); placeDom(s); }
@@ -2113,11 +2208,11 @@ function endFlights(region = null) {
 // Each page's card box stands at its right edge, above the page corner, holding its page's cards that are not on the
 // desk (d.pile, bottom to top: the one source of truth for what is in it and in what order).
 const DECK_SHOW = 0.5; // how much of the upright box shows on the page, of its width
-const lidOf = (d) => sources.find((s) => s.lid && s.region === d.region);
+const lidOf = (d: Card) => sources.find((s) => s.lid && s.region === d.region);
 function placeDecks() {
   for (const s of sources) if (s.more && !view.phone) {
     Object.assign(s, { spot: (s.region + 1) * view.w - DECK_SHOW * s.w + s.w / 2, y: 0.36 * view.h, rot: -2, home: -2 });
-    s.slide ??= { want: 'out', t: 1, dur: 1, ease: easeOutQuart };
+    s.slide ??= { want: 'out', t: 1, dur: 1, ease: easeOutQuart } as Slide; // its at, from, to and wait are set below
     if (s.slide.want === 'off') s.slide.want = 'out';
     const at = deckOut(s, s.slide.want);
     Object.assign(s.slide, { at, from: at, to: at, t: 1, wait: 0 }); // a new layout: where it was headed
@@ -2134,22 +2229,22 @@ function placeDecks() {
 // Holding cards it stays out, its lid shut until the pointer comes near.
 // A card dropped on it, or every card on the page (double-click or Enter), goes in through its open end, on top.
 const BOX = { put: 0.3, enter: -10, keep: 28, near: 160, far: 220, peek: 20, hover: 48, unhover: 120 }; // s: a put-back's slide in; CSS px: over the box (in, out), near it (in, out), the peek while dragging, the pointer near it (in, out)
-const deckOut = (d, want) => (want === 'out' ? 0 : d.w + 40 * view.k); // x offset from its spot: in place, or off screen
-function slideDeck(d, want, dur = MOTION.respond, ease = want === 'out' ? easeOutQuart : EASES.cubic) {
+const deckOut = (d: Card, want: string) => (want === 'out' ? 0 : d.w + 40 * view.k); // x offset from its spot: in place, or off screen
+function slideDeck(d: Card, want: string, dur = MOTION.respond, ease: Ease = want === 'out' ? easeOutQuart : EASES.cubic) {
   const v = d.slide;
   if (v.want === want) return;
   Object.assign(v, { want, from: v.at, to: deckOut(d, want), t: 0, dur, ease });
 }
 // Tucked, only the box's open end and its label peek in at the edge (the lid closed over them).
-const tuckAt = (d) => DECK_SHOW * d.w - (lidOf(d).w + 34 * (view.cs || 1));
-function slideBox(d, to, dur, ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
+const tuckAt = (d: Card) => DECK_SHOW * d.w - (lidOf(d)!.w + 34 * (view.cs || 1));
+function slideBox(d: Card, to: number, dur: number, ease: Ease) { Object.assign(d.bx, { from: d.bx.at, to, t: 0, dur, ease }); }
 // The box out and open (a page you turn to, or one put away out of sight).
-function resetBox(d) {
+function resetBox(d: Card) {
   Object.assign(d, { lidT: 0, outFor: 0, gatherAsk: false, drawAsk: null });
   Object.assign(d.bx, { at: 0, from: 0, to: 0, t: 1 });
 }
 // A page's box comes in from off screen, `delay` s from now.
-function arriveDeck(region, delay, dur = MOTION.settle) {
+function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
   const d = pageDeck(region);
   if (!d || view.phone || !dealing) return;
   resetBox(d);
@@ -2158,18 +2253,20 @@ function arriveDeck(region, delay, dur = MOTION.settle) {
 }
 // ---------- the box is thrown off ----------
 // A page that turns throws its card box off. The box is not printed on the page but rests on it: a rigid body
-// (physics.js) on the turning paper (curl.js, the same curl the page is drawn with). The flap's sagging edge slides under
+// (physics.ts) on the turning paper (curl.ts, the same curl the page is drawn with). The flap's sagging edge slides under
 // the box, lifts and tips it, and the turn flings it off the frame; its lid and the cards in it ride along. A corner
 // turned by hand moves the paper under it the same way: let go before halfway and the box drops back onto the page,
 // settles, and eases home into its painting. Once off the frame it slides in again when its page next shows.
 const THROW = { fadeZ: 180, out: 0.6, limit: 6 }; // CSS px up by which its shadow has faded; s a box left at rest on screen after a turn takes to slide off; s at most in the air
-const easeOutCubic = (u) => 1 - (1 - u) ** 3;
+const easeOutCubic = (u: number) => 1 - (1 - u) ** 3;
 const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7);
-let phys = null; // the world and the turning page every thrown box shares
+type TurnPath = { seg: Seg | null; keys: number[]; kj?: number }; // the paper under a thrown box (turnAt)
+interface Phys { world: World; curl: Curl; hz: number; L: (TurnPath & Partial<Launch>) | null; rem?: number } // rem: sim time not yet stepped (stepChips)
+let phys: Phys | null = null; // the world and the turning page every thrown box shares
 // Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
 function throwWorld() {
   if (phys && (phys.hz === T.throwHz || phys.L || phys.world.bodies.length)) return phys;
-  const world = createWorld({ hz: T.throwHz }), curl = createCurl({ state: (t, out) => (phys.L ? turnAt(phys.L, t, out) : out.fill(0)), rollR }); // no turn: flat
+  const world = createWorld({ hz: T.throwHz }), curl = createCurl({ state: (t, out) => (phys!.L ? turnAt(phys!.L, t, out) : out.fill(0)), rollR }); // no turn: flat
   world.surface = curl;
   phys = { world, curl, hz: T.throwHz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
   const k = view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
@@ -2181,11 +2278,11 @@ function throwWorld() {
 }
 // Where the turn is t s after it began (the physics' clock): out = the fold's distance, its direction. A turn by hand is
 // its frames (t, d, a), straight between them and on past the last; once let go (or a click's turn), its own curve.
-function turnAt(L, t, out) {
+function turnAt(L: TurnPath, t: number, out: Float64Array) {
   const g = L.seg, k = L.keys, n = k.length;
   if (g && (t >= g.t0 || n < 3)) { out[0] = lerp(g.d0, g.d1, g.ease(clamp((t - g.t0) / g.dur))); out[1] = g.a; return; }
   if (n < 6) { out[0] = k[1]; out[1] = k[2]; return; }
-  let j = L.kj;
+  let j = L.kj!; // a turn by hand: a launch's
   while (j > 0 && k[j] > t) j -= 3;
   while (j + 6 < n && k[j + 3] <= t) j += 3;
   L.kj = j;
@@ -2194,17 +2291,17 @@ function turnAt(L, t, out) {
 }
 // The turn starts: the box becomes a body resting where it lies (asleep, so exactly as painted until the paper reaches
 // it), and its lid and cards ride with it. A box still settling from a turn that fell back is thrown from where it is.
-function launch(d) {
+function launch(d: Card | undefined) {
   if (!d || view.phone || !dealing) return;
   const P = throwWorld(), { world, curl } = P;
-  if (P.L && P.L.d !== d) endThrow(P.L.d, true); // one turn at a time: a box from the last one is long off the frame
+  if (P.L && P.L.d !== d) endThrow(P.L.d!, true); // one turn at a time: a box from the last one is long off the frame
   let L = d.launch;
   if (!L) {
     const { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, sh = boxShape(W, H, D, 24 * view.k);
     const body = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: T.throwMass, inertia: sh.inertia(T.throwMass), friction: T.throwMu, bounce: T.throwBounce,
       x: [d.x, d.y, D / 2], q: [Math.cos(a / 2), 0, 0, Math.sin(a / 2)] });
     body.sleep = true;
-    L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 };
+    L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 } as Launch; // the rest is set just below
   }
   Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
   P.L = L; world.time = 0; world.g = T.throwG * view.k; world.rest = T.throwRest;
@@ -2214,13 +2311,13 @@ function launch(d) {
   for (const s of sources) if (s === d || s === lid || s.deck === d) s.carrier = d;
   poseThrow(d);
 }
-function stepThrows(dt) { for (const d of sources) if (d.launch) stepThrow(d, dt); }
-function stepThrow(d, dt) {
-  const L = d.launch, { world } = phys, at = window.__j?.at; // test hook (as the turn's): hold the throw at one moment
+function stepThrows(dt: number) { for (const d of sources) if (d.launch) stepThrow(d, dt); }
+function stepThrow(d: Card, dt: number) {
+  const L = d.launch!, { world } = phys!, at = window.__j?.at; // test hook (as the turn's): hold the throw at one moment
   L.t = at ?? L.t + dt; L.wt = at ?? L.wt + dt;
   if (turn.on && turn.from === d.region) { // the paper under it, as the turn moves it
     if (turn.mode === 'drag') L.keys.push(L.t, turn.d, turn.a);
-    else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES[T.turnEase] : easeOutCubic };
+    else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES[T.turnEase as keyof typeof EASES] : easeOutCubic };
     L.mode = turn.mode;
   } else L.end ??= L.mode === 'back' ? 'back' : 'done';
   if (at != null && at < world.time - 1e-9) world.load(L.sv); // held earlier: the same throw again from its start
@@ -2236,41 +2333,41 @@ function stepThrow(d, dt) {
   poseThrow(d);
   if (L.home ? L.home.t >= T.throwHome : offFrame(d)) endThrow(d, !L.home);
 }
-const quatMat = ([w, x, y, z]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
-const nlerp = (p, q, u) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
+const quatMat = ([w, x, y, z]: number[]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
+const nlerp = (p: number[], q: number[], u: number) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
 // The thrown box this frame: its axes at rest on the desk (X, Y); where its middle is (C, CSS px, z above the desk) and
 // how it is turned from rest (M, row major); how far its perspective has eased in (w); how high its lowest point is
 // over the paper under it (low); its shadow's footprint from above (foot: angle, half sizes), and how far it has faded.
-function poseThrow(d) {
-  const L = d.launch, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
-  phys.world.pose(L.body, POS, ROT); L.hull = null; // where it shows, once drawn
+function poseThrow(d: Card) {
+  const L = d.launch!, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  phys!.world.pose(L.body, POS, ROT); L.hull = null; // where it shows, once drawn
   let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / T.throwPersp));
   if (L.home) { const u = smooth(L.home.t / T.throwHome), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
   else if (L.out) C[0] += 1.2 * view.w * clamp(L.out.t / THROW.out) ** 3;
   const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
   // Its shadow: the box seen from straight above, as the smallest rectangle along one of its edges that holds it.
-  const reach = (x, y) => (W * Math.abs(x * R[0] + y * R[3]) + H * Math.abs(x * R[1] + y * R[4]) + D * Math.abs(x * R[2] + y * R[5])) / 2;
-  let foot = null;
+  const reach = (x: number, y: number) => (W * Math.abs(x * R[0] + y * R[3]) + H * Math.abs(x * R[1] + y * R[4]) + D * Math.abs(x * R[2] + y * R[5])) / 2;
+  let foot: number[] | null = null;
   for (let i = 0; i < 3; i++) {
     const l = Math.hypot(R[i], R[3 + i]), x = R[i] / l, y = R[3 + i] / l, f = l > 1e-3 && [Math.atan2(y, x), reach(x, y), reach(-y, x)];
     if (f && (!foot || f[1] * f[2] < foot[1] * foot[2])) foot = f;
   }
-  SURF[0] = C[0]; SURF[1] = C[1]; phys.curl.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
+  SURF[0] = C[0]; SURF[1] = C[1]; phys!.curl.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
   const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2 - SURF[0];
   C[2] = Math.min(C[2], 1200); // never up at the eye
   L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * view.k)) };
 }
-const launchPose = (d) => d.launch.P;
+const launchPose = (d: Card) => d.launch!.P;
 // Off the frame: everything it could draw (it, its lid, as its eye sees them) is past an edge of its page.
-function offFrame(d) {
-  const P = d.launch.P, lid = lidOf(d), { W, H, D } = boxDims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
+function offFrame(d: Card) {
+  const P = d.launch!.P, lid = lidOf(d), { W, H, D } = boxDims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
   const r = (r0 * (1 + BOX3D.a) * F) / Math.max(F - r0, 1), x = P.C[0] - d.region * view.w, y = P.C[1];
   return x - r > view.w || x + r < 0 || y + r < 0 || y - r > view.h;
 }
-function endThrow(d, arrive) {
-  const L = d.launch;
-  phys.world.remove(L.body);
-  if (phys.L === L) phys.L = null;
+function endThrow(d: Card, arrive: boolean) {
+  const L = d.launch!;
+  phys!.world.remove(L.body);
+  if (phys!.L === L) phys!.L = null;
   d.launch = null; d.dirty = true;
   for (const s of sources) if (s.carrier === d) s.carrier = null;
   if (arrive) arriveDeck(d.region, 0); // back in from off the right edge when its page next shows (or now, if a turn by hand fell back)
@@ -2282,64 +2379,65 @@ function endThrow(d, arrive) {
 // first frame is the painting.
 // The box's frame: X along it from its open end, Y down the page, Z up from its base; W, H, D its sizes along them (CSS px).
 const BOX3D = { a: 0.4 };
-const boxDims = (d) => { const t = BOX_T * (d.k || 1); return { t, W: d.w - t, H: d.h - t, D: t / BOX3D.a }; };
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const boxTurn = ({ M }) => (v) => [M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2]];
+const boxDims = (d: Card) => { const t = BOX_T * (d.k || 1); return { t, W: d.w - t, H: d.h - t, D: t / BOX3D.a }; };
+const cross = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const boxTurn = ({ M }: { M: number[] }) => (v: number[]) => [M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2]];
 // Something riding in the flying box (its lid, the cards in it), from where it lies at rest: where it is relative to the
 // box's middle (dc) and its axes, turned with the box. At rest each is drawn from straight above, not by the box's eye,
 // so it starts where that eye sees it there and settles into the box as its perspective eases in (a card in it slides all the way in).
-function carried(d, { sx, sy, z, mu, mv }, P) {
-  const L = d.launch, A = BOX3D.a, u = 1 - P.w, { D } = boxDims(d), s0 = A * (D / 2 - u * z), turn = boxTurn(P);
-  const lean = (m) => [m[0] - u * A * m[2], m[1] + u * A * m[2], m[2]];
+function carried(d: Card, { sx, sy, z, mu, mv }: { sx: number; sy: number; z: number; mu: V3; mv: V3 }, P: ThrowPose) {
+  const L = d.launch!, A = BOX3D.a, u = 1 - P.w, { D } = boxDims(d), s0 = A * (D / 2 - u * z), turn = boxTurn(P);
+  const lean = (m: V3) => [m[0] - u * A * m[2], m[1] + u * A * m[2], m[2]];
   return { dc: turn([sx - L.x + s0, sy - L.y - s0, z - D / 2]), mu: turn(lean(mu)), mv: turn(lean(mv)) };
 }
 // The box's eye: the homography (sim px) from a plane through the box's middle plus dc (CSS px), with axes mu and mv,
 // to the page (page-local sim px).
-function boxH(P, dc, mu, mv, dpr, originX) {
+function boxH(P: ThrowPose, dc: V3, mu: V3, mv: V3, dpr: number, originX: number) {
   const A = BOX3D.a, p = P.w, F = (1800 - P.C[2]) * dpr, c = dc.map((v) => v * dpr);
-  const row = (R, i, sg) => [F * mu[i] + sg * F * A * mu[2] - R * p * mu[2], F * mv[i] + sg * F * A * mv[2] - R * p * mv[2], R * (F - p * c[2]) + F * c[i] + sg * F * A * c[2]];
+  const row = (R: number, i: number, sg: number) => [F * mu[i] + sg * F * A * mu[2] - R * p * mu[2], F * mv[i] + sg * F * A * mv[2] - R * p * mv[2], R * (F - p * c[2]) + F * c[i] + sg * F * A * c[2]];
   return [...row((P.C[0] - originX) * dpr, 0, 1), ...row(P.C[1] * dpr, 1, -1), -p * mu[2], -p * mv[2], F - p * c[2]];
 }
 // Whether the box's eye sees a plane through dc with normal n from the side n points to.
-const seesFront = (P, dc, n) => { const A = BOX3D.a, F = 1800 - P.C[2], p = P.w; return dot(n, [-A * F - p * dc[0], A * F - p * dc[1], F - p * dc[2]]) > 0; };
+const seesFront = (P: ThrowPose, dc: V3, n: V3) => { const A = BOX3D.a, F = 1800 - P.C[2], p = P.w; return dot(n, [-A * F - p * dc[0], A * F - p * dc[1], F - p * dc[2]]) > 0; };
 // How squarely a plane faces the eye, signed (+: its front, mu x mv): the homography's area scale at its middle. Near 0
 // it is edge-on (and the homography singular), so it is not drawn.
-const facing = ([a, b, c, d, e, f, g, h, i]) => ((a * i - c * g) * (e * i - f * h) - (b * i - c * h) * (d * i - f * g)) / i ** 4;
+const facing = ([a, b, c, d, e, f, g, h, i]: number[]) => ((a * i - c * g) * (e * i - f * h) - (b * i - c * h) * (d * i - f * g)) / i ** 4;
 const EDGE_ON = 0.004;
 const FAR = [0, 0, 1e6, 0, 0, 1e6, 0, 0, 1]; // an inverse homography that puts every pixel far off the plane
-const projR = (H, hw, hh) => Math.max(...[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+const projR = (H: number[], hw: number, hh: number) => Math.max(...[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
   const q = H[6] * u * hw + H[7] * v * hh + H[8];
   return Math.hypot((H[0] * u * hw + H[1] * v * hh + H[2]) / q - H[2] / H[8], (H[3] * u * hw + H[4] * v * hh + H[5]) / q - H[5] / H[8]);
 }));
 // The six faces in the box's frame: middle, axes (mu x mv points out), half sizes, and the normal its texture is lit for
 // (the shaded wall facing down the page is painted in its shade; the rest as if lit from straight above).
-const boxFaces = ({ W, H, D }) => ({
+type Face = [V3, V3, V3, number, number, V3 | null]; // middle, axes, half sizes, the normal its texture is lit for
+const boxFaces = ({ W, H, D }: { W: number; H: number; D: number }) => ({
   front: [[0, 0, D / 2], [1, 0, 0], [0, 1, 0], W / 2, H / 2, [0, 0, 1]],
   back: [[0, 0, -D / 2], [1, 0, 0], [0, -1, 0], W / 2, H / 2, [0, 0, 1]],
   bottom: [[0, H / 2, 0], [1, 0, 0], [0, 0, -1], W / 2, D / 2, [0, 1, 0]],
   top: [[0, -H / 2, 0], [1, 0, 0], [0, 0, 1], W / 2, D / 2, [0, 0, 1]],
   end: [[W / 2, 0, 0], [0, 1, 0], [0, 0, 1], H / 2, D / 2, [0, 0, 1]],
   open: [[-W / 2, 0, 0], [0, 1, 0], [0, 0, -1], H / 2, D / 2, null],
-});
+}) satisfies Record<string, Face>;
 // Paper board in the desk's light (from the upper left, as on the page corner).
 const LIGHT = (() => { const l = [-0.3, -0.75, 1], n = Math.hypot(...l); return l.map((v) => v / n); })();
-const shade = (n) => 0.78 + 0.26 * Math.max(0, dot(n, LIGHT));
+const shade = (n: V3) => 0.78 + 0.26 * Math.max(0, dot(n, LIGHT));
 const FACE_SLOTS = 6; // uniform slots per flying box: at most two outside faces and three inside walls with its open end in view
 // The flying box, bottom to top (its faces' uniforms written into slots from `slot`): its shadow on the desk, its lid if
 // the box is between it and the eye, the inside walls seen through the open end, the cards in it, the open end's shade,
 // the outside faces toward the eye, then its lid if it is in front.
-function flyingOrder(d, dpr, originX, slot) {
+function flyingOrder(d: Card, dpr: number, originX: number, slot: number) {
   const P = launchPose(d), turn = boxTurn(P), uv = d.faceUV, lid = lidOf(d), o0 = (CARD0 + d.id * CARD_VEC4) * 4;
-  const world = (v) => turn([v[0] * P.X[0] + v[1] * P.Y[0], v[0] * P.X[1] + v[1] * P.Y[1], v[2]]);
+  const world = (v: V3) => turn([v[0] * P.X[0] + v[1] * P.Y[0], v[0] * P.X[1] + v[1] * P.Y[1], v[2]]);
   const faces = Object.entries(boxFaces(boxDims(d))).map(([name, [c, mu, mv, hw, hh, ref]]) => {
     const H = boxH(P, world(c), world(mu), world(mv), dpr, originX);
     return { name, H, f: facing(H), hw: hw * dpr, hh: hh * dpr, light: ref ? shade(world(cross(mu, mv))) / shade(ref) : 1 };
   });
-  const open = faces.find((x) => x.name === 'open'), inside = open.f > EDGE_ON, lidOn = lid && !lid.gone && lid.flyH;
-  d.launch.hull = hull([...faces, ...(lidOn ? [{ H: lid.flyH, hw: (lid.w * dpr) / 2, hh: (lid.h * dpr) / 2 }] : [])].flatMap(({ H, hw, hh }) => // where it shows (CSS px)
+  const open = faces.find((x) => x.name === 'open')!, inside = open.f > EDGE_ON, lidOn = lid && !lid.gone && lid.flyH;
+  d.launch!.hull = hull([...faces, ...(lidOn ? [{ H: lid.flyH!, hw: (lid.w * dpr) / 2, hh: (lid.h * dpr) / 2 }] : [])].flatMap(({ H, hw, hh }) => // where it shows (CSS px)
     [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const q = (H[6] * u * hw + H[7] * v * hh + H[8]) * dpr; return [(H[0] * u * hw + H[1] * v * hh + H[2]) / q, (H[3] * u * hw + H[4] * v * hh + H[5]) / q]; })));
-  const ids = [d.id], put = (x, tex, light, alpha) => {
+  const ids = [d.id], put = (x: FacePlane, tex: number[], light: number, alpha: number) => {
     if (slot >= MAX) return;
     faceUniform((CARD0 + slot * CARD_VEC4) * 4, o0, x, tex, light, alpha, dpr);
     ids.push(slot++);
@@ -2355,8 +2453,9 @@ function flyingOrder(d, dpr, originX, slot) {
 }
 // One face of the flying box: the box's own uniform (its hue and the like), as a plane with its own homography and
 // texture, lit by the turn (bound.w), its alpha its shape, no shadow (the box's base casts it).
-function faceUniform(o, o0, { H, hw, hh }, tex, light, alpha, dpr) {
-  const v = U.slice(o0, o0 + CARD_VEC4 * 4), inv = invert3(H), pad = (0.6 * dpr) / shared.dev; // faces overlap a hair, so no seam shows between them
+interface FacePlane { H: number[]; hw: number; hh: number } // a plane's homography and half sizes (sim px)
+function faceUniform(o: number, o0: number, { H, hw, hh }: FacePlane, tex: number[], light: number, alpha: number, dpr: number) {
+  const v = U.slice(o0, o0 + CARD_VEC4 * 4), inv = invert3(H), pad = (0.6 * dpr) / shared!.dev; // faces overlap a hair, so no seam shows between them
   v.set([inv[0], inv[1], inv[2], 0, inv[3], inv[4], inv[5], 1e3, inv[6], inv[7], inv[8], 0, hw + pad, hh + pad, 0.4 * dpr, 1,
     H[2] / H[8], H[5] / H[8], 1, 0, 1, 0, 0, 0, ...tex, 0, 0, 0, 0, projR(H, hw + pad, hh + pad) + 2, 1, 0, light, ...tex], 0);
   v[43] = 1;
@@ -2367,7 +2466,7 @@ function faceUniform(o, o0, { H, hw, hh }, tex, light, alpha, dpr) {
 // on its hinge (the box's open end): open, it lies flat beside the box, inside up; closing, it turns over about the hinge
 // (its free edge rising) onto the box's front.
 const LID_OPEN = 0.22 * Math.PI; // open, the lid stands up off the desk at about 40 degrees, the way a paper hinge springs back
-function moveDeck(d) {
+function moveDeck(d: Card) {
   const x = d.spot + d.slide.at + d.bx.at; // the arrival's slide, then the empty box's tuck
   if (x !== d.x || d.squash || d.squashV) { d.x = d.px = x; placeDom(d); d.dirty = true; }
   d.gone = false;
@@ -2383,7 +2482,7 @@ function moveDeck(d) {
   Object.assign(lid, { x: hx - (lid.w / 2) * Math.cos(th) * Math.cos(a), y: hy - (lid.w / 2) * Math.cos(th) * Math.sin(a), rot: d.rot, flipA: th, gone: d.gone,
     flyLift: Math.max(((lid.w / 2) * Math.sin(th)) / T.lift, d.lift), z: th > Math.PI / 2 ? d.z + 0.5 : -1 }); // open: under every card; closed: on the box
 }
-function stepDecks(dt) {
+function stepDecks(dt: number) {
   for (const d of sources) {
     if (!d.more || view.phone || !d.slide || !dealing) continue;
     stepTally(d, dt);
@@ -2399,10 +2498,10 @@ function stepDecks(dt) {
 }
 // Open while cards are on their way in or only just out, while it is wanted (the pointer or a dragged card near or over
 // it, a gather or a draw asked for, keyboard focus), and a moment after; otherwise its lid shut, and tucked if empty.
-function stepBox(d, dt) {
+function stepBox(d: Card, dt: number) {
   const b = d.bx;
   if (b.t < 1) { b.t = Math.min(1, b.t + dt / b.dur); b.at = b.from + (b.to - b.from) * b.ease(b.t); }
-  d.hover = !!mouse && overDeck(d, mouse.x + cam.x, mouse.y, (d.hover ? BOX.unhover : BOX.hover) * view.k);
+  d.hover = Number(!!mouse && overDeck(d, mouse.x + cam.x, mouse.y, (d.hover ? BOX.unhover : BOX.hover) * view.k)); // 1 or 0: a box's hover is the pointer near it
   let busy = false, drag = false;
   for (const s of sources) {
     if (s.fly?.deck === d && (s.fly.in || flights.t < s.fly.at + 0.3 * DRAW.dur)) busy = true;
@@ -2415,63 +2514,63 @@ function stepBox(d, dt) {
   if (d.gatherAsk && b.t >= 1 && d.lidT === 0) { d.gatherAsk = false; boxGather(d); } // out and open: in they come
   if (d.drawAsk && d.lidT === 0) { const all = d.drawAsk.all; d.drawAsk = null; drawMore(d, all); } // open: out it comes
 }
-const arriving = (d) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait > 0; // the box is still sliding in
+const arriving = (d: Card) => d.slide.want !== 'out' || d.slide.t < 1 || d.slide.wait > 0; // the box is still sliding in
 // ---------- the tally ----------
-// Each box carries a pencil tally of the cards in it (tally.js paints it into the box's texture). One hand per box: a card
+// Each box carries a pencil tally of the cards in it (tally.ts paints it into the box's texture). One hand per box: a card
 // going in gets a stroke drawn as it slides in, and a card dealt out has the last stroke rubbed out as it lifts off.
 // Strokes follow one another; one that falls behind (a gather) is drawn quicker to keep up. Out of sight (the other page, a
 // box still arriving), on the first frame, or with reduced motion, marks come and go at once.
-const inBox = (s, d) => (s.deck === d ? !(s.fly?.in && !s.fly.inside) : !!(s.fly?.out && s.fly.deck === d && !s.fly.up));
+const inBox = (s: Card, d: Card) => (s.deck === d ? !(s.fly?.in && !s.fly.inside) : !!(s.fly?.out && s.fly.deck === d && !s.fly.up));
 // Where it goes, in the box's design px (as paintBox draws it): the front panel's top corner, where a hand jots a count,
 // in upright rows just past the shut lid's flap, above the label and short of the page's edge (DECK_SHOW).
-function tallySetup(d) {
+function tallySetup(d: Card) {
   const { w, h } = design(d), x = BOX_T + Math.round((h - 12 - BOX_T) * 0.13) + 8, m = measure(); // the flap's width (boxSize)
   m.font = font(500, 26, 'Caveat');
   const half = m.measureText(BOX_NAMES[d.region]).width / 2; // half the label's length
   d.tally ??= { t: 0, free: 0, gen: 0, marks: [], shown: false };
-  Object.assign(d.tally, { surf: tallySurface(d.raster, shared.dev * d.k, { x, y: 19, w: w * DECK_SHOW - 12 - x, h: (h - BOX_T) / 2 - half - 27 }), dirty: true });
+  Object.assign(d.tally, { surf: tallySurface(d.raster, shared!.dev * d.k, { x, y: 19, w: w * DECK_SHOW - 12 - x, h: (h - BOX_T) / 2 - half - 27 }), dirty: true });
 }
-function stepTally(d, dt) {
+function stepTally(d: Card, dt: number) {
   const tl = d.tally;
   if (!tl?.surf) return;
   tl.t += dt;
-  const n = sources.reduce((c, s) => c + inBox(s, d), 0), live = tl.marks.filter((m) => !m.gone);
+  const n = sources.reduce((c, s) => c + Number(inBox(s, d)), 0), live = tl.marks.filter((m) => !m.gone);
   const anim = tl.shown && !reduced && d.region === page && !arriving(d);
-  const hand = (dur) => {
+  const hand = (dur: number) => {
     if (!anim) return { start: -1e3, dur: 1e-3 };
     const start = Math.max(tl.t, tl.free), late = start - tl.t;
     tl.free = start + Math.max(0.4 * dur, dur - late);
     return { start, dur: tl.free - start };
   };
   while (live.length < n) { const m = { slot: live.length, gen: tl.gen++, gone: null, ...hand(T.tallyDrawS) }; tl.marks.push(m); live.push(m); }
-  while (live.length > n) live.pop().gone = hand(T.tallyEraseS);
-  const end = (m) => (m.gone ? m.gone.start + m.gone.dur + T.tallyFadeS : m.start + m.dur);
+  while (live.length > n) live.pop()!.gone = hand(T.tallyEraseS);
+  const end = (m: Mark) => (m.gone ? m.gone.start + m.gone.dur + T.tallyFadeS : m.start + m.dur);
   const kept = tl.marks.filter((m) => !m.gone || end(m) > tl.t);
   if (kept.length !== tl.marks.length) { tl.marks = kept; tl.dirty = true; }
   tl.shown = true;
   if (!tl.dirty && !kept.some((m) => end(m) > tl.t - dt)) return;
   tl.dirty = false;
   const { rect } = tl.surf;
-  gpu.device.queue.writeTexture({ texture: shared.atlas, origin: [d.atlasAt.x + rect.x, d.atlasAt.y + rect.y] }, paintTally(tl.surf, kept, tl.t, T), { bytesPerRow: rect.w * 4 }, [rect.w, rect.h]);
+  gpu!.device.queue.writeTexture({ texture: shared!.atlas!, origin: [d.atlasAt.x + rect.x, d.atlasAt.y + rect.y] }, paintTally(tl.surf, kept, tl.t, T), { bytesPerRow: rect.w * 4 }, [rect.w, rect.h]);
   redraw = true;
 }
 // The page's box: click deals the top card (to its slot, or the best free spot); double-click gathers every card on the
 // page into it, or deals them all when none are on the desk; a card dropped on it goes in on top. Enter deals,
 // Shift+Enter gathers or deals; on an empty box, double-click or Enter gathers.
-const pageDeck = (r) => sources.find((s) => s.more && s.region === r);
-const decked = (s) => s.kind !== 'deck'; // every card on a page goes in its box: the projects, the polaroid and the note
-const onDesk = (r) => sources.filter((o) => o.region === r && decked(o) && !o.deck && !o.dragging); // (cards being dealt too)
+const pageDeck = (r: number) => sources.find((s) => s.more && s.region === r);
+const decked = (s: Card) => s.kind !== 'deck'; // every card on a page goes in its box: the projects, the polaroid and the note
+const onDesk = (r: number) => sources.filter((o) => o.region === r && decked(o) && !o.deck && !o.dragging); // (cards being dealt too)
 let deckTimer = 0;
-function deckClick(deck, e) {
+function deckClick(deck: Card, e: MouseEvent | KeyboardEvent) {
   if (!deck.pile.length) { // empty: double-click or Enter puts every card back; a click is a tiny nudge
-    if (e.type === 'keydown' || e.detail >= 2) boxGather(deck); else deck.squashV = (deck.squashV || 0) + 8;
+    if (e.type === 'keydown' || (e as MouseEvent).detail >= 2) boxGather(deck); else deck.squashV = (deck.squashV || 0) + 8;
     return;
   }
-  if (e.type === 'keydown') { e.shiftKey ? deckDouble(deck) : drawMore(deck); return; }
+  if (e.type === 'keydown') { if (e.shiftKey) deckDouble(deck); else drawMore(deck); return; }
   clearTimeout(deckTimer);
-  if (e.detail >= 2) deckDouble(deck); else deckTimer = setTimeout(() => drawMore(deck), 230); // wait to see if it is a double-click
+  if ((e as MouseEvent).detail >= 2) deckDouble(deck); else deckTimer = setTimeout(() => drawMore(deck), 230); // wait to see if it is a double-click
 }
-function drawMore(deck, all = false) {
+function drawMore(deck: Card, all = false) {
   if (view.phone || turn.on) return;
   const take = all ? deck.pile.slice().reverse() : deck.pile.slice(-1); // top first
   if (!take.length) { deck.squashV = (deck.squashV || 0) + 8; return; } // empty: a tiny nudge
@@ -2487,25 +2586,25 @@ function drawMore(deck, all = false) {
   stepFlights(0);
 }
 // Every card on the box's page goes in.
-function boxGather(deck) {
+function boxGather(deck: Card) {
   if (turn.on) return;
   if (deck.bx.at !== 0 || deck.lidT > 0) { deck.gatherAsk = true; return; } // tucked: it slides out and opens first
   const out = onDesk(deck.region);
   if (out.length) gather(out, deck);
 }
-function deckDouble(deck) {
+function deckDouble(deck: Card) {
   const out = onDesk(deck.region);
   if (out.length) gather(out, deck); else drawMore(deck, true);
 }
 // Gather: the deal played backward: last in order first, so the first in order goes in last, on top, and is dealt
 // first again.
-function gather(cards, deck) {
+function gather(cards: Card[], deck: Card) {
   cards.sort((a, b) => b.order - a.order).forEach((s, i) => collect(s, deck, now() + i * GATHER.stagger));
   flights.on = true;
   stepFlights(0);
 }
 // One card into a box, on top: from where it shows (mid-flip, mid-deal, or waiting at the open end), face as it is.
-function collect(s, deck, at, dur = GATHER.dur, say = '') {
+function collect(s: Card, deck: Card, at: number, dur = GATHER.dur, say = '') {
   const [sx, sy, r0] = shown(s), [fz, fv] = flipPath(s), a = (r0 * Math.PI) / 180, x0 = sx - Math.sin(a) * fv, y0 = sy + Math.cos(a) * fv; // mid-flip: from where its turn has it
   deck.pile.push(s); deck.z = ++topZ; deck.dirty = true;
   s.fly = { in: true, deck, at, dur, x0, y0, r0, face0: s.face, lift0: fz / T.lift, open: s.flip > 0, say };
@@ -2514,22 +2613,22 @@ function collect(s, deck, at, dur = GATHER.dur, say = '') {
 }
 // Putting one card back by hand (a drop over its box, or Enter while it waits there): it slides in, keyboard focus goes to
 // the box, and a screen reader hears where it went.
-function putBack(s, deck) {
+function putBack(s: Card, deck: Card) {
   const focused = s.el.contains(document.activeElement);
-  collect(s, deck, now(), s.snap > 0.99 ? BOX.put : GATHER.dur, s.hit.getAttribute('aria-label').replace(/: [^:]*$/, ''));
+  collect(s, deck, now(), s.snap! > 0.99 ? BOX.put : GATHER.dur, s.hit.getAttribute('aria-label')!.replace(/: [^:]*$/, ''));
   flights.on = true; stepFlights(0);
   if (focused) deck.hit.focus({ preventScroll: true });
 }
 const live = root.appendChild(Object.assign(document.createElement('p'), { className: 'live' }));
 live.setAttribute('aria-live', 'polite');
-const say = (text) => { live.textContent = text; };
+const say = (text: string) => { live.textContent = text; };
 // Is a desk point over a page's box (grown by pad px)?
-function overDeck(deck, x, y, pad = 0) {
+function overDeck(deck: Card, x: number, y: number, pad = 0) {
   const r = obb(deck), ex = reach(r, [1, 0]) + pad, ey = reach(r, [0, 1]) + pad;
   return Math.abs(x - deck.x) < ex && Math.abs(y - deck.y) < ey;
 }
 // The box's part of the page as a rectangle (desk px), for keeping cards off it.
-function deckRect(region) {
+function deckRect(region: number) {
   const d = dealing && !view.phone && pageDeck(region);
   if (!d) return null;
   const r = obb(d), ex = reach(r, [1, 0]), ey = reach(r, [0, 1]);
@@ -2537,7 +2636,7 @@ function deckRect(region) {
 }
 // The best free spot for a card on its page: a grid search for the least overlap with the other cards (24 px apart),
 // the name, tagline, links, corner and box, inside a 32 px margin, then nearest the middle; its angle is a flip's Gaussian.
-function freeSlot(s) {
+function freeSlot(s: Card) {
   const x0 = s.region * view.w, gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
   const r = clamp(gauss * T.flipJitter, -T.maxAngle, T.maxAngle), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
   const pad = 24 * view.k, m = 32 * view.k, step = 16;
@@ -2546,7 +2645,7 @@ function freeSlot(s) {
     const q = obb(o), qx = reach(q, [1, 0]), qy = reach(q, [0, 1]);
     return { l: o.x - qx, r: o.x + qx, t: o.y - qy, b: o.y + qy };
   }));
-  const over = (x, y, p) => boxes.reduce((sum, q) => sum + Math.max(0, Math.min(x + ex, q.r + p) - Math.max(x - ex, q.l - p)) * Math.max(0, Math.min(y + ey, q.b + p) - Math.max(y - ey, q.t - p)), 0);
+  const over = (x: number, y: number, p: number) => boxes.reduce((sum, q) => sum + Math.max(0, Math.min(x + ex, q.r + p) - Math.max(x - ex, q.l - p)) * Math.max(0, Math.min(y + ey, q.b + p) - Math.max(y - ey, q.t - p)), 0);
   let best = [Infinity, x0 + view.w / 2, view.h / 2];
   for (let y = m + ey; y <= view.h - m - ey; y += step) for (let x = x0 + m + ex; x <= x0 + view.w - m - ex; x += step) {
     // touching anything is far worse than coming within 24 px of it, which is worse than being off center
@@ -2562,13 +2661,13 @@ function freeSlot(s) {
 // fall back to their data-video source.
 const clipLists = clips; // clips.json, built in; every media address carries its file's content hash
 // Each clip is "file.mp4" or { "src": "file.mp4", "start": seconds } (default start 0).
-function playlistFor(s) {
+function playlistFor(s: Card): Clip[] | null {
   if (!s.media) return null; // only cards with a media area can play clips
   const e = clipLists[s.key];
-  if (e?.clips?.length) return e.clips.map((c) => (typeof c === 'string' ? { src: mediaUrl('/desk-media/' + c), start: 0 } : { src: mediaUrl('/desk-media/' + c.src), start: +c.start || 0 }));
+  if (e?.clips?.length) return e.clips.map((c) => (typeof c === 'string' ? { src: mediaUrl('/desk-media/' + c), start: 0 } : { src: mediaUrl('/desk-media/' + c.src), start: Number(c.start) || 0 }));
   return s.videoSrc ? [{ src: s.videoSrc, start: 0 }] : null;
 }
-function makeVideo(src, lazy = false) {
+function makeVideo(src: string, lazy = false) {
   const v = document.createElement('video');
   v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = lazy ? 'none' : 'auto';
   v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
@@ -2578,45 +2677,45 @@ function makeVideo(src, lazy = false) {
   }
   Object.assign(v.style, { position: 'fixed', left: '0', top: '0', width: '2px', height: '2px', opacity: '0', pointerEvents: 'none' });
   body.append(v);
-  return v;
+  return v as Video; // halt sets clipStart before anything reads it
 }
 // Every play/pause/seek on an element runs in order, so a pending play() never races a pause().
-const chain = (v, fn) => (v.op = (v.op || Promise.resolve()).then(fn, fn));
-async function playWithRetry(v) {
+const chain = (v: Video, fn: () => unknown) => (v.op = (v.op || Promise.resolve()).then(fn, fn));
+async function playWithRetry(v: Video) {
   for (let k = 0; k < 5; k++) {
     try { await v.play(); return; } catch (err) {
-      console.warn('play() rejected', v.currentSrc.split('/').pop(), err.name, err.message);
+      console.warn('play() rejected', v.currentSrc.split('/').pop(), (err as Error).name, (err as Error).message);
       await new Promise((r) => setTimeout(r, 120 * (k + 1)));
     }
   }
 }
-const play = (v) => chain(v, () => playWithRetry(v));
+const play = (v: Video) => chain(v, () => playWithRetry(v));
 // Pause, load the given clip if it is a different one, and rewind to the clip's start.
-const halt = (v, clip) => chain(v, () => {
+const halt = (v: Video, clip: Clip) => chain(v, () => {
   v.pause();
   if (!v.src.endsWith(clip.src)) { v.src = clip.src; v.load(); }
   v.clipStart = clip.start;
   v.currentTime = clip.start;
 });
 // Play from the clip's start: rewinds first unless it is already mid-clip.
-const playFromStart = (v) => chain(v, () => { if (v.ended || v.currentTime < v.clipStart) v.currentTime = v.clipStart; }).then(() => play(v));
+const playFromStart = (v: Video) => chain(v, () => { if (v.ended || v.currentTime < v.clipStart) v.currentTime = v.clipStart; }).then(() => play(v));
 
 // A card's player: two video elements; the first clip loads now, the next only once this card's video starts.
-function makePlayer(s) { s.player = new Player(s.playlist); }
-const wake = (v) => chain(v, () => { v.preload = 'auto'; v.load(); v.currentTime = v.clipStart || 0; });
-const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 200));
+function makePlayer(s: Card) { s.player = new Player(s.playlist!); }
+const wake = (v: Video) => chain(v, () => { v.preload = 'auto'; v.load(); v.currentTime = v.clipStart || 0; });
+const idle = (fn: () => void) => ((window as Partial<Window>).requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 200));
 // Preload: once the intro is over and the page is idle, each card's first clip loads, one at a time, the page you are on
 // first, so a first hover plays at once. Later clips stay lazy. Nothing preloads on Save-Data or a 2g connection, on
 // phones (no hover), with reduced motion, or without WebGPU; then a player is made on first hover, as before.
 function preloadClips() {
-  const c = navigator.connection;
+  const c = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection; // not in TS's DOM lib
   if (dead || view.phone || reduced || !gpu || c?.saveData || /2g$/.test(c?.effectiveType || '')) return;
-  const queue = sources.filter((s) => s.playlist && !s.player).sort((a, b) => (a.region !== page) - (b.region !== page) || a.order - b.order);
+  const queue = sources.filter((s) => s.playlist && !s.player).sort((a, b) => Number(a.region !== page) - Number(b.region !== page) || a.order - b.order);
   const next = () => {
     const s = queue.shift();
     if (dead || !s) return;
     if (!s.player) makePlayer(s);
-    const v = s.player.v[0];
+    const v = s.player!.v[0];
     if (v.readyState >= 4) { idle(next); return; }
     let done = false;
     const go = () => { if (!done) { done = true; idle(next); } };
@@ -2635,7 +2734,9 @@ function preloadClips() {
 // Two elements take turns: the current one plays clip i; T.xfade before it ends (or before T.hold, if set) the other
 // starts clip i + 1 and the shader crossfades. The idle element then preloads the clip after that.
 class Player {
-  constructor(list) {
+  declare list: Clip[]; declare v: Video[]; declare cur: number; declare i: number; declare fade: number; declare fading: boolean;
+  declare state: string; declare outNow: boolean; declare mix: number; declare retry: number; declare quick?: boolean;
+  constructor(list: Clip[]) {
     this.list = list;
     this.v = [makeVideo(list[0].src), makeVideo(list[1 % list.length].src, true)]; // the next clip waits until this one plays
     this.v.forEach((v, k) => halt(v, list[k % list.length]));
@@ -2652,7 +2753,7 @@ class Player {
     this.fading = false; this.fade = 0; this.i = 0; this.cur = 0; this.quick = false;
     halt(this.v[0], this.list[0]); halt(this.v[1], this.list[1 % this.list.length]);
   }
-  step(dt, hovered) {
+  step(dt: number, hovered: boolean) {
     if (hovered && this.state === 'rest') { this.state = 'on'; playFromStart(this.a); if (this.b.preload === 'none') wake(this.b); }
     else if (hovered && this.state === 'out') { this.state = 'on'; this.outNow = false; } // keep going from here
     else if (!hovered && this.state === 'on') { this.state = 'out'; this.outNow = !T.finishFirst; }
@@ -2682,24 +2783,24 @@ class Player {
   }
 }
 
-let videoSrc = null, videoMix = 0, probing = false, probeKey = null; // probeKey: the probe holds hover on that card
+let videoSrc: Card | null = null, videoMix = 0, probing = false, probeKey: string | null = null; // probeKey: the probe holds hover on that card
 // Only one card shows video at a time: a newly hovered card waits until the previous one has faded back to rest.
-function stepMedia(dt) {
+function stepMedia(dt: number) {
   if (probing) return; // the crossfade probe drives the player by hand
   const now = performance.now();
   const hov = sources.find((s) => s.player && s.hoverOn && now - s.hoverSince >= T.hoverDelay) || null;
-  if (hov && videoSrc && hov !== videoSrc) videoSrc.player.forceOut();
-  if (hov && (!videoSrc || videoSrc.player.state === 'rest')) videoSrc = hov;
+  if (hov && videoSrc && hov !== videoSrc) videoSrc.player!.forceOut();
+  if (hov && (!videoSrc || videoSrc.player!.state === 'rest')) videoSrc = hov;
   for (const s of sources) s.player?.step(dt, s === hov && s === videoSrc);
-  videoMix = videoSrc ? videoSrc.player.mix : 0;
-  if (videoSrc && videoSrc.player.state === 'rest' && videoSrc !== hov) videoSrc = null;
+  videoMix = videoSrc ? videoSrc.player!.mix : 0;
+  if (videoSrc && videoSrc.player!.state === 'rest' && videoSrc !== hov) videoSrc = null;
 }
 
 // ---------- card textures ----------
 
 // The part of an image (fractions) that covers a media area of aspect ma, zoomed by the card's framing [zoom, x, y].
 // x and y place the crop like CSS object-position, so stills, clips, and the DOM fallback frame the same way.
-function coverRect(ia, ma, [z, px, py]) {
+function coverRect(ia: number, ma: number, [z, px, py]: number[]) {
   const w = Math.min(1, ma / ia) / z, h = Math.min(1, ia / ma) / z;
   return [px * (1 - w), py * (1 - h), w, h];
 }
@@ -2708,11 +2809,12 @@ function coverRect(ia, ma, [z, px, py]) {
 // a fine inset frame and a few faint veins), and its lid (inside: plain stock and the fold; outside: the tuck flap's
 // pen outline). The box's open end is its left edge, toward the page; the lid is hinged there.
 const BOX_NAMES = ['projects', 'research'];
-function paintBox(x, s, S) {
+type Ctx = OffscreenCanvasRenderingContext2D;
+function paintBox(x: Ctx, s: Card, S: number) {
   const w = s.w, h = s.h, t = BOX_T, fh = h - t, lid = Math.round((h - 12 - t) * 0.13); // the tuck flap's width (boxSize)
   x.save(); x.scale(S, S); x.clearRect(0, 0, w, h);
-  const poly = (...p) => { x.beginPath(); x.moveTo(...p[0]); for (const q of p.slice(1)) x.lineTo(...q); x.closePath(); };
-  const line = (a, b, color, width = 1) => { x.strokeStyle = color; x.lineWidth = width; x.beginPath(); x.moveTo(...a); x.lineTo(...b); x.stroke(); };
+  const poly = (...p: [number, number][]) => { x.beginPath(); x.moveTo(...p[0]); for (const q of p.slice(1)) x.lineTo(...q); x.closePath(); };
+  const line = (a: [number, number], b: [number, number], color: string, width = 1) => { x.strokeStyle = color; x.lineWidth = width; x.beginPath(); x.moveTo(...a); x.lineTo(...b); x.stroke(); };
   // The wall facing down the page, in the shade of the light from the upper left; darker toward the desk.
   let g = x.createLinearGradient(0, fh, 0, h); g.addColorStop(0, '#d3ccbb'); g.addColorStop(1, '#ada48f');
   poly([t, fh], [w, fh], [w - t, h], [0, h]); x.fillStyle = g; x.fill();
@@ -2744,7 +2846,7 @@ function paintBox(x, s, S) {
   x.restore();
 }
 // A few faint veins of ink in a rect of board: n points, each joined to its two nearest by a curved stroke.
-function paintVeins(x, [x0, y0, vw, vh], r, n, alpha) {
+function paintVeins(x: Ctx, [x0, y0, vw, vh]: number[], r: () => number, n: number, alpha: number) {
   x.save(); x.beginPath(); x.rect(x0, y0, vw, vh); x.clip();
   const pts = Array.from({ length: n }, () => [x0 + r() * vw, y0 + r() * vh]);
   x.strokeStyle = TOK.ink; x.globalAlpha = alpha; x.lineCap = 'round';
@@ -2757,11 +2859,11 @@ function paintVeins(x, [x0, y0, vw, vh], r, n, alpha) {
 // The flying box's faces besides its front (which is the painting's front panel), at device resolution: the shaded wall
 // and the open end taken from the painting itself (each parallelogram there unsheared to its face), so its first frame
 // in the air is the painting; plain board for the walls the painting never shows, and the inside.
-function paintFaces(s0, S0, tile) {
+function paintFaces(s0: Card, S0: number, tile: OffscreenCanvas) {
   const S = S0 * (s0.k || 1), s = design(s0), t = BOX_T, fh = s.h - t, a = BOX3D.a, W = s.w - t, H = s.h - t, D = t / a;
-  const face = (fw, fhh, paint) => { const c = new OffscreenCanvas(Math.ceil(fw * S), Math.ceil(fhh * S)), x = c.getContext('2d'); x.scale(S, S); paint(x, fw, fhh); return c; };
-  const from = (x, m) => { x.save(); x.setTransform(...m); x.drawImage(tile, 0, 0); x.restore(); }; // the painting, mapped (device px) onto the face
-  const board = (x, fw, fhh, seed, n) => {
+  const face = (fw: number, fhh: number, paint: (x: Ctx, fw: number, fhh: number) => void) => { const c = new OffscreenCanvas(Math.ceil(fw * S), Math.ceil(fhh * S)), x = c.getContext('2d')!; x.scale(S, S); paint(x, fw, fhh); return c; };
+  const from = (x: Ctx, m: [number, number, number, number, number, number]) => { x.save(); x.setTransform(...m); x.drawImage(tile, 0, 0); x.restore(); }; // the painting, mapped (device px) onto the face
+  const board = (x: Ctx, fw: number, fhh: number, seed: number, n: number) => {
     const g = x.createLinearGradient(0, 0, fw, fhh); g.addColorStop(0, '#fbf9f3'); g.addColorStop(1, TOK.stock);
     x.fillStyle = g; x.fillRect(0, 0, fw, fhh);
     if (n) paintVeins(x, [7, 7, fw - 14, fhh - 14], rng(seed), n, 0.16);
@@ -2788,7 +2890,7 @@ function paintFaces(s0, S0, tile) {
 // hinged on its right): plain stock, on the base's span below the clear strip. Outside (closed over the open end, seen
 // mirrored, hinged on its left): the end wall, lit, standing between the base's edge and the front panel's, then the flap
 // lying on the front panel, its rounded corners in pen.
-function paintLid(x, s, S, outside) {
+function paintLid(x: Ctx, s: Card, S: number, outside: boolean) {
   const w = s.w, h = s.h, t = BOX_T, fh = h - t;
   x.save(); x.scale(S, S); x.clearRect(0, 0, w, h);
   x.strokeStyle = TOK.inkLine; x.lineWidth = 1;
@@ -2809,18 +2911,18 @@ function paintLid(x, s, S, outside) {
   }
   x.restore();
 }
-function drawCard(s0, S0) {
+function drawCard(s0: Card, S0: number) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
-  const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d');
+  const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d')!;
   x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
-  if (s.kind === 'note') x.fillStyle = TOK.noteStrip, x.fillRect(0, 0, cw, STRIP * S); // the sticky strip is a touch darker
-  let mediaPx = null;
+  if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, cw, STRIP * S); } // the sticky strip is a touch darker
+  let mediaPx: Rect | null = null;
   if (s.media) {
     const m = s.media;
     mediaPx = { x: Math.round(m.x * S), y: Math.round(m.y * S), w: Math.round(m.w * S), h: Math.round(m.h * S) };
-    const src = s.img;
+    const src = s.img!; // a card with media has its picture
     const iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
     const [fx, fy, fw, fh] = coverRect(iw / ih, mediaPx.w / mediaPx.h, s.frame);
     x.imageSmoothingQuality = 'high';
@@ -2829,21 +2931,21 @@ function drawCard(s0, S0) {
   x.scale(S, S);
   x.textBaseline = 'alphabetic';
   if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or the polaroid's line centered
-    s.lines.forEach((l, i) => {
-      const last = i === s.lines.length - 1;
+    s.lines!.forEach((l, i) => {
+      const last = i === s.lines!.length - 1;
       x.font = font(s.titled ? (last ? 400 : 600) : 500); x.fillStyle = s.titled ? (last ? TOK.muted : TOK.text) : TOK.body;
       x.textAlign = s.titled ? 'left' : 'center';
-      x.fillText(l, s.titled ? s.media.x : s.w / 2, s.baseline + i * CAP_LH());
+      x.fillText(l, s.titled ? s.media!.x : s.w / 2, s.baseline! + i * CAP_LH());
     });
   } else if (s.kind === 'paper') {
     x.fillStyle = TOK.body; x.fillRect(0, 0, 3, s.h);
     x.font = font(600, 16); x.fillStyle = TOK.text;
-    s.lines.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
+    s.lines!.forEach((l, i) => x.fillText(l, 21, 16 + 16 + i * 21.5));
     x.font = font(400); x.fillStyle = TOK.muted;
-    x.fillText(s.sub, 21, 16 + s.lines.length * 21.5 + 6 + 13);
+    x.fillText(s.sub!, 21, 16 + s.lines!.length * 21.5 + 6 + 13);
   } else if (s.kind === 'note') {
     x.font = HAND; x.fillStyle = TOK.text2;
-    s.lines.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
+    s.lines!.forEach((l, i) => x.fillText(l, 16, 14 + 19 + i * 26.5));
   }
   return { canvas: c, mediaPx };
 }
@@ -2859,14 +2961,15 @@ function drawCard(s0, S0) {
 // Every back uses one type scale and an 8px spacing grid, and its first baseline sits 32px below its top edge. Material
 // follows the front: paper cards stay paper, the polaroid's back is matte photo-paper stock, the note stays yellow.
 // Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
-const BACK_STYLES = {
+interface BackStyle { underline: string; note: string; postcard?: boolean; ruled?: boolean }
+const BACK_STYLES: Record<string, BackStyle> = {
   postcard: { underline: 'pen', note: 'pen', postcard: true },
   quiet: { underline: 'line', note: 'icons' },
   index: { underline: 'line', note: 'ruled', ruled: true },
   pen: { underline: 'pen', note: 'pen' },
 };
 const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
-const STOCK = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
+const STOCK: Record<string, string> = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
 const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
   get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
@@ -2882,7 +2985,7 @@ const BK = {
   get gap() { return (T.backTight ? 12 : 16) * TS; }, get bottom() { return BK.pad - 7 + 13 * TS; }, strip: 32,
 };
 // Small monochrome marks for the note's links (quiet), by link text; 24-unit boxes except GitHub (16).
-const ICONS = {
+const ICONS: Record<string, [number, string]> = {
   GitHub: [16, 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z'],
   Scholar: [24, 'M5.242 13.769L0 9.5 12 0l12 9.5-5.242 4.269C17.548 11.249 14.978 9.5 12 9.5c-2.977 0-5.548 1.748-6.758 4.269zM12 10a7 7 0 1 0 0 14 7 7 0 0 0 0-14z'],
   LinkedIn: [24, 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z'],
@@ -2890,15 +2993,22 @@ const ICONS = {
   Kaggle: [24, 'M18.825 23.859c-.022.092-.117.141-.281.141h-3.139c-.187 0-.351-.082-.492-.248l-5.178-6.589-1.448 1.374v5.111c0 .235-.117.352-.351.352H5.505c-.236 0-.354-.117-.354-.352V.353c0-.233.118-.353.354-.353h2.431c.234 0 .351.12.351.353v14.343l6.203-6.272c.165-.165.33-.246.495-.246h3.239c.144 0 .236.06.281.18.046.149.034.255-.036.315l-6.555 6.344 6.836 8.507c.095.104.117.208.075.339z'],
   Resume: [24, 'M6 1.5h8.5L20 7v14a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 4.5 21V3A1.5 1.5 0 0 1 6 1.5zm7.5 1.8V8h4.7zM8 12v1.6h8V12zm0 4v1.6h8V16z'],
 };
-const backStyle = (s) => { const st = BACK_STYLES[T.backs] || BACK_STYLES.postcard; return st.postcard && s?.kind !== 'photo' ? BACK_STYLES.pen : st; };
+const backStyle = (s?: Card) => { const st = BACK_STYLES[T.backs] || BACK_STYLES.postcard; return st.postcard && s?.kind !== 'photo' ? BACK_STYLES.pen : st; };
 // The postcard back: where the divider sits (a share of the width), the gap either side of it, the stamp (w, h), and how
 // many ruled address lines it has (at least one per link).
 const PC = { split: 0.62, get gutter() { return T.backTight ? 10 : 14; }, get stamp() { return T.backTight ? [34, 40] : [40, 48]; }, get lines() { return T.backTight ? 1 : 3; } };
 
 // A link: its text at (x, base) and its hit area (a 24px row, 4px wider than the text on each side).
-const linkAt = (a, x, base, tw, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
+const linkAt = (a: HTMLAnchorElement, x: number, base: number, tw: number, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
 
-function backLayout(s, b = s) {
+// A back's layout: its lines of copy, its links, and how tall it needs to be (need); a postcard's columns or a ruled back's rules.
+type Link = ReturnType<typeof linkAt>;
+interface BackLine { t: string; f: { font: string; color: string }; y: number }
+type Postcard = { stacked?: undefined; divX: number; x0: number; x1: number; base0: number; n: number } | { stacked: true; x0: number; x1: number; base0: number; n: number };
+interface BackLayout { st: BackStyle; lines: BackLine[]; links: Link[]; w: number; h: number; need: number; strip?: string | null; ruleTop?: number | null; ruleEnd?: number; postcard?: Postcard }
+type Row = [HTMLAnchorElement, number, number][]; // a row of links: each with its x and text width
+// b: the size to lay out at (the card's own by default); nothing sets a title on it, so the title falls back to the front's lines.
+function backLayout(s: Card, b: CardBox & { title?: string } = s): BackLayout {
   const st = backStyle(s), w = b.w, m = measure(), { pad, row } = BK;
   if (st.postcard) return postcardLayout(s, b);
   if (s.kind === 'note') {
@@ -2906,16 +3016,16 @@ function backLayout(s, b = s) {
     const hand = st.note !== 'icons', f = hand ? TYPE.noteHand : TYPE.noteLink, x0 = pad + (hand ? 0 : 20);
     m.font = f.font;
     // Tighter backs set the list in two columns when one would not fit.
-    const n = s.backLinks.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
-    const links = s.backLinks.map((a, i) => linkAt(a, x0 + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), BK.first + (i % per) * row, m.measureText(a.textContent).width));
+    const n = s.backLinks!.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
+    const links = s.backLinks!.map((a, i) => linkAt(a, x0 + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), BK.first + (i % per) * row, m.measureText(a.textContent!).width));
     return { st, lines: [], links, w, h: b.h, need: BK.first + (per - 1) * row + BK.bottom + STRIP }; // clear of the strip along its bottom
   }
   // No label line: it only repeated the front's caption (Clark: no redundancy).
   const title = T.backTitle ? s.backTitle ?? (b.title || b.lines?.join(' ') || '') : '', label = ''; // the title can stay on the front only
   const strip = st.ruled && label && s.kind !== 'polaroid'; // index: the label gets its own strip along the top
-  const lines = [];
+  const lines: BackLine[] = [];
   let y = BK.first + (strip ? BK.strip : 0) - TYPE.title.lh, gapNext = 0;
-  const add = (t, kind) => {
+  const add = (t: string, kind: 'title' | 'label' | 'body') => {
     const f = TYPE[kind];
     y += gapNext;
     wrapLines(t, w - 2 * pad, f.font).forEach((l, i) => { y += i || kind !== 'label' ? f.lh : 18; lines.push({ t: l, f, y }); });
@@ -2923,18 +3033,18 @@ function backLayout(s, b = s) {
   if (title) add(title, 'title');
   if (label && !strip) add(label, 'label');
   // Paragraphs: 8px apart; on ruled cards each one just starts on the next rule.
-  let ruleTop = null;
+  let ruleTop: number | null = null;
   if (strip || (st.ruled && s.kind !== 'polaroid')) { ruleTop = y + 10; y = ruleTop + 15 - TYPE.body.lh; }
   gapNext = ruleTop == null ? 8 : 0;
-  s.backParas.forEach((t) => { add(t, 'body'); gapNext = ruleTop == null ? 8 : 0; });
+  s.backParas!.forEach((t) => { add(t, 'body'); gapNext = ruleTop == null ? 8 : 0; });
   // Links: ink text in rows along the bottom, the last baseline 22px above the bottom edge (top, on a back with no text).
   m.font = TYPE.link.font;
-  const rows = [[]];
+  const rows: Row[] = [[]];
   let x = pad;
-  for (const a of s.backLinks) {
-    const tw = m.measureText(a.textContent).width;
+  for (const a of s.backLinks!) {
+    const tw = m.measureText(a.textContent!).width;
     if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; }
-    rows.at(-1).push([a, x, tw]); x += tw + BK.gap;
+    rows.at(-1)!.push([a, x, tw]); x += tw + BK.gap;
   }
   // Ruled: the links sit on rules too (at least one empty rule above them), and their rule darkens as the underline.
   const pitch = ruleTop == null ? row : TYPE.body.lh, lift = ruleTop == null ? 32 : 2 * TYPE.body.lh;
@@ -2947,18 +3057,18 @@ function backLayout(s, b = s) {
 
 // The message (title, then the back copy) from the same first baseline as every back, in the column left of the divider;
 // the links on the address lines, which sit at the bottom of the right column, the last 22px above the bottom edge.
-function postcardLayout(s, b) {
+function postcardLayout(s: Card, b: CardBox & { title?: string }): BackLayout {
   const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK;
   m.font = TYPE.link.font; // the divider moves left if a link would not fit on its address line
-  const divX = Math.min(Math.round(w * PC.split), Math.floor(w - pad - PC.gutter - Math.max(...s.backLinks.map((a) => m.measureText(a.textContent).width)))), colW = divX - pad - PC.gutter, lines = [];
+  const divX = Math.min(Math.round(w * PC.split), Math.floor(w - pad - PC.gutter - Math.max(...s.backLinks!.map((a) => m.measureText(a.textContent!).width)))), colW = divX - pad - PC.gutter, lines: BackLine[] = [];
   let y = BK.first - TYPE.title.lh;
-  const add = (t, kind, gap) => { y += gap; wrapLines(t, colW, TYPE[kind].font).forEach((l) => { y += TYPE[kind].lh; lines.push({ t: l, f: TYPE[kind], y }); }); };
+  const add = (t: string, kind: 'title' | 'body', gap: number) => { y += gap; wrapLines(t, colW, TYPE[kind].font).forEach((l) => { y += TYPE[kind].lh; lines.push({ t: l, f: TYPE[kind], y }); }); };
   const title = T.backTitle ? s.backTitle ?? b.title ?? '' : ''; // the title can stay on the front only
   if (title) add(title, 'title', 0);
-  s.backParas.forEach((t, i) => add(t, 'body', title || i ? 8 : 0));
+  s.backParas!.forEach((t, i) => add(t, 'body', title || i ? 8 : 0));
   m.font = TYPE.link.font;
-  const x0 = divX + PC.gutter, x1 = w - pad, n = Math.max(PC.lines, s.backLinks.length), base0 = h - BK.bottom - (n - 1) * row;
-  const links = s.backLinks.map((a, i) => linkAt(a, x0, base0 + i * row, m.measureText(a.textContent).width));
+  const x0 = divX + PC.gutter, x1 = w - pad, n = Math.max(PC.lines, s.backLinks!.length), base0 = h - BK.bottom - (n - 1) * row;
+  const links = s.backLinks!.map((a, i) => linkAt(a, x0, base0 + i * row, m.measureText(a.textContent!).width));
   const stampBottom = pad - 2 + PC.stamp[1], wide = links.some((k) => k.tx + k.tw > x1);
   const need = wide ? Infinity : Math.max(Math.ceil(y + BK.bottom), stampBottom + 12 + 16 + (n - 1) * row + BK.bottom);
   if (need <= h) return { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
@@ -2966,10 +3076,10 @@ function postcardLayout(s, b) {
 }
 // A smaller card's postcard back when the columns will not hold its message: the message runs the full width (beside
 // the stamp at the top), and the links share one ruled line along the bottom (a second if they must).
-function stackedPostcard(s, b) {
+function stackedPostcard(s: Card, b: CardBox): BackLayout | null {
   const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK, [sw, sh] = PC.stamp, stampBottom = pad - 2 + sh;
-  const lines = []; let y = BK.first - TYPE.body.lh;
-  s.backParas.forEach((t, i) => {
+  const lines: BackLine[] = []; let y = BK.first - TYPE.body.lh;
+  s.backParas!.forEach((t, i) => {
     y += i ? 8 : 0; m.font = TYPE.body.font;
     let line = '';
     const width = () => (y + TYPE.body.lh - 13 * TS < stampBottom + 4 ? w - 2 * pad - sw - 10 : w - 2 * pad); // beside the stamp, then full
@@ -2980,8 +3090,8 @@ function stackedPostcard(s, b) {
     if (line) { y += TYPE.body.lh; lines.push({ t: line, f: TYPE.body, y }); }
   });
   m.font = TYPE.link.font;
-  const rows = [[]]; let x = pad;
-  for (const a of s.backLinks) { const tw = m.measureText(a.textContent).width; if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; } rows.at(-1).push([a, x, tw]); x += tw + BK.gap; }
+  const rows: Row[] = [[]]; let x = pad;
+  for (const a of s.backLinks!) { const tw = m.measureText(a.textContent!).width; if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; } rows.at(-1)!.push([a, x, tw]); x += tw + BK.gap; }
   const base0 = h - BK.bottom - (rows.length - 1) * row;
   const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * row, tw)));
   const need = Math.ceil(y + row + (rows.length - 1) * row + BK.bottom);
@@ -2989,16 +3099,16 @@ function stackedPostcard(s, b) {
 }
 // OKLab blend of an sRGB hex toward another hex's hue at the first one's lightness and chroma (mix 0 to 1): the stamp's
 // olive ink with a cast of the project's color.
-function tintHex(baseHex, hueHex, mix) {
+function tintHex(baseHex: string, hueHex: string, mix: number) {
   const [L, a0, b0] = oklab(hexRGB(baseHex)), c = oklab(hexRGB(hueHex)), C = Math.hypot(a0, b0), hh = Math.atan2(c[2], c[1]);
   const [r, g, bl] = fromOklab([L, a0 + mix * (C * Math.cos(hh) - a0), b0 + mix * (C * Math.sin(hh) - b0)]);
   return `rgb(${r.toFixed(0)}, ${g.toFixed(0)}, ${bl.toFixed(0)})`;
 }
 // A small postage stamp: perforated paper, a fine frame, and a few slime cells (seeded by the card) in the tinted ink.
-function paintStamp(x, x0, y0, sw, sh, ink, seed) {
+function paintStamp(x: Ctx, x0: number, y0: number, sw: number, sh: number, ink: string, seed: number) {
   x.fillStyle = TOK.stockWarm; x.fillRect(x0, y0, sw, sh);
   x.fillStyle = TOK.stock; // the perforation: little bites along every edge
-  const bite = (cx, cy) => { x.beginPath(); x.arc(cx, cy, 1.5, 0, 2 * Math.PI); x.fill(); };
+  const bite = (cx: number, cy: number) => { x.beginPath(); x.arc(cx, cy, 1.5, 0, 2 * Math.PI); x.fill(); };
   for (let i = 0, n = Math.round(sw / 4.5); i <= n; i++) { bite(x0 + (i * sw) / n, y0); bite(x0 + (i * sw) / n, y0 + sh); }
   for (let i = 1, n = Math.round(sh / 4.5); i < n; i++) { bite(x0, y0 + (i * sh) / n); bite(x0 + sw, y0 + (i * sh) / n); }
   const ix = x0 + 4.5, iy = y0 + 4.5, iw = sw - 9, ih = sh - 9, r = rng(seed * 2654435761 + 1);
@@ -3018,8 +3128,8 @@ function paintStamp(x, x0, y0, sw, sh, ink, seed) {
   x.restore();
   x.strokeStyle = ink; x.lineWidth = 0.8; x.strokeRect(ix + 0.4, iy + 0.4, iw - 0.8, ih - 0.8);
 }
-function drawPostcard(x, s, L) {
-  const P = L.postcard, { w, h } = L, { pad, row } = BK;
+function drawPostcard(x: Ctx, s: Card, L: BackLayout) {
+  const P = L.postcard!, { w, h } = L, { pad, row } = BK;
   if (!P.stacked) { x.fillStyle = '#a5a9708c'; x.fillRect(P.divX, pad, 1, h - 2 * pad); } // the divider, a thin olive rule
   const [sw, sh] = PC.stamp;
   paintStamp(x, w - pad - sw + 2, pad - 2, sw, sh, tintHex(TOK.inkLine, s.hueHex, 0.45), s.id + 1);
@@ -3027,35 +3137,35 @@ function drawPostcard(x, s, L) {
   for (let i = 0; i < P.n; i++) x.fillRect(P.x0 - 2, P.base0 + i * row + 5, P.x1 - P.x0 + 2, 1);
   for (const l of L.lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
   for (const k of L.links) { // written on its line, which darkens under it as its underline
-    x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(k.a.textContent, k.tx, k.base);
+    x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(k.a.textContent!, k.tx, k.base);
     x.fillStyle = TOK.inkLine; x.fillRect(k.tx, k.base + 5, k.tw, 1);
   }
 }
 
 // Deterministic noise, so the atlas looks the same on every build.
-function rng(seed) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
+function rng(seed: number) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
 // Matte stock: a faint, fine grain (photo-paper backs and the note).
-function grain(x, cw, ch, amt, seed) {
+function grain(x: Ctx, cw: number, ch: number, amt: number, seed: number) {
   const img = x.getImageData(0, 0, cw, ch), d = img.data, r = rng(seed);
   for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * amt; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
   x.putImageData(img, 0, 0);
 }
 // A hand-drawn underline: a slightly wavering, slightly tilted stroke that starts and ends a touch past the word.
-function penLine(x, x0, x1, y, seed, width) {
+function penLine(x: Ctx, x0: number, x1: number, y: number, seed: number, width: number) {
   const r = rng(seed * 7919 + 17), tilt = (r() - 0.5) * 1.2, ph = r() * 6.28, n = Math.max(4, Math.round((x1 - x0) / 6));
   x.beginPath();
   for (let i = 0; i <= n; i++) {
     const u = i / n, px = x0 - 2 + (x1 - x0 + 3) * u;
     const py = y + tilt * (u - 0.5) + Math.sin(ph + u * 5) * 0.45;
-    i ? x.lineTo(px, py) : x.moveTo(px, py);
+    if (i) x.lineTo(px, py); else x.moveTo(px, py);
   }
   x.lineWidth = width; x.lineCap = 'round'; x.lineJoin = 'round'; x.stroke();
 }
 
-function drawBack(s0, S0) {
+function drawBack(s0: Card, S0: number) {
   const S = S0 * (s0.k || 1), s = design(s0), L = backLayout(s), { st, lines, links, w, h } = L, { pad } = BK; // design px
   const cw = Math.ceil(s0.w * S0), chh = Math.ceil(s0.h * S0);
-  const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true });
+  const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true })!;
   x.fillStyle = STOCK[s.kind]; x.fillRect(0, 0, cw, chh);
   if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
@@ -3072,7 +3182,7 @@ function drawBack(s0, S0) {
   if (L.ruleTop != null) {
     x.fillStyle = '#5c5f4a99'; x.fillRect(pad - 4, L.ruleTop, w - 2 * pad + 8, 1);
     x.fillStyle = '#a5a97047';
-    for (let ry = L.ruleTop + TYPE.body.lh; ry <= L.ruleEnd; ry += TYPE.body.lh) x.fillRect(pad - 4, ry, w - 2 * pad + 8, 1);
+    for (let ry = L.ruleTop + TYPE.body.lh; ry <= L.ruleEnd!; ry += TYPE.body.lh) x.fillRect(pad - 4, ry, w - 2 * pad + 8, 1);
   }
   if (s.kind === 'note' && st.note === 'ruled') {
     x.fillStyle = '#c9b95e66';
@@ -3080,7 +3190,7 @@ function drawBack(s0, S0) {
   }
   for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
   links.forEach((k, i) => {
-    const t = k.a.textContent;
+    const t = k.a.textContent!;
     if (s.kind === 'note') {
       const hand = st.note !== 'icons';
       x.font = hand ? TYPE.noteHand.font : TYPE.noteLink.font; x.fillStyle = NOTE_INK;
@@ -3100,29 +3210,32 @@ function drawBack(s0, S0) {
   });
   return { canvas: c, links, w, h };
 }
-function drawLidOutside(s, S) {
+function drawLidOutside(s: Card, S: number) {
   const c = new OffscreenCanvas(Math.ceil(s.w * S), Math.ceil(s.h * S));
-  paintLid(c.getContext('2d'), design(s), S * (s.k || 1), true);
+  paintLid(c.getContext('2d')!, design(s), S * (s.k || 1), true);
   return { canvas: c, links: [], w: s.w, h: s.h };
 }
 // A card at its design size (what it is drawn and laid out in; the desk shows it at its card scale).
-const design = (s) => (s.k && s.k !== 1 ? { ...s, w: s.w / s.k, h: s.h / s.k } : s);
+const design = (s: Card): Card => (s.k && s.k !== 1 ? { ...s, w: s.w / s.k, h: s.h / s.k } : s);
 // The DOM links sit exactly on the drawn ones, as their hit areas.
-function placeBackLinks(s, links) {
+function placeBackLinks(_s: Card, links: Link[]) {
   for (const k of links) Object.assign(k.a.style, { left: k.x + 'px', top: k.y + 'px', width: k.w + 'px', height: k.h + 'px' });
 }
 // Without WebGPU the DOM shows the same drawn back, as the .back's background, with the links over it.
-function paintDomBack(s) {
+function paintDomBack(s: Card) {
   const S = Math.min(3, devicePixelRatio || 1), { canvas: oc, links } = drawBack(s, S);
   const c = Object.assign(document.createElement('canvas'), { width: oc.width, height: oc.height });
-  c.getContext('2d').drawImage(oc, 0, 0);
-  s.backEl.style.backgroundImage = `url(${c.toDataURL()})`;
+  c.getContext('2d')!.drawImage(oc, 0, 0);
+  s.backEl!.style.backgroundImage = `url(${c.toDataURL()})`;
   placeBackLinks(s, links);
 }
 
 // ---------- GPU ----------
 
-let gpu = null, sim = null, tweakSync = null;
+type Gpu = NonNullable<Awaited<ReturnType<typeof initGpu>>>;
+type Shared = ReturnType<typeof createShared> & { label?: { hw: number; hh: number }; labelUV?: number[][]; atlas?: GPUTexture }; // the atlas parts come from buildAtlas
+type Sim = ReturnType<typeof createSim> & { ready?: boolean; pre?: boolean; rate?: number; warmN?: number };
+let gpu: Gpu | null = null, sim: Sim | null = null, tweakSync: (() => void) | null = null;
 let dealing = !reduced; // decks deal cards (no deals with reduced motion or without WebGPU)
 
 // ---------- auto quality ----------
@@ -3130,11 +3243,13 @@ let dealing = !reduced; // decks deal cards (no deals with reduced motion or wit
 // screen so the density per pixel stays the same. A device tier from cheap signals caps it, and a runtime check steps
 // it down (30% at a time, then the sim resolution) if a frame's GPU work runs over budget. Fewer agents deposit more
 // each, so the veins keep their weight. Never above the reference density.
-const Q = { tier: { name: 'high', cap: 1 }, level: 1, shown: 1, resScale: 1, depMul: 1, gpuMs: 0, samples: [], cool: 0, calm: 0, nextCheck: 0, checkUntil: 2.5 };
-function deviceTier(adapter) {
-  const cores = navigator.hardwareConcurrency || 4, mem = navigator.deviceMemory || 4;
+type Quality = { tier: { name: string; cap: number }; level: number; shown: number; resScale: number; depMul: number; gpuMs: number; samples: number[];
+  cool: number; calm: number; nextCheck: number; checkUntil: number; vsync?: number };
+const Q: Quality = { tier: { name: 'high', cap: 1 }, level: 1, shown: 1, resScale: 1, depMul: 1, gpuMs: 0, samples: [], cool: 0, calm: 0, nextCheck: 0, checkUntil: 2.5 };
+function deviceTier(adapter: GPUAdapter) {
+  const cores = navigator.hardwareConcurrency || 4, mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 4; // Chromium only, not in TS's DOM lib
   const phone = matchMedia('(pointer: coarse)').matches || view.phone;
-  if (adapter.info?.isFallbackAdapter || adapter.isFallbackAdapter) return { name: 'low', cap: 0.25 };
+  if (adapter.info?.isFallbackAdapter || (adapter as GPUAdapter & { isFallbackAdapter?: boolean }).isFallbackAdapter) return { name: 'low', cap: 0.25 };
   if (phone || mem <= 4 || cores <= 4) return { name: 'low', cap: 0.35 };
   if (cores >= 8 && mem >= 8) return { name: 'high', cap: 1 };
   return { name: 'mid', cap: 0.6 };
@@ -3142,8 +3257,8 @@ function deviceTier(adapter) {
 const autoOn = () => !!T.auto;
 const simRes = () => T.res * (autoOn() ? Q.resScale : 1);
 // Agents for a page at the reference density, and how many of them run now.
-const refAgents = (cssW, cssH) => Math.max(6000, Math.round((T.agents * cssW * cssH * (simRes() / 0.5) ** 2) / (REF_W * REF_H)));
-const activeAgents = (sm) => Math.max(2000, Math.round(sm.n * (autoOn() ? Q.shown : 1))); // eased toward Q.level
+const refAgents = (cssW: number, cssH: number) => Math.max(6000, Math.round((T.agents * cssW * cssH * (simRes() / 0.5) ** 2) / (REF_W * REF_H)));
+const activeAgents = (sm: Sim) => Math.max(2000, Math.round(sm.n * (autoOn() ? Q.shown : 1))); // eased toward Q.level
 
 const SB = { STORAGE: 0x80, COPY_DST: 0x08, UNIFORM: 0x40 };
 
@@ -3158,12 +3273,12 @@ async function initGpu() {
     Q.tier = deviceTier(adapter);
     const ts = hasTs ? { set: device.createQuerySet({ type: 'timestamp', count: 2 }), resolve: device.createBuffer({ size: 16, usage: 0x0200 | 0x0004 }),
       read: device.createBuffer({ size: 16, usage: 0x0001 | 0x0008 }), busy: false } : null;
-    const ctx = canvas.getContext('webgpu');
+    const ctx = canvas.getContext('webgpu')!; // null throws at configure, into the catch
     const format = navigator.gpu.getPreferredCanvasFormat();
     ctx.configure({ device, format, alphaMode: 'opaque' });
-    const mod = (code) => device.createShaderModule({ code });
-    const comp = (code) => device.createComputePipelineAsync({ layout: 'auto', compute: { module: mod(code), entryPoint: 'main' } });
-    const rend = (video) => { const m = mod(renderWGSL(video)); return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' }, fragment: { module: m, entryPoint: 'fs', targets: [{ format }] } }); };
+    const mod = (code: string) => device.createShaderModule({ code });
+    const comp = (code: string) => device.createComputePipelineAsync({ layout: 'auto', compute: { module: mod(code), entryPoint: 'main' } });
+    const rend = (video: boolean) => { const m = mod(renderWGSL(video)); return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' }, fragment: { module: m, entryPoint: 'fs', targets: [{ format }] } }); };
     const grainMod = mod(GRAIN_WGSL);
     const grainPipe = device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: grainMod, entryPoint: 'vs' }, fragment: { module: grainMod, entryPoint: 'fs', targets: [{ format: 'rg8unorm' }] } });
     const [ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainP, tilePipe, chipR] = await Promise.all([comp(E_WGSL), comp(AGENT_WGSL), comp(DIFFUSE_WGSL), rend(false), rend(true), grainPipe, comp(TILE_WGSL), createChipRenderer(device)]);
@@ -3179,7 +3294,7 @@ async function initGpu() {
 
 // Canvas-sized resources every page shares: the canvas itself, the baked paper grain, and the frozen frame that the
 // outgoing page leaves behind during a page change.
-function createShared(g) {
+function createShared(g: Gpu) {
   const { device } = g;
   const cap = view.phone ? 6.5e6 : 9e6;
   let dev = Math.min(devicePixelRatio || 1, 2);
@@ -3191,7 +3306,7 @@ function createShared(g) {
   view.dpr = dev;
   canvas.width = CW; canvas.height = CH;
   canvas.style.height = cssH + 'px';
-  const tex = (format, usage) => device.createTexture({ size: [CW, CH], format, usage });
+  const tex = (format: GPUTextureFormat, usage: number) => device.createTexture({ size: [CW, CH], format, usage });
   // Two frozen textures alternate, so the pass that captures the outgoing page never samples the one it writes.
   const TX = Math.ceil(CW / TILE), nTiles = TX * Math.ceil(CH / TILE);
   const tiles = device.createBuffer({ size: nTiles * 16, usage: SB.STORAGE });
@@ -3200,13 +3315,13 @@ function createShared(g) {
 }
 
 // One page (main desk or research) gets its own viewport-sized sim; only the active page steps and renders.
-function createSim(g, page) {
+function createSim(g: Gpu, page: number) {
   const { device } = g;
-  const { CW, CH, dev, cssH } = shared;
+  const { CW, CH, dev, cssH } = shared!;
   // The slime runs on a coarser grid (T.res sim px per CSS px), sampled smoothly under crisp cards and text.
   const res = simRes();
   const W = Math.round(view.w * res), H = Math.round(cssH * res), dpr = W / view.w;
-  const tex = (w, h, format, usage) => device.createTexture({ size: [w, h], format, usage });
+  const tex = (w: number, h: number, format: GPUTextureFormat, usage: number) => device.createTexture({ size: [w, h], format, usage });
   const TU = { COPY_DST: 0x02, TEXTURE: 0x04, STORAGE: 0x08, RENDER: 0x10 };
   const trail = [0, 1].map(() => tex(W, H, 'rgba16float', TU.TEXTURE | TU.STORAGE));
   const EW = Math.ceil(W / 2), EH = Math.ceil(H / 2);
@@ -3229,28 +3344,28 @@ function createSim(g, page) {
   // Text mask for this page at device resolution: r = crisp signature, g = the tagline, b = where ink thins behind text.
   // Each layer paints one color channel and 'lighter' adds them, so one canvas uploads all three.
   const mask = tex(CW, CH, 'rgba8unorm', TU.TEXTURE | TU.COPY_DST | TU.RENDER);
-  const mc = new OffscreenCanvas(CW, CH), mx = mc.getContext('2d');
+  const mc = new OffscreenCanvas(CW, CH), mx = mc.getContext('2d')!;
   mx.fillStyle = '#000'; mx.fillRect(0, 0, CW, CH);
   mx.globalCompositeOperation = 'lighter';
   if (page === 0) {
     // The DOM name's own weight and tracking, so the two never drift; both sizes are past Inter's 32px optical size,
     // so the canvas gets the same display cut.
     const ns = getComputedStyle(nameEl);
-    mx.font = `${ns.fontWeight} ${nameBox.size * dev}px Inter`;
+    mx.font = `${ns.fontWeight} ${nameBox!.size * dev}px Inter`; // set by layout, before any sim
     mx.letterSpacing = `${parseFloat(ns.letterSpacing) * dev}px`;
-    const drawName = (color, blur) => { mx.filter = blur ? `blur(${blur * dev}px)` : 'none'; mx.fillStyle = color; mx.fillText('Clark Peng', nameBox.x * dev, nameBox.baseline * dev); };
+    const drawName = (color: string, blur: number) => { mx.filter = blur ? `blur(${blur * dev}px)` : 'none'; mx.fillStyle = color; mx.fillText('Clark Peng', nameBox!.x * dev, nameBox!.baseline * dev); };
     drawName('#f00', 0);
     drawName('#00f', 10); drawName('#00f', 10);
     // Element rects are on screen; the mask is on this page.
     const sy = view.phone ? scrollY : 0, sx = view.phone ? 0 : cam.x - origin;
     // The tagline, drawn here (not by the DOM) so it turns with its page: the DOM's own line breaks and positions.
-    const ts = getComputedStyle(taglineEl), node = taglineEl.firstChild, range = document.createRange();
+    const ts = getComputedStyle(taglineEl), node = taglineEl.firstChild as Text, range = document.createRange();
     // At its CSS size under a scale, so the canvas picks Inter's optical size for 16px, as the DOM does.
     mx.save(); mx.scale(dev, dev);
     mx.filter = 'none'; mx.letterSpacing = '0px'; mx.fillStyle = '#0f0';
     mx.font = `${ts.fontWeight} ${ts.fontSize} Inter`;
     const ascent = mx.measureText('Hg').fontBoundingBoxAscent;
-    let line = null;
+    let line: { t: string; x: number; top: number } | null = null;
     const flush = () => line && mx.fillText(line.t.trimEnd(), line.x + sx, line.top + sy + ascent);
     for (let i = 0; i < node.length; i++) {
       range.setStart(node, i); range.setEnd(node, i + 1);
@@ -3270,9 +3385,9 @@ function createSim(g, page) {
   }
   device.queue.copyExternalImageToTexture({ source: mc }, { texture: mask }, [CW, CH]);
 
-  const bg = (pipe, entries) => device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: entries.map((r, i) => ({ binding: i, resource: r })) });
+  const bg = (pipe: GPUComputePipeline, entries: GPUBindingResource[]) => device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: entries.map((r, i) => ({ binding: i, resource: r })) });
   const U0 = { buffer: g.uniform };
-  const view_ = (t) => t.createView();
+  const view_ = (t: GPUTexture) => t.createView();
   return {
     page, origin, W, H, EW, EH, n, ref, dpr, bloom: 0, trail, etex, dep, agents, mask, parity: 0, t: 0, warm: 0,
     eBG: [0, 1].map((p) => bg(g.ePipe, [U0, view_(etex[p]), view_(etex[1 - p])])),
@@ -3280,19 +3395,19 @@ function createSim(g, page) {
     diffuseBG: [0, 1].map((p) => bg(g.diffusePipe, [U0, { buffer: dep }, view_(trail[p]), view_(trail[1 - p])])),
   };
 }
-function renderEntries(g, sm, extra = []) {
+function renderEntries(g: Gpu, sm: Sim, extra: GPUBindGroupEntry[] = []) {
   return [
     { binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: sm.trail[sm.parity].createView() },
-    { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared.atlas.createView() }, { binding: 4, resource: g.sampler },
-    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } },
+    { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared!.atlas!.createView() }, { binding: 4, resource: g.sampler },
+    { binding: 5, resource: shared!.paper.createView() }, { binding: 6, resource: shared!.frozenTex[shared!.fz].createView() }, { binding: 9, resource: { buffer: shared!.tiles } },
     { binding: 10, resource: g.chipR.view() }, { binding: 11, resource: g.chipR.zView() }, { binding: 12, resource: g.note.view }, ...extra];
 }
 // A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
 // on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
 // only on the desk, when it is turned over. Drawn at the card's size on the desk, landscape or portrait.
-function paintPlainBack(s, S) {
+function paintPlainBack(s: Card, S: number) {
   const cs = view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
-  const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d');
+  const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d')!;
   x.scale(S, S); x.fillStyle = STOCK[s.kind] || TOK.stock; x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
   if (hinged(s)) { x.translate(w, h); x.rotate(Math.PI); } // the note is seen turned over its top edge, not its side
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -3302,9 +3417,9 @@ function paintPlainBack(s, S) {
   x.fillText(BOX_NAMES[region], 0, 2);
   return c;
 }
-async function buildAtlas(g) {
-  const S = shared.dev; // cards rasterize at device resolution
-  const drawn = [];
+async function buildAtlas(g: Gpu) {
+  const S = shared!.dev; // cards rasterize at device resolution
+  const drawn: ReturnType<typeof drawCard>[] = [];
   for (const src of sources) drawn.push(drawCard(src, S));
   const backs = sources.filter((src) => src.backEl || src.lid).map((src) => ({ src, ...(src.lid ? drawLidOutside(src, S) : drawBack(src, S)) }));
   const plainFor = sources.filter(decked), plain = plainFor.map((s) => paintPlainBack(s, S)); // each card's plain deck back, at its own size
@@ -3313,12 +3428,12 @@ async function buildAtlas(g) {
   mc.font = lf;
   const lw = Math.ceil(Math.max(...NAMES.map((t) => mc.measureText(t).width)) + 6 * S), lh = Math.ceil(24 * view.k * S);
   const labels = NAMES.map((t) => {
-    const c = new OffscreenCanvas(lw, lh), x = c.getContext('2d');
+    const c = new OffscreenCanvas(lw, lh), x = c.getContext('2d')!;
     Object.assign(x, { font: lf, fillStyle: '#000', textAlign: 'center', textBaseline: 'middle' });
     x.fillText(t, lw / 2, lh / 2);
     return c;
   });
-  shared.label = { hw: lw / 2 / S, hh: lh / 2 / S };
+  shared!.label = { hw: lw / 2 / S, hh: lh / 2 / S };
   // Shelf-pack the cards into one atlas.
   const AW = Math.min(4096, g.device.limits.maxTextureDimension2D);
   let x = 0, y = 0, rowH = 0;
@@ -3359,8 +3474,8 @@ async function buildAtlas(g) {
     const [a0, b0, a1, b1] = d.faceUV.inner, e = 0.25; // the inside: its middle, clear of its neighbors
     d.faceUV.inner = [a0 + e * (a1 - a0), b0 + e * (b1 - b0), a1 - e * (a1 - a0), b1 - e * (b1 - b0)];
   });
-  shared.labelUV = labelUV;
-  shared.atlas = atlas;
+  shared!.labelUV = labelUV;
+  shared!.atlas = atlas;
   for (const src of sources) if (src.more) tallySetup(src);
 }
 
@@ -3370,34 +3485,34 @@ async function buildAtlas(g) {
 const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
 const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 2; // then the chips: one vec4, and two per chip
 const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
-function invert3(m) {
+function invert3(m: number[]) {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
   return [A, -(b * i - c * h), b * f - c * e, B, a * i - c * g, -(a * f - c * d), C, -(a * h - b * g), a * e - b * d].map((v) => v / det);
 }
-const rodrigues = (v, a, phi) => {
+const rodrigues = (v: number[], a: number[], phi: number) => {
   const c = Math.cos(phi), s = Math.sin(phi), dot = a[0] * v[0] + a[1] * v[1] + a[2] * v[2];
   const cr = [a[1] * v[2] - a[2] * v[1], a[2] * v[0] - a[0] * v[2], a[0] * v[1] - a[1] * v[0]];
   return [0, 1, 2].map((i) => v[i] * c + cr[i] * s + a[i] * dot * (1 - c));
 };
-const easeFlip = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
+const easeFlip = (u: number) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
 // Card plane -> screen homography (sim px): lift height, in-plane rotation, the flip about the card's own vertical axis,
 // and a 3D tilt toward velocity.
 // OKLab <-> 8-bit sRGB, for the mild project inks.
-const oklab = (rgb) => {
+const oklab = (rgb: number[]) => {
   const [r, g, b] = rgb.map(lin);
   const [l, m, s] = [0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b, 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b,
     0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b].map(Math.cbrt);
   return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
 };
-const fromOklab = ([L, A, B]) => {
+const fromOklab = ([L, A, B]: number[]) => {
   const [l, m, s] = [L + 0.3963377774 * A + 0.2158037573 * B, L - 0.1055613458 * A - 0.0638541728 * B, L - 0.0894841775 * A - 1.291485548 * B].map((x) => x ** 3);
   return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
     -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s].map((c) => 255 * clamp(c) ** (1 / 2.2));
 };
 // A closed card's mild ink: its own hue at the shared ink's lightness and chroma, so it sits on the page as calmly as the
 // olive and only the hue changes.
-function mildInk(hex, baseHex, mix = 1) {
+function mildInk(hex: string, baseHex: string, mix = 1) {
   const [L, a0, b0] = oklab(hexRGB(baseHex)), c = oklab(hexRGB(hex)), C = Math.hypot(a0, b0);
   // Blend straight from the shared ink toward the card's own hue (at the shared lightness and chroma), so a small mix is
   // the olive with a faint cast of the card's color; rotating the hue instead would pass through unrelated hues (green).
@@ -3407,30 +3522,32 @@ function mildInk(hex, baseHex, mix = 1) {
 // A click's flip, off the desk: how high its middle is (CSS px) and how far it is from where the card lies, along the
 // card's vertical axis. A card lifts in the first ~22%, turns over in the middle, and lays back down in the last ~22% (the
 // same path in reverse). The note stays on its strip (stepPaper).
-function flipPath(s) {
+function flipPath(s: Card) {
   if (!(s.flip > 0 && s.flip < 1) || hinged(s)) return [0, 0];
   return [(view.phone ? 0.3 : 0.9) * T.lift * smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)), 0]; // on a phone a flip lifts less, so the card stays inside the screen
 }
-// The note as paper (note.js): its pose (x, y on its page, turn th, height z; CSS px), light, profile, and the tile its
+// The note as paper (note.ts): its pose (x, y on its page, turn th, height z; CSS px), light, profile, and the tile its
 // sheet and shadows fit in, from the box they can reach in its frame (the sheet up to 15% nearer the camera), turned.
 const NOTE_U = new Float32Array(24 + (NS + 1) * 4);
-function noteUniform(s, x, y, th, z) {
-  const dev = shared.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * Math.max(T.shadowSoft, 1), L = s.h - STRIP * (s.k || 1);
+function noteUniform(s: Card, x: number, y: number, th: number, z: number) {
+  const dev = shared!.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * Math.max(T.shadowSoft, 1), L = s.h - STRIP * (s.k || 1);
   const X = hw * 1.15 + M + 20, y0 = -hh - L * 1.15 - M, y1 = hh + M + 60, cy = (y0 + y1) / 2, hy = (y1 - y0) / 2;
   const ex = X * Math.abs(c) + hy * Math.abs(n), ey = X * Math.abs(n) + hy * Math.abs(c), t0 = [Math.floor((x - n * cy - ex) * dev), Math.floor((y + c * cy - ey) * dev)];
-  gpu.note.size(Math.ceil(2 * ex * dev) + 2, Math.ceil(2 * ey * dev) + 2);
-  NOTE_U.set([hw, hh, 3, STRIP * (s.k || 1) - hh, x, y, c, n, ...t0, gpu.note.w, gpu.note.h, dev, 1800, z, M,
+  gpu!.note.size(Math.ceil(2 * ex * dev) + 2, Math.ceil(2 * ey * dev) + 2);
+  NOTE_U.set([hw, hh, 3, STRIP * (s.k || 1) - hh, x, y, c, n, ...t0, gpu!.note.w, gpu!.note.h, dev, 1800, z, M,
     c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), T.shadowSoft, L, 0, 0]);
   NOTE_U.set(noteProfile(s), 24);
   return [...t0, Math.hypot(ex, ey) + Math.abs(cy) + s.h];
 }
-function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
+function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, tint = 0, base: string | null = null, hueMix = 1) {
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
-  let [fz, fv] = flipPath(s), lift = Math.max(s.lift, fz / T.lift, s.flyLift);
+  let [fz, fv] = flipPath(s);
+  const lift = Math.max(s.lift, fz / T.lift, s.flyLift);
   let [sx, sy, sr] = shown(s);
-  let th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
+  let th = (sr * Math.PI) / 180 + s.sway;
+  const sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
   // The note as paper: past half way, the slime and its landing see it where it lies, over its strip.
-  const mesh = noteMesh(s), yh = STRIP * (s.k || 1) - s.h / 2, lo = mesh ? Math.min(yh + s.ch.x[2 * s.ch.n] * (s.k || 1), -s.h / 2) : 0, tile = mesh && noteUniform(s, sx - originX, sy, th, lift * T.lift);
+  const mesh = noteMesh(s), yh = STRIP * (s.k || 1) - s.h / 2, lo = mesh ? Math.min(yh + s.ch!.x[2 * s.ch!.n] * (s.k || 1), -s.h / 2) : 0, tile = mesh && noteUniform(s, sx - originX, sy, th, lift * T.lift);
   if (mesh && s.flip > 0.5) fv = (lo + yh) / 2;
   sx -= Math.sin(th) * fv; sy += Math.cos(th) * fv;
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
@@ -3440,11 +3557,11 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   let z = lift * T.lift, fade = 0, H = null, flags = hz ? 1 : 0;
-  const looks = (m) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
+  const looks = (m: number[]) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
   let lv = looks(mv), shd = boxShadow(s, dpr, (s.w * dpr) / 2, (s.h * dpr) / 2).slice(0, 7);
   if (s.carrier === s) { // the flying box itself: only its shadow on what is under it (its faces are drawn on their own)
-    const P = launchPose(s), [ang, fx, fy] = P.foot, u = (1 - P.w) * shd[1]; // from its base's place in the painting
-    sx += P.C[0] - s.launch.x; sy += P.C[1] - s.launch.y; z += Math.max(0, P.low); fade = P.fade;
+    const P = launchPose(s), [ang, fx, fy] = P.foot!, u = (1 - P.w) * shd[1]; // from its base's place in the painting
+    sx += P.C[0] - s.launch!.x; sy += P.C[1] - s.launch!.y; z += Math.max(0, P.low); fade = P.fade;
     th = ang; lv = 1; flags = 8; shd = [-u, u, fx * dpr, fy * dpr, ...shd.slice(4)];
   } else if (s.carrier) { // riding in it: seen by the box's eye
     const d = s.carrier, P = launchPose(d), i = d.pile.indexOf(s), a = (d.rot * Math.PI) / 180;
@@ -3477,16 +3594,16 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
 
 // The card box stands on its base (its shadow falls from there, not from the front panel raised above it), and its
 // texture's alpha is part of its shape; its lid lies on the desk's level the same way. Every other card: its whole face.
-function boxShadow(s, dpr, hw, hh) {
+function boxShadow(s: Card, dpr: number, hw: number, hh: number) {
   if (s.kind !== 'deck') return [0, 0, hw, hh, 0, 0, 0, 0];
   const t = (BOX_T * (s.k || 1) * dpr) / 2;
   return s.lid ? [0, t, hw, hh - t, 1, 0.04, 0, 0] : [-t, t, hw - t, hh - t, 1, 0.12, 9, 0]; // obj.z: how much higher than a card its far shadow falls from (CSS px)
 }
 // Paper: an open card emits its full ink; a closed one a tint share of its mild ink. Blends between them as it opens.
-function inkOn(s, tint, base, hueMix = 1) {
-  const full = absorbance(hexRGB(s.inkHex));
+function inkOn(s: Card, tint: number, base: string | null, hueMix = 1) {
+  const full = absorbance(hexRGB(s.inkHex!)); // called only for an inked card
   if (!tint || !base) return [...full, s.emit];
-  const mild = mildInk(s.inkHex, base, hueMix), w = Math.max(s.emit, tint), u = s.emit / w;
+  const mild = mildInk(s.inkHex!, base, hueMix), w = Math.max(s.emit, tint), u = s.emit / w;
   return [...mild.map((m, i) => m + (full[i] - m) * u), w];
 }
 
@@ -3496,14 +3613,14 @@ const NAME_ABS = absorbance(NAME_INK);
 // from the frame before a sim resolution change.
 let capturing = false;
 const trans = { fade: 0 };
-function writeUniforms(g, sm = sim, hold = false) {
-  const s = sm, d = s.dpr, dev = shared.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
+function writeUniforms(g: Gpu, sm: Sim = sim!, hold = false) {
+  const s = sm, d = s.dpr, dev = shared!.dev, st = STYLE[PAGE_NAMES[s.page]], jm = isJ(s);
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = view.phone ? 0 : s === sim ? cam.x : s.origin, sy = view.phone ? scrollY : 0; // a page warming in the background sees its own view
   for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, view.phone ? s.origin : src.region * view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
   // A flying box is drawn as a box (its faces in the slots after the cards'), with what rides in it in its own order.
   let slot = sources.length;
-  const fly = (ids) => ids.flatMap((id) => {
+  const fly = (ids: number[]) => ids.flatMap((id) => {
     const x = sources[id];
     if (x.carrier && x.carrier !== x) return [];
     if (x.carrier !== x) return [id];
@@ -3521,8 +3638,8 @@ function writeUniforms(g, sm = sim, hold = false) {
   const vs = videoSrc;
   let vu = [0, 0, 1, 1];
   if (vs) {
-    const el = vs.player.a;
-    vu = coverRect((el.videoWidth || 16) / (el.videoHeight || 9), vs.media.w / vs.media.h, vs.frame);
+    const el = vs.player!.a; // the video source is a card with a player and media
+    vu = coverRect((el.videoWidth || 16) / (el.videoHeight || 9), vs.media!.w / vs.media!.h, vs.frame);
   }
   { const now = performance.now(), dt = Math.min(0.1, (now - (focusAt || now)) / 1000); focusAt = now;
     // While any card is flipping, the background snaps back toward sharp; afterwards it follows the hover again. Same smoothing.
@@ -3534,24 +3651,24 @@ function writeUniforms(g, sm = sim, hold = false) {
     T.sd * d, T.sa, T.turn, 0,
     T.respawn, T.edge, sources.length, clock.frame,
     (cursor.x - s.origin) * d, cursor.y * d, cursor.amt, 0.94, 0.6, 0.4, st.gain, st.gamma,
-    ...absorbance(hexRGB(st.ink)), s.W / shared.CW, ...NAME_ABS, Math.max(1, Math.round(1 / T.share)),
-    vs ? vs.id : -1, videoMix, vs?.player.fading ? clamp(vs.player.fade) : 0, dev * view.k,
+    ...absorbance(hexRGB(st.ink)), s.W / shared!.CW, ...NAME_ABS, Math.max(1, Math.round(1 / T.share)),
+    vs ? vs.id : -1, videoMix, vs?.player!.fading ? clamp(vs.player!.fade) : 0, dev * view.k,
     EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
     st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, over.length, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
-    T.shadowSoft, T.shadow, T.landRelease, shared.TX,
+    T.shadowSoft, T.shadow, T.landRelease, shared!.TX,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
-    shared.CW, shared.CH, trans.fade, turn.on && !capturing ? 1 : 0,
+    shared!.CW, shared!.CH, trans.fade, turn.on && !capturing ? 1 : 0,
     st.stain, st.bleed * d, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
     T.pDesat, T.pWarm, T.pBlack, T.pDuo,
     T.pGrain, T.pMatte, 0, 0,
     ...(turn.on && !capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
     ...(capturing || view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
-    (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared.label.hh) * dev, shared.label.hw * dev, shared.label.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
-    ...shared.labelUV[page], ...shared.labelUV[turn.from],
+    (view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - shared!.label!.hh) * dev, shared!.label!.hw * dev, shared!.label!.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * view.k)) : 1,
+    ...shared!.labelUV![page], ...shared!.labelUV![turn.from],
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   chipUniforms(s);
   g.device.queue.writeBuffer(g.uniform, 0, U);
@@ -3559,18 +3676,19 @@ function writeUniforms(g, sm = sim, hold = false) {
 
 // ---------- chips ----------
 // Potato chips (chips.ts, drawn by chip-render.ts): click the bare desk to drop one. They live on the page you see, in the
-// same sim as the card box (physics.js): a page turn throws them with it. A chip is gone once it is wholly off the screen
+// same sim as the card box (physics.ts): a page turn throws them with it. A chip is gone once it is wholly off the screen
 // or eaten, never sooner.
 const chips = createChips(T, () => throwWorld().world);
 const chipRegion = () => chips.bodies[0]?.chip.region ?? page;
 const chipX0 = () => (view.phone ? 0 : chipRegion() * view.w);
-let chipFeedAt = 0, chipWait = []; // chipWait: drops waiting for a slot
+let chipFeedAt = 0;
+const chipWait: [number, number, number][] = []; // chipWait: drops waiting for a slot
 // Each chip's food, for the agents and the excitation field (sim px), and where its drawn layer sits on the canvas.
-function chipUniforms(s) {
+function chipUniforms(s: Sim) {
   U.fill(0, CHIP_OFF, CHIP_OFF + CHIP_VEC4 * 4);
   if (s !== sim || capturing || !chips.bodies.length) return; // never in the frozen frame a turn starts from
   const own = chipRegion() === page, bs = own ? chips.bodies.slice(0, NCH) : [];
-  const tiles = gpu.chipR.place(chips, { x0: chipX0(), dev: shared.dev, T });
+  const tiles = gpu!.chipR.place(chips, { x0: chipX0(), dev: shared!.dev, T });
   U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
   tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH + i) * 4));
   bs.forEach((b, i) => {
@@ -3579,27 +3697,27 @@ function chipUniforms(s) {
 }
 // The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
 // a finished turn left on it carry on on the new page, where they are on the screen.
-function stepChips(dt) {
-  while (chipWait.length && chips.bodies.length < NCH) { const [x, y, p] = chipWait.shift(); if (p === page) dropChip(x, y); }
+function stepChips(dt: number) {
+  while (chipWait.length && chips.bodies.length < NCH) { const [x, y, p] = chipWait.shift()!; if (p === page) dropChip(x, y); }
   if (!chips.bodies.length) return;
   if (chipRegion() !== page && !turn.on) {
     const dx = view.phone ? 0 : (page - chipRegion()) * view.w;
     for (const b of chips.bodies) { b.p.x[0] += dx; b.p.px[0] += dx; b.chip.region = page; }
   }
-  const { world, L } = phys, x0 = chipX0(), own = chipRegion() === page, H = view.phone ? view.docH : view.h;
+  const { world, L } = phys!, x0 = chipX0(), own = chipRegion() === page, H = view.phone ? view.docH : view.h;
   if (own) chips.push(sources.filter((c) => (view.phone || c.region === page) && !c.gone && !c.deck && !c.carrier && c.w).map((c) => {
     const [x, y, r] = shown(c), th = (r * Math.PI) / 180;
     return { x, y, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy };
   }));
-  if (!L || L.home || L.out) { const t = world.time + (phys.rem || 0) + dt; world.advance(t); phys.rem = t - world.time; }
+  if (!L || L.home || L.out) { const t = world.time + (phys!.rem || 0) + dt; world.advance(t); phys!.rem = t - world.time; }
   for (const b of chips.bodies.filter((b) => b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
   chips.step(dt, own);
   if (chips.bodies.some((b) => !b.sleep || b.dirty)) redraw = true;
-  if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
+  if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu!.chipR.feed(chips, sim!.trail[sim!.parity], { x0: sim!.origin, dpr: sim!.dpr, gain: T.chipTaste }); }
 }
 // Over the cap the oldest chip is eaten faster; with every slot taken the oldest crumbles away, and the new one drops as
 // soon as its slot is free (with reduced motion, at once).
-function dropChip(x, y) {
+function dropChip(x: number, y: number) {
   const live = [...new Set(chips.bodies.map((b) => b.chip))].sort((a, b) => a.born - b.born), calm = live.filter((c) => c.hurry === 1);
   if (calm.length >= T.chipMax) calm[0].hurry = T.chipHurry;
   if (chips.bodies.length >= NCH) {
@@ -3614,7 +3732,7 @@ function dropChip(x, y) {
 }
 addEventListener('click', (e) => {
   if (!gpu || !sim || !T.chips || turn.on || flights.on || e.button !== 0) return;
-  if (e.target.closest?.('.src, .door, a, button, input, select, label, textarea, .tweak, .links')) return;
+  if ((e.target as Partial<Element>).closest?.('.src, .door, a, button, input, select, label, textarea, .tweak, .links')) return;
   const x = deskX(e), y = deskY(e), x0 = chipX0();
   for (const r of [!view.phone && cornerBox(x0), deckRect(page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;
   dropChip(x, y);
@@ -3623,46 +3741,46 @@ addEventListener('click', (e) => {
 // ---------- frame ----------
 
 // A step is the E pass, the agents, then the diffuse.
-function encodeStep(enc, only = 'ead', ts = null, sm = sim, count = activeAgents(sm)) {
+function encodeStep(enc: GPUCommandEncoder, only = 'ead', ts: Gpu['ts'] = null, sm: Sim = sim!, count = activeAgents(sm)) {
   const s = sm, p = s.parity;
-  const pass = enc.beginComputePass(ts ? { timestampWrites: { querySet: gpu.ts.set, beginningOfPassWriteIndex: 0 } } : undefined);
-  if (only.includes('e')) { pass.setPipeline(gpu.ePipe); pass.setBindGroup(0, s.eBG[p]); pass.dispatchWorkgroups(Math.ceil(s.EW / 8), Math.ceil(s.EH / 8)); }
-  if (only.includes('a')) { pass.setPipeline(gpu.agentPipe); pass.setBindGroup(0, s.agentBG[p]); pass.dispatchWorkgroups(Math.ceil(count / 64)); }
-  if (only.includes('d')) { pass.setPipeline(gpu.diffusePipe); pass.setBindGroup(0, s.diffuseBG[p]); pass.dispatchWorkgroups(Math.ceil(s.W / 16), Math.ceil(s.H / 16)); }
+  const pass = enc.beginComputePass(ts ? { timestampWrites: { querySet: gpu!.ts!.set, beginningOfPassWriteIndex: 0 } } : undefined);
+  if (only.includes('e')) { pass.setPipeline(gpu!.ePipe); pass.setBindGroup(0, s.eBG[p]); pass.dispatchWorkgroups(Math.ceil(s.EW / 8), Math.ceil(s.EH / 8)); }
+  if (only.includes('a')) { pass.setPipeline(gpu!.agentPipe); pass.setBindGroup(0, s.agentBG[p]); pass.dispatchWorkgroups(Math.ceil(count / 64)); }
+  if (only.includes('d')) { pass.setPipeline(gpu!.diffusePipe); pass.setBindGroup(0, s.diffuseBG[p]); pass.dispatchWorkgroups(Math.ceil(s.W / 16), Math.ceil(s.H / 16)); }
   pass.end();
   if (only.includes('d')) { s.parity = 1 - p; s.t += STEP; }
 }
-function encodeRender(enc, target, ts = null, s = sim) {
-  if (s === sim && chips.bodies.length) gpu.chipR.encode(enc);
-  let pipe = gpu.renderPipe, bg = gpu.device.createBindGroup({ layout: gpu.renderPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s) });
+function encodeRender(enc: GPUCommandEncoder, target: GPUTextureView, ts: Gpu['ts'] = null, s: Sim = sim!) {
+  if (s === sim && chips.bodies.length) gpu!.chipR.encode(enc);
+  let pipe = gpu!.renderPipe, bg = gpu!.device.createBindGroup({ layout: gpu!.renderPipe.getBindGroupLayout(0), entries: renderEntries(gpu!, s) });
   if (videoSrc && videoMix > 0) {
     try {
-      const pl = videoSrc.player;
-      const ext = gpu.device.importExternalTexture({ source: pl.a });
+      const pl = videoSrc.player!;
+      const ext = gpu!.device.importExternalTexture({ source: pl.a });
       // The incoming clip only once it has a frame; until then both slots show the current one.
-      const extB = pl.fading && pl.b.readyState >= 2 ? gpu.device.importExternalTexture({ source: pl.b }) : ext;
-      pipe = gpu.videoPipe;
-      bg = gpu.device.createBindGroup({ layout: gpu.videoPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s, [{ binding: 7, resource: ext }, { binding: 8, resource: extB }]) });
+      const extB = pl.fading && pl.b.readyState >= 2 ? gpu!.device.importExternalTexture({ source: pl.b }) : ext;
+      pipe = gpu!.videoPipe;
+      bg = gpu!.device.createBindGroup({ layout: gpu!.videoPipe.getBindGroupLayout(0), entries: renderEntries(gpu!, s, [{ binding: 7, resource: ext }, { binding: 8, resource: extB }]) });
     } catch { /* frame not ready yet: draw the poster */ }
   }
-  if (sources.some(noteMesh)) gpu.note.encode(enc, NOTE_U);
+  if (sources.some(noteMesh)) gpu!.note.encode(enc, NOTE_U);
   const tp = enc.beginComputePass();
-  tp.setPipeline(gpu.tilePipe); tp.setBindGroup(0, shared.tileBG); tp.dispatchWorkgroups(Math.ceil(shared.nTiles / 64)); tp.end();
+  tp.setPipeline(gpu!.tilePipe); tp.setBindGroup(0, shared!.tileBG); tp.dispatchWorkgroups(Math.ceil(shared!.nTiles / 64)); tp.end();
   const pass = enc.beginRenderPass({ colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
-    ...(ts ? { timestampWrites: { querySet: gpu.ts.set, endOfPassWriteIndex: 1 } } : {}) });
+    ...(ts ? { timestampWrites: { querySet: gpu!.ts!.set, endOfPassWriteIndex: 1 } } : {}) });
   pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.draw(3); pass.end();
-  if (ts) { enc.resolveQuerySet(gpu.ts.set, 0, 2, gpu.ts.resolve, 0); enc.copyBufferToBuffer(gpu.ts.resolve, 0, gpu.ts.read, 0, 16); }
+  if (ts) { enc.resolveQuerySet(gpu!.ts!.set, 0, 2, gpu!.ts!.resolve, 0); enc.copyBufferToBuffer(gpu!.ts!.resolve, 0, gpu!.ts!.read, 0, 16); }
 }
 
 // Runtime check: measure each frame's GPU work (timestamps, else the frame interval) in the first seconds and for a
 // second now and then. Over budget: drop 30% of the agents (then sim resolution) and cool down; well under budget for
 // a while: step back up toward the tier cap. The gap between the two thresholds keeps it from oscillating.
 const BUDGET_MS = 12, CALM_MS = 5;
-function qualityCheck(dt) {
+function qualityCheck(dt: number) {
   // A quality step eases the running agent count over about a second, and each agent's ink rises with it, so the
   // veins keep their weight through the change instead of dimming and recovering.
   Q.shown += (Q.level - Q.shown) * Math.min(1, dt * 3);
-  Q.depMul = Math.max(1, sim.ref / activeAgents(sim));
+  Q.depMul = Math.max(1, sim!.ref / activeAgents(sim!));
   if (!autoOn() || turn.on) return; // a page turn holds the frozen frame a resolution change would need
   const t = clock.t;
   Q.vsync = Math.max(4, Math.min(...stats.intervals.filter((x) => x > 4), 16.7)); // the display's frame period
@@ -3672,8 +3790,8 @@ function qualityCheck(dt) {
   Q.samples.length = 0;
   Q.gpuMs = med;
   if (t < Q.cool) return;
-  const over = gpu.ts ? med > BUDGET_MS : med > 1.3 * Q.vsync;
-  const calm = gpu.ts ? med < CALM_MS : med < 1.05 * Q.vsync;
+  const over = gpu!.ts ? med > BUDGET_MS : med > 1.3 * Q.vsync;
+  const calm = gpu!.ts ? med < CALM_MS : med < 1.05 * Q.vsync;
   if (over) {
     Q.calm = 0; Q.cool = t + 2; Q.checkUntil = t + 2; // keep watching after a change
     if (Q.level > 0.36) Q.level = Math.max(0.35, Q.level * 0.7);
@@ -3686,25 +3804,25 @@ function qualityCheck(dt) {
 }
 // A lower sim resolution needs new sims: freeze the current frame and crossfade from it while the new sim warms up.
 function resizeSims() {
-  writeUniforms(gpu);
-  const enc = gpu.device.createCommandEncoder();
-  encodeRender(enc, shared.frozenTex[1 - shared.fz].createView());
-  gpu.device.queue.submit([enc.finish()]);
-  shared.fz = 1 - shared.fz; redraw = true;
+  writeUniforms(gpu!);
+  const enc = gpu!.device.createCommandEncoder();
+  encodeRender(enc, shared!.frozenTex[1 - shared!.fz].createView());
+  gpu!.device.queue.submit([enc.finish()]);
+  shared!.fz = 1 - shared!.fz; redraw = true;
   sims.forEach(destroySim);
-  sims = (view.phone ? [0] : [0, 1]).map((pg) => Object.assign(createSim(gpu, pg), { t: 4.5, warm: WARM_STEPS, warmN: pg === page ? 25 : 1 }));
+  sims = (view.phone ? [0] : [0, 1]).map((pg) => Object.assign(createSim(gpu!, pg), { t: 4.5, warm: WARM_STEPS, warmN: pg === page ? 25 : 1 }));
   sim = sims[page];
   trans.fade = 1;
 }
 
 let last = 0, acc = 0, running = true;
-const stats = { intervals: [] };
+const stats: { intervals: number[]; throwMs?: number } = { intervals: [] };
 // The uniforms the last drawn frame showed; redraw: a texture it reads has changed since.
 const drawnU = new Float32Array(U.length);
 let redraw = true;
 // The cursor's stir (G.e.xyz) only moves the sim, which redraws when it steps.
 const sameU = () => { const a = drawnU; for (let i = 0; i < U.length; i++) if (U[i] !== a[i] && (i < 16 || i > 18)) return false; return true; };
-function frame(now) {
+function frame(now: number) {
   if (!running || dead) return;
   requestAnimationFrame(frame);
   if (document.hidden) { last = now; return; }
@@ -3726,40 +3844,40 @@ function frame(now) {
   let steps = 0;
   if (window.__j?.freeze) acc = 0; // test hook: hold the sim still while the render keeps drawing
   const measure = autoOn() && clock.t <= Q.checkUntil;
-  const ts = measure && gpu.ts && !gpu.ts.busy ? gpu.ts : null;
-  if (measure && !gpu.ts && last) Q.samples.push(dt * 1000); // no GPU timestamps: judge by the frame interval
+  const ts = measure && gpu!.ts && !gpu!.ts.busy ? gpu!.ts : null;
+  if (measure && !gpu!.ts && last) Q.samples.push(dt * 1000); // no GPU timestamps: judge by the frame interval
   while (acc >= STEP && steps < 2) {
     acc -= STEP; steps++;
     clock.t += STEP; clock.frame++;
-    writeUniforms(gpu);
-    const enc = gpu.device.createCommandEncoder();
+    writeUniforms(gpu!);
+    const enc = gpu!.device.createCommandEncoder();
     encodeStep(enc, 'ead', steps === 1 ? ts : null);
-    gpu.device.queue.submit([enc.finish()]);
+    gpu!.device.queue.submit([enc.finish()]);
     for (const s of sources) {
       if (s.landK && qs.has('mlog')) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
       s.landK = false; // a landing bursts the agents on exactly one step
     }
   }
   if (steps === 2) acc = Math.min(acc, STEP);
-  if (sim.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
-    const n = Math.min(sim.warm, sim.warmN || 1); // a resolution change catches up fast under its crossfade; a page warming before it showed keeps going one step a frame
-    sim.warm -= n;
-    writeUniforms(gpu);
-    const enc = gpu.device.createCommandEncoder();
+  if (sim!.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
+    const n = Math.min(sim!.warm, sim!.warmN || 1); // a resolution change catches up fast under its crossfade; a page warming before it showed keeps going one step a frame
+    sim!.warm -= n;
+    writeUniforms(gpu!);
+    const enc = gpu!.device.createCommandEncoder();
     for (let k = 0; k < n; k++) encodeStep(enc);
-    gpu.device.queue.submit([enc.finish()]);
+    gpu!.device.queue.submit([enc.finish()]);
   }
   if (trans.fade > 0) trans.fade = Math.max(0, trans.fade - dt / 0.8); // crossfade from the frame before a resolution change
-  if (!steps) writeUniforms(gpu);
+  if (!steps) writeUniforms(gpu!);
   clipLinks(); // where the turn and a thrown box were just drawn
   // Draw only when the picture can change: the sim stepped (60 times a second, which also shows every video frame), something
   // drawn moved (the uniforms differ), or a texture it reads changed. On a display faster than the sim (120 Hz) the frames
   // between steps are otherwise the same picture, and drawing them doubled the GPU's work.
   const timed = ts && steps ? ts : null;
   if (steps || redraw || trans.fade > 0 || !sameU()) {
-    const enc = gpu.device.createCommandEncoder();
-    encodeRender(enc, gpu.ctx.getCurrentTexture().createView(), timed);
-    gpu.device.queue.submit([enc.finish()]);
+    const enc = gpu!.device.createCommandEncoder();
+    encodeRender(enc, gpu!.ctx.getCurrentTexture().createView(), timed);
+    gpu!.device.queue.submit([enc.finish()]);
     drawnU.set(U); redraw = false;
   }
   if (timed) {
@@ -3772,42 +3890,42 @@ function frame(now) {
   }
   if (steps) stepWarm(); // at the sim's pace, whatever the display's
   qualityCheck(dt);
-  if (isJ(sim)) sim.bloom = Math.min(1, sim.bloom + dt / STYLE[PAGE_NAMES[sim.page]].bloom); // olive -> the J desk's inks
+  if (isJ(sim!)) sim!.bloom = Math.min(1, sim!.bloom + dt / STYLE[PAGE_NAMES[sim!.page]].bloom); // olive -> the J desk's inks
   for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.snap || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
   if (hud && clock.frame % 15 === 0) {
     const iv = [...stats.intervals].sort((a, b) => a - b);
-    hud.textContent = `${sim.W}x${sim.H}  ${(sim.n / 1e6).toFixed(2)}M agents\nframe ${iv[iv.length >> 1]?.toFixed(1)} ms (p95 ${iv[Math.floor(iv.length * 0.95)]?.toFixed(1)})`;
+    hud.textContent = `${sim!.W}x${sim!.H}  ${(sim!.n / 1e6).toFixed(2)}M agents\nframe ${iv[iv.length >> 1]?.toFixed(1)} ms (p95 ${iv[Math.floor(iv.length * 0.95)]?.toFixed(1)})`;
   }
 }
 
 // GPU time per frame: n frames (one sim step + full render each) submitted back to back, then averaged.
 async function bench(n = 120) {
-  const target = gpu.device.createTexture({ size: [shared.CW, shared.CH], format: gpu.format, usage: 0x10 });
-  const run = async (kind) => {
-    await gpu.device.queue.onSubmittedWorkDone();
+  const target = gpu!.device.createTexture({ size: [shared!.CW, shared!.CH], format: gpu!.format, usage: 0x10 });
+  const run = async (kind: string) => {
+    await gpu!.device.queue.onSubmittedWorkDone();
     const t0 = performance.now();
     for (let i = 0; i < n; i++) {
-      writeUniforms(gpu);
-      const enc = gpu.device.createCommandEncoder();
+      writeUniforms(gpu!);
+      const enc = gpu!.device.createCommandEncoder();
       if (kind !== 'render') encodeStep(enc, kind.length <= 3 && kind !== 'both' ? kind : 'ead');
       if (kind === 'render' || kind === 'both') encodeRender(enc, target.createView());
-      gpu.device.queue.submit([enc.finish()]);
+      gpu!.device.queue.submit([enc.finish()]);
     }
-    await gpu.device.queue.onSubmittedWorkDone();
+    await gpu!.device.queue.onSubmittedWorkDone();
     return +((performance.now() - t0) / n).toFixed(2);
   };
   running = false;
-  const out = { page: PAGE_NAMES[sim.page], canvas: `${shared.CW}x${shared.CH}`, sim: `${sim.W}x${sim.H}`, agents: sim.n, eMs: await run('e'), agentsMs: await run('a'), diffuseMs: await run('d'), stepMs: await run('step'), renderMs: await run('render'), frameMs: await run('both') };
+  const out = { page: PAGE_NAMES[sim!.page], canvas: `${shared!.CW}x${shared!.CH}`, sim: `${sim!.W}x${sim!.H}`, agents: sim!.n, eMs: await run('e'), agentsMs: await run('a'), diffuseMs: await run('d'), stepMs: await run('step'), renderMs: await run('render'), frameMs: await run('both') };
   running = true; last = 0; requestAnimationFrame(frame);
   target.destroy();
   return out;
 }
 
-let shared = null, sims = [];
-const isJ = (sm) => !view.phone && STYLE[PAGE_NAMES[sm.page]].mode === 'j'; // a page in the J desk's look
-const destroySim = (sm) => { for (const t of [...sm.trail, ...sm.etex, sm.mask]) t.destroy(); sm.dep.destroy(); sm.agents.destroy(); };
-async function rebuild(first) {
+let shared: Shared | null = null, sims: Sim[] = [];
+const isJ = (sm: Sim) => !view.phone && STYLE[PAGE_NAMES[sm.page]].mode === 'j'; // a page in the J desk's look
+const destroySim = (sm: Sim) => { for (const t of [...sm.trail, ...sm.etex, sm.mask]) t.destroy(); sm.dep.destroy(); sm.agents.destroy(); };
+async function rebuild(first: boolean) {
   layout();
   if (!gpu) return;
   chips.clear();
@@ -3817,11 +3935,11 @@ async function rebuild(first) {
   await buildAtlas(gpu);
   redraw = true;
   // Phones scroll one long page; desktops get a main page and a research page, each with its own sim.
-  sims = (view.phone ? [0] : [0, 1]).map((pg) => createSim(gpu, pg));
+  sims = (view.phone ? [0] : [0, 1]).map((pg) => createSim(gpu!, pg));
   page = view.phone ? 0 : regionFromUrl();
   sim = sims[page];
   // Bake the paper grain once (it never changes), so the per-frame pass reads it instead of computing noise.
-  writeUniforms(gpu);
+  writeUniforms(gpu!);
   const ge = gpu.device.createCommandEncoder(), gp = ge.beginRenderPass({ colorAttachments: [{ view: shared.paper.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
   gp.setPipeline(gpu.grainPipe);
   gp.setBindGroup(0, gpu.device.createBindGroup({ layout: gpu.grainPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: gpu.uniform } }] }));
@@ -3837,7 +3955,7 @@ const introOn = () => !!T.intro && !reduced;
 async function reseed() {
   if (dead) return;
   running = false;
-  await gpu.device.queue.onSubmittedWorkDone();
+  await gpu!.device.queue.onSubmittedWorkDone();
   await rebuild(false);
   running = true; last = 0; requestAnimationFrame(frame);
 }
@@ -3847,15 +3965,16 @@ async function reseed() {
 // A quiet corner panel with a slider per tunable, the edge mode, the ink color, a copy-link and a reset button.
 function tweakPanel() {
   const panel = Object.assign(document.createElement('div'), { className: 'tweak' });
-  const inputs = {};
+  type TweakInput = (HTMLInputElement | HTMLSelectElement) & { out?: HTMLOutputElement };
+  const inputs: Record<string, TweakInput> = {};
   let reseedTimer = 0;
-  const set = (k, v) => {
+  const set = (k: string, v: number | string) => {
     T[k] = v;
     if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
     if (k === 'cards') { Object.assign(T, CARD_PRESETS[v]); sync(); if (gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } }
     if (k === 'look') {
       const before = RESEED.map((r) => T[r]).join();
-      applyLook(v); sync();
+      applyLook(v as string); sync(); // the look select's value
       if (gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
     // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
@@ -3867,8 +3986,8 @@ function tweakPanel() {
     const group = Object.assign(document.createElement('details'), { open: name === 'Agents' || name === 'Card outlines' });
     group.append(Object.assign(document.createElement('summary'), { textContent: name }));
     if (name === 'Performance') group.append(Object.assign(document.createElement('div'), { className: 'tweak-perf' }));
-    for (const [k, d, min, max, step, label] of params) {
-      let input, out;
+    for (const [k, , min, max, step, label] of params as readonly ParamRow[]) {
+      let input: TweakInput, out: HTMLOutputElement | undefined;
       if (CHOICES[k]) {
         input = document.createElement('select');
         for (const m of CHOICES[k]) input.append(new Option(m, m));
@@ -3878,11 +3997,11 @@ function tweakPanel() {
         input.oninput = () => set(k, input.value.slice(1));
       } else if (step === 1 && max === 1) {
         input = Object.assign(document.createElement('input'), { type: 'checkbox' });
-        input.oninput = () => set(k, input.checked ? 1 : 0);
+        input.oninput = () => set(k, (input as HTMLInputElement).checked ? 1 : 0);
       } else {
         input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
         out = document.createElement('output');
-        input.oninput = () => { set(k, +input.value); out.value = input.value; };
+        input.oninput = () => { set(k, +input.value); out!.value = input.value; };
       }
       inputs[k] = Object.assign(input, { out });
       const r = document.createElement('label');
@@ -3896,10 +4015,10 @@ function tweakPanel() {
   const styleGroup = Object.assign(document.createElement('details'), { open: true });
   const styleTitle = document.createElement('summary');
   styleGroup.append(styleTitle);
-  const styleInputs = {};
+  const styleInputs: Record<string, TweakInput & { row: HTMLLabelElement }> = {};
   const curStyle = () => STYLE[PAGE_NAMES[page]];
   for (const [k, , min, max, step, label] of STYLE_PARAMS) {
-    let input, out;
+    let input: TweakInput, out: HTMLOutputElement | undefined;
     if (CHOICES[k]) {
       input = document.createElement('select');
       for (const m of CHOICES[k]) input.append(new Option(m, m));
@@ -3910,7 +4029,7 @@ function tweakPanel() {
     } else {
       input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
       out = document.createElement('output');
-      input.oninput = () => { curStyle()[k] = +input.value; out.value = input.value; };
+      input.oninput = () => { curStyle()[k] = +input.value; out!.value = input.value; };
     }
     const r = document.createElement('label');
     styleInputs[k] = Object.assign(input, { out, row: r });
@@ -3921,13 +4040,13 @@ function tweakPanel() {
   panel.insertBefore(styleGroup, panel.children[1]);
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
-      if (el.type === 'checkbox') el.checked = !!T[k];
-      else el.value = k === 'ink' ? '#' + T[k] : T[k];
-      if (el.out) el.out.value = T[k];
+      if (el.type === 'checkbox') (el as HTMLInputElement).checked = !!T[k];
+      else el.value = k === 'ink' ? '#' + T[k] : String(T[k]);
+      if (el.out) el.out.value = String(T[k]);
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[page]} page)`;
     // Each mode shows only the controls that do something in it.
-    const SHOWN = {
+    const SHOWN: Record<string, (k: string) => boolean> = {
       paper: (k) => !J_KEYS.includes(k),
       spectrum: (k) => !J_KEYS.includes(k) && !['ink', 'grain', 'tint', 'hueMix'].includes(k),
       j: (k) => !['tint', 'hueMix', 'gamma', 'soft', 'grain', 'glow', 'halo'].includes(k),
@@ -3935,8 +4054,8 @@ function tweakPanel() {
     for (const [k, el] of Object.entries(styleInputs)) {
       el.row.hidden = !SHOWN[curStyle().mode](k);
       const v = curStyle()[k];
-      el.value = k === 'ink' || k === 'bg' ? '#' + v : v;
-      if (el.out) el.out.value = v;
+      el.value = k === 'ink' || k === 'bg' ? '#' + v : String(v);
+      if (el.out) el.out.value = String(v);
     }
   };
   tweakSync = sync;
@@ -3964,7 +4083,7 @@ function tweakPanel() {
   bar.append(copy, reset, replay);
   panel.append(bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
-  const perf = panel.querySelector('.tweak-perf');
+  const perf = panel.querySelector<HTMLElement>('.tweak-perf')!;
   setInterval(() => {
     if (panel.hidden) return;
     const iv = [...stats.intervals].slice(-60).sort((a, b) => a - b), med = iv[iv.length >> 1] || 0;
@@ -3972,31 +4091,31 @@ function tweakPanel() {
       (sim ? `${autoOn() ? `auto: ${Q.tier.name} tier, ` : ''}${(activeAgents(sim) / 1000).toFixed(0)}k agents, sim ${sim.W}x${sim.H}` : '');
   }, 500);
   addEventListener('keydown', (e) => {
-    if (e.key === 't' && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) panel.hidden = !panel.hidden;
+    if (e.key === 't' && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(String(document.activeElement?.tagName))) panel.hidden = !panel.hidden;
   });
   sync();
   body.append(panel);
 }
 
-async function warm(steps) {
+async function warm(steps: number) {
   for (let i = 0; i < steps; i++) {
     clock.t += STEP; clock.frame++;
-    writeUniforms(gpu);
-    const enc = gpu.device.createCommandEncoder();
+    writeUniforms(gpu!);
+    const enc = gpu!.device.createCommandEncoder();
     encodeStep(enc);
-    gpu.device.queue.submit([enc.finish()]);
-    if (i % 20 === 19) await gpu.device.queue.onSubmittedWorkDone();
+    gpu!.device.queue.submit([enc.finish()]);
+    if (i % 20 === 19) await gpu!.device.queue.onSubmittedWorkDone();
   }
 }
 
 async function main() {
-  const t0 = performance.now(), mark = (k) => (bootLog[k] = Math.round(performance.now() - t0));
+  const t0 = performance.now(), mark = (k: string) => (bootLog[k] = Math.round(performance.now() - t0));
   // A card rests on its cover when it has one (an image not from its clips, kept like an explicit still: hover fades from
   // it into the clip and back), else on its poster (the frame its first clip starts from); an explicit still wins.
   for (const s of sources) {
     const e = clipLists[s.key];
-    if (e?.cover && !s.still) { s.img.src = mediaUrl('/desk-media/' + e.cover); s.still = 'cover'; }
-    else if (!s.still && e?.poster) s.img.src = mediaUrl('/desk-media/' + e.poster);
+    if (e?.cover && !s.still) { s.img!.src = mediaUrl('/desk-media/' + e.cover); s.still = 'cover'; }
+    else if (!s.still && e?.poster) s.img!.src = mediaUrl('/desk-media/' + e.poster);
   }
   layout(); // the startup still uses the final layout right away
   const fontsReady = Promise.all([document.fonts.load('800 60px Inter'), document.fonts.load('500 23px Caveat'), document.fonts.load('600 13px Inter'), document.fonts.load('400 13px Inter')]);
@@ -4020,7 +4139,7 @@ async function main() {
   door.amt = introOn() ? -1 : 0; // the corner folds back just after the deal starts
   if (reduced) Object.assign(door, { amt: 1, d: restD(false) }); // no frame loop: drawn folded
   // Draw the field's first frame under the DOM still, then hand over, so startup never flashes.
-  writeUniforms(gpu);
+  writeUniforms(gpu!);
   const enc0 = gpu.device.createCommandEncoder();
   encodeRender(enc0, gpu.ctx.getCurrentTexture().createView());
   gpu.device.queue.submit([enc0.finish()]);
@@ -4034,7 +4153,7 @@ async function main() {
     // One settled still: start from a scattered desk, let the mesh form offscreen, then draw once and stop.
     await warm(Math.round(4 / STEP));
     const enc = gpu.device.createCommandEncoder();
-    writeUniforms(gpu);
+    writeUniforms(gpu!);
     encodeRender(enc, gpu.ctx.getCurrentTexture().createView());
     gpu.device.queue.submit([enc.finish()]);
     body.classList.add('settled');
@@ -4058,44 +4177,44 @@ async function main() {
 // Debug probe for crossfades (used by the verification script): during a live crossfade on card key, renders the frame
 // offscreen, reads back the media area, and checks every pixel against both source frames drawn in the same task.
 // A pixel passes if each channel lies within the two frames' range over its 2x2 neighborhood, give or take paper grain.
-async function probeFade(key, maxFrames = 20) {
-  const s = sources.find((x) => x.key === key);
+async function probeFade(key: string, maxFrames = 20) {
+  const s = sources.find((x) => x.key === key)!; // the verification script names a card that exists
   probeKey = key;
   s.rot = 0; s.sway = 0; placeDom(s);
   setHover(s, true);
-  const bgra = gpu.format.startsWith('bgra');
+  const bgra = gpu!.format.startsWith('bgra');
   const raf = () => new Promise(requestAnimationFrame);
   const t0 = performance.now();
-  while (!(videoSrc === s && videoMix > 0.99 && s.player.fading && s.player.fade > 0.02)) { await raf(); if (performance.now() - t0 > 20000) return { error: 'no crossfade' }; }
-  const target = gpu.device.createTexture({ size: [shared.CW, shared.CH], format: gpu.format, usage: 0x10 | 0x01 });
-  const frames = [];
+  while (!(videoSrc === s && videoMix > 0.99 && s.player!.fading && s.player!.fade > 0.02)) { await raf(); if (performance.now() - t0 > 20000) return { error: 'no crossfade' }; }
+  const target = gpu!.device.createTexture({ size: [shared!.CW, shared!.CH], format: gpu!.format, usage: 0x10 | 0x01 });
+  const frames: { fade: number; badFrac: number; worst: number; dump?: Record<string, unknown> }[] = [];
   // Freeze both clips mid-crossfade and step the fade by hand, so the rendered frame and the reference frames match.
-  const pl = s.player, A = pl.a, B = pl.b;
+  const pl = s.player!, A = pl.a, B = pl.b;
   probing = true;
   await Promise.all([chain(A, () => A.pause()), chain(B, () => B.pause())]);
   await new Promise((r) => setTimeout(r, 200));
   for (let f = 0; f <= maxFrames; f++) {
     await raf();
     pl.fading = true; pl.fade = f / maxFrames;
-    writeUniforms(gpu);
+    writeUniforms(gpu!);
     const o = (CARD0 + s.id * CARD_VEC4) * 4, inv = [U[o], U[o + 1], U[o + 2], U[o + 4], U[o + 5], U[o + 6], U[o + 8], U[o + 9], U[o + 10]];
     const half = [U[o + 12], U[o + 13]], media = U.slice(o + 28, o + 32), vu = U.slice(VU_OFF, VU_OFF + 4), fade = U[34], q = U[27];
     // Media rect on screen (device px), shrunk so card edges and bilinear borders stay out of it.
-    const dev = shared.dev, mx0 = Math.ceil((s.x - cam.x - s.w / 2 + s.media.x + 6) * dev), my0 = Math.ceil((s.y - s.h / 2 + s.media.y + 6) * dev);
-    const mw = Math.floor((s.media.w - 12) * dev), mh = Math.floor((s.media.h - 12) * dev), bpr = Math.ceil((mw * 4) / 256) * 256;
-    const buf = gpu.device.createBuffer({ size: bpr * mh, usage: 0x01 | 0x08 });
-    const enc = gpu.device.createCommandEncoder();
+    const dev = shared!.dev, mx0 = Math.ceil((s.x - cam.x - s.w / 2 + s.media!.x + 6) * dev), my0 = Math.ceil((s.y - s.h / 2 + s.media!.y + 6) * dev);
+    const mw = Math.floor((s.media!.w - 12) * dev), mh = Math.floor((s.media!.h - 12) * dev), bpr = Math.ceil((mw * 4) / 256) * 256;
+    const buf = gpu!.device.createBuffer({ size: bpr * mh, usage: 0x01 | 0x08 });
+    const enc = gpu!.device.createCommandEncoder();
     encodeRender(enc, target.createView());
     enc.copyTextureToBuffer({ texture: target, origin: [mx0, my0] }, { buffer: buf, bytesPerRow: bpr }, [mw, mh]);
-    gpu.device.queue.submit([enc.finish()]);
-    const grab = (v) => { const c = new OffscreenCanvas(v.videoWidth, v.videoHeight), x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(v, 0, 0); return { w: c.width, h: c.height, d: x.getImageData(0, 0, c.width, c.height).data }; };
+    gpu!.device.queue.submit([enc.finish()]);
+    const grab = (v: HTMLVideoElement) => { const c = new OffscreenCanvas(v.videoWidth, v.videoHeight), x = c.getContext('2d', { willReadFrequently: true })!; x.drawImage(v, 0, 0); return { w: c.width, h: c.height, d: x.getImageData(0, 0, c.width, c.height).data }; };
     const ga = grab(A), gb = B.readyState >= 2 && fade > 0 ? grab(B) : ga;
     await buf.mapAsync(1);
     const out = new Uint8Array(buf.getMappedRange());
     let bad = 0, worst = 0, n = 0;
     const exp = new Uint8ClampedArray(mw * mh * 4), badMap = new Uint8ClampedArray(mw * mh * 4);
     for (let y = 0; y < mh; y += 2) for (let x = 0; x < mw; x += 2) {
-      const px = (mx0 + x + 0.5 + (cam.x - sim.origin) * dev) * q, py = (my0 + y + 0.5) * q;
+      const px = (mx0 + x + 0.5 + (cam.x - sim!.origin) * dev) * q, py = (my0 + y + 0.5) * q;
       const hz = inv[6] * px + inv[7] * py + inv[8], lx = (inv[0] * px + inv[1] * py + inv[2]) / hz, ly = (inv[3] * px + inv[4] * py + inv[5]) / hz;
       const ux = lx / (2 * half[0]) + 0.5, uy = ly / (2 * half[1]) + 0.5;
       const vx = vu[0] + ((ux - media[0]) / (media[2] - media[0])) * vu[2], vy = vu[1] + ((uy - media[1]) / (media[3] - media[1])) * vu[3];
@@ -4113,15 +4232,15 @@ async function probeFade(key, maxFrames = 20) {
         worst = Math.max(worst, err); n++;
       }
     }
-    let dump;
+    let dump: Record<string, unknown> | undefined;
     if (bad / n > 0.03 && !frames.some((fr) => fr.dump)) { // keep one failing frame for inspection
-      const toUrl = async (arr) => { const c2 = new OffscreenCanvas(mw, mh); c2.getContext('2d').putImageData(new ImageData(arr, mw, mh), 0, 0); const b = await c2.convertToBlob(); return await new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); };
-      var expUrl = await toUrl(exp), badUrl = await toUrl(badMap);
-      const oc = new OffscreenCanvas(mw, mh), ox = oc.getContext('2d'), id = ox.createImageData(mw, mh);
+      const toUrl = async (arr: Uint8ClampedArray<ArrayBuffer>) => { const c2 = new OffscreenCanvas(mw, mh); c2.getContext('2d')!.putImageData(new ImageData(arr, mw, mh), 0, 0); const b = await c2.convertToBlob(); return await new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); };
+      const expUrl = await toUrl(exp), badUrl = await toUrl(badMap);
+      const oc = new OffscreenCanvas(mw, mh), ox = oc.getContext('2d')!, id = ox.createImageData(mw, mh);
       for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) for (let ch = 0; ch < 4; ch++) id.data[(y * mw + x) * 4 + ch] = ch === 3 ? 255 : out[y * bpr + x * 4 + (bgra ? 2 - ch : ch)];
       ox.putImageData(id, 0, 0);
-      const url = async (c) => { const b = await c.convertToBlob(); return await new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); };
-      const vc = (v) => { const c = new OffscreenCanvas(v.videoWidth, v.videoHeight); c.getContext('2d').drawImage(v, 0, 0); return c; };
+      const url = async (c: OffscreenCanvas) => { const b = await c.convertToBlob(); return await new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); };
+      const vc = (v: HTMLVideoElement) => { const c = new OffscreenCanvas(v.videoWidth, v.videoHeight); c.getContext('2d')!.drawImage(v, 0, 0); return c; };
       dump = { exp: expUrl, bad: badUrl, out: await url(oc), a: await url(vc(A)), b: await url(vc(B)), aSrc: A.currentSrc, bSrc: B.currentSrc, aT: A.currentTime, bT: B.currentTime, vu: [...vu] };
     }
     buf.unmap(); buf.destroy();
@@ -4134,8 +4253,8 @@ async function probeFade(key, maxFrames = 20) {
   return frames;
 }
 
-const bootLog = {};
-window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared.CW, dev: shared.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player.playing(), fade: videoSrc?.player.fade, i: videoSrc?.player.i, state: videoSrc?.player.state, t: videoSrc && +videoSrc.player.a.currentTime.toFixed(2), clip: videoSrc?.player.a.currentSrc.split('/').pop() }), bootLog, bench: (n) => bench(n), drawFrom, flights, throws: () => sources.filter((s) => s.launch).map(({ region, launch: L }) => ({ region, t: L.t, C: L.P.C.map(Math.round), end: L.end, home: !!L.home, out: !!L.out, asleep: L.body.sleep })), stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T,
+const bootLog: Record<string, number> = {};
+window.__j = { backsFit: () => sources.filter((x) => x.backEl).map((x) => { const d = design(x), n = backLayout(d).need; return [x.key, Math.round(d.h), Math.ceil(n), n <= d.h + 0.5]; }), Q, activeAgents: () => sim && activeAgents(sim), GROUPS, STYLE_PARAMS, probeFade, drawBack, drawCard, backLayout, view: () => view, sim: () => sim && { page: sim.page, W: sim.W, H: sim.H, n: sim.n, t: sim.t, CW: shared!.CW, dev: shared!.dev, dpr: sim.dpr }, turn: () => ({ ...turn }), door: () => door, sims: () => sims.map((x) => ({ page: x.page, t: +x.t.toFixed(2), parity: x.parity, warm: x.warm })), STYLE, cam: () => cam, U: () => U, media: () => ({ src: videoSrc?.key, mix: videoMix, playing: videoSrc?.player!.playing(), fade: videoSrc?.player!.fade, i: videoSrc?.player!.i, state: videoSrc?.player!.state, t: videoSrc && +videoSrc.player!.a.currentTime.toFixed(2), clip: videoSrc?.player!.a.currentSrc.split('/').pop() }), bootLog, bench: (n: number) => bench(n), drawFrom, flights, throws: () => sources.filter((s) => s.launch).map(({ region, launch: L }) => ({ region, t: L!.t, C: L!.P.C.map(Math.round), end: L!.end, home: !!L!.home, out: !!L!.out, asleep: L!.body.sleep })), stats: () => ({ ...stats, t: clock.t, dpr: view.dpr, n: sim?.n, W: sim?.W, H: sim?.H }), sources, T,
   chips: { drop: dropChip, world: chips, stats: () => ({ n: chips.bodies.length, awake: chips.bodies.filter((b) => !b.sleep && !b.frozen).length, bodies: chips.bodies.map((b) => ({ id: b.id, x: +b.x[0].toFixed(1), y: +b.x[1].toFixed(1), z: +b.x[2].toFixed(2), sleep: b.sleep, m: +(b.m / b.mass0).toFixed(3), feed: b.feed ? +(b.feed.v.reduce((a, v) => a + v, 0) / b.feed.v.length).toFixed(3) : null })) }) } };
 main();
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.

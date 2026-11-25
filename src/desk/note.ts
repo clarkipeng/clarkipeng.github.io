@@ -1,5 +1,5 @@
 // The sticky note turning over its strip, as paper: a column of quads bent along the note about the strip's edge (the
-// profile, desk.js noteProfile), seen by the desk's camera, each face lit by its normal. One small pass draws it into a
+// profile, desk.ts noteProfile), seen by the desk's camera, each face lit by its normal. One small pass draws it into a
 // tile the desk's render reads where it lays the note: the top half the paper (where on the note, its light, negative
 // for the back, coverage), the bottom half its shadows on the desk (near, far; as strong as at that height).
 // The bend is along the note only, so one column is the exact surface; drawn from the strip out, each row lies over
