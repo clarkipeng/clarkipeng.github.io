@@ -34,21 +34,99 @@ const SEC = 8, MAXC = 4096; // directions contacts are thinned to, per body and 
 const CF = 66, ROW = 18, RW = 16;
 const V = 12; // per body velocity floats: v, w, and the overlap push's v, w
 
-export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
-  const h = 1 / hz, bodies = [];
+// A body-frame point in io[0..2]; out, its outward normal (io[0..2]) and signed distance (io[3]). See the header.
+export type Sdf = (io: Float64Array) => void;
+// What everything rests on (the desk and the turning page, curl.ts).
+export interface Surface {
+  top: number;
+  speed: number;
+  prepare(t: number): void;
+  at(io: Float64Array, vel: boolean): void;
+  moving(x: number, y: number, r: number): boolean;
+}
+export interface BodyOptions {
+  points: ArrayLike<number>;
+  bound: number;
+  sdf?: Sdf | null;
+  mass: number;
+  inertia: ArrayLike<number>;
+  friction?: number;
+  bounce?: number;
+  damp?: number;
+  x?: ArrayLike<number>;
+  q?: ArrayLike<number>;
+  v?: ArrayLike<number>;
+  w?: ArrayLike<number>;
+  render?: ((b: Body) => void) | null;
+}
+export interface Body {
+  points: Float64Array;
+  n: number;
+  bound: number;
+  sdf: Sdf | null;
+  friction: number;
+  bounce: number;
+  keep: number;
+  render: ((b: Body) => void) | null;
+  im: number;
+  Ib: Float64Array;
+  Iw: Float64Array;
+  R: Float64Array;
+  x: Float64Array;
+  q: Float64Array;
+  v: Float64Array; // views into the world's velocities (reindex)
+  w: Float64Array;
+  px: Float64Array;
+  pq: Float64Array;
+  ax: Float64Array;
+  aq: Float64Array;
+  warm: Float64Array;
+  wid: Int32Array;
+  wstep: Int32Array;
+  wside: Int8Array;
+  sleep: boolean;
+  still: number;
+  touch: boolean;
+  moved: boolean;
+  reach: number;
+  id: number;
+}
+export interface World {
+  g: number;
+  rest: number;
+  surface: Surface | null;
+  hz: number;
+  bodies: Body[];
+  time: number;
+  add(o: BodyOptions): Body;
+  remove(b: Body): void;
+  advance(t: number): void;
+  pose(b: Body, pos: Float64Array, rot: Float64Array): void;
+  save(): Float64Array;
+  load(s: Float64Array): void;
+}
+export interface Shape {
+  points: Float64Array;
+  sdf: Sdf;
+  bound: number;
+  inertia: (m: number) => [number, number, number];
+}
+
+export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World {
+  const h = 1 / hz, bodies: Body[] = [];
   let time = 0, alpha = 0, stepN = 0, order = new Int32Array(0), vel = new Float64Array(0);
   const cf = new Float64Array(MAXC * CF), ci = new Int32Array(MAXC * 4); // A, B (-1: the surface or a sleeping body), point, B's id
   let nc = 0;
   const pick = new Int32Array(SEC), pd = new Float64Array(SEC), pk = new Float64Array(SEC * 6), cd = new Float64Array(7), so = new Float64Array(7), sn = new Float64Array(4);
-  const world = { g: 9000, rest: 0.5, surface: null, hz, bodies };
+  const world = { g: 9000, rest: 0.5, surface: null, hz, bodies } as World; // add, remove, ... and time are set below
 
   world.add = (o) => {
     const n = o.points.length / 3, I = o.inertia;
-    const b = {
+    const b: Body = {
       points: Float64Array.from(o.points), n, bound: o.bound, sdf: o.sdf || null,
       friction: o.friction ?? 0.5, bounce: o.bounce ?? 0.2, keep: Math.exp(-(o.damp || 0) * h), render: o.render || null,
       im: 1 / o.mass, Ib: Float64Array.of(1 / I[0], 0, 0, 0, 1 / I[1], 0, 0, 0, 1 / I[2]), Iw: new Float64Array(9), R: new Float64Array(9),
-      x: Float64Array.from(o.x || [0, 0, 0]), q: Float64Array.from(o.q || [1, 0, 0, 0]), v: null, w: null,
+      x: Float64Array.from(o.x || [0, 0, 0]), q: Float64Array.from(o.q || [1, 0, 0, 0]), v: null!, w: null!, // set by reindex, below
       px: new Float64Array(3), pq: new Float64Array(4), ax: new Float64Array(3), aq: new Float64Array(4), // ax, aq: where it came to rest
       warm: new Float64Array(n * 3), wid: new Int32Array(n), wstep: new Int32Array(n).fill(-9), wside: new Int8Array(n),
       sleep: false, still: 0, touch: false, moved: true, reach: 0, id: bodies.length,
@@ -58,7 +136,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     b.v.set(o.v || [0, 0, 0]); b.w.set(o.w || [0, 0, 0]);
     return b;
   };
-  const wake = (b) => { b.sleep = false; b.still = 0; };
+  const wake = (b: Body) => { b.sleep = false; b.still = 0; };
   // Gone: what rested on it wakes, and falls.
   world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
   // Velocities live side by side (the solver's hot loop reads them); each body's v and w are views into them.
@@ -70,7 +148,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     bodies.forEach((b, i) => { if (b.v) { nv.set(b.v, i * V); nv.set(b.w, i * V + 3); } b.id = i; b.v = nv.subarray(i * V, i * V + 3); b.w = nv.subarray(i * V + 3, i * V + 6); });
     vel = nv; order = Int32Array.from(bodies.keys());
   }
-  Object.defineProperty(world, 'time', { get: () => time, set: (t) => { time = t; } });
+  Object.defineProperty(world, 'time', { get: () => time, set: (t: number) => { time = t; } });
 
   // Fixed steps up to time t; poses in between are interpolated (alpha).
   world.advance = (t) => {
@@ -102,7 +180,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
 
   function step() {
     stepN++;
-    const S = world.surface;
+    const S = world.surface!;
     S.prepare(time);
     for (const b of bodies) {
       b.px.set(b.x); b.pq.set(b.q);
@@ -136,7 +214,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     for (let c = 0; c < nc; c++) { const a = bodies[ci[c * 4]], b = ci[c * 4 + 1]; if (b >= 0 && Math.min(a.still, bodies[b].still) <= 0.4) a.still = bodies[b].still = Math.min(a.still, bodies[b].still, 0.4); }
     for (const b of bodies) if (!b.sleep && b.still > 0.4 && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, b.id * V, b.id * V + 6); }
   }
-  function orient(b) {
+  function orient(b: Body) {
     const q = b.q; qmat(q[0], q[1], q[2], q[3], b.R);
     const R = b.R, I = b.Ib, W = b.Iw; // the world inverse inertia, R Ib R^T
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
@@ -148,7 +226,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
 
   // ---------- contacts ----------
   // Against the surface: every point near it, the deepest per direction kept.
-  function surfaceContacts(b, S) {
+  function surfaceContacts(b: Body, S: Surface) {
     const top = S.top, R = b.R, P = b.points, x = b.x, o = b.id * V;
     const vx0 = vel[o], vy0 = vel[o + 1], vz0 = vel[o + 2], wx = vel[o + 3], wy = vel[o + 4], wz = vel[o + 5];
     const fast = (Math.max(0, -vz0) + S.speed + b.bound * Math.sqrt(wx * wx + wy * wy + wz * wz)) * h + 1; // as far as anything can close in a step
@@ -173,7 +251,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     }
   }
   // Point i (its candidate contact in cd) kept if it is the deepest yet in its direction from the middle.
-  function keep(i) {
+  function keep(i: number) {
     const ax = cd[0], ay = cd[1], l = Math.abs(ax) + Math.abs(ay), u = l > 1e-9 ? ay / l : 0; // a cheap angle, 0 to 4
     const k = Math.min(SEC - 1, Math.floor(((ax >= 0 ? 1 - u : 3 + u) * SEC) / 4));
     if (pick[k] >= 0 && pd[k] >= cd[6]) return;
@@ -185,7 +263,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
   // is about to pass through, not just what it is already in (a chip is thinner than it falls in a step).
   function pairs() {
     for (const b of bodies) { const o = b.id * V; b.reach = (Math.hypot(vel[o], vel[o + 1], vel[o + 2]) + b.bound * Math.hypot(vel[o + 3], vel[o + 4], vel[o + 5])) * h; }
-    const lo = (b) => b.x[0] - b.bound - b.reach;
+    const lo = (b: Body) => b.x[0] - b.bound - b.reach;
     for (let i = 1; i < order.length; i++) {
       const o = order[i], l = lo(bodies[o]);
       let j = i - 1;
@@ -205,7 +283,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
       }
     }
   }
-  function pointsInto(A, B, m) {
+  function pointsInto(A: Body, B: Body, m: number) {
     const RA = A.R, RB = B.R, P = A.points, r2 = (B.bound + 1 + m) ** 2;
     pick.fill(-1);
     for (let i = 0; i < A.n; i++) {
@@ -215,7 +293,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
       if (dx * dx + dy * dy + dz * dz > r2) continue;
       sn[0] = RB[0] * dx + RB[3] * dy + RB[6] * dz; sn[1] = RB[1] * dx + RB[4] * dy + RB[7] * dz; sn[2] = RB[2] * dx + RB[5] * dy + RB[8] * dz; // in B's frame
       sn[3] = A.wstep[i] === stepN - 1 && A.wid[i] === B.id ? A.wside[i] : 0;
-      B.sdf(sn);
+      B.sdf!(sn); // pairs() only calls this when B has one
       const dist = sn[3];
       if (dist > 0.5 + m) continue;
       if (A.sleep) { if (dist < -0.25) { wake(A); A.moved = true; return; } continue; } // pressed into: it wakes, and is pushed out from the next step
@@ -226,7 +304,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     for (let k = 0; k < SEC; k++) if (pick[k] >= 0) emit(A, B, k);
   }
   // One contact: A's picked point k pushed along its normal, out of B (null: the surface, moving at so[4..6] there).
-  function emit(A, B, k) {
+  function emit(A: Body, B: Body | null, k: number) {
     if (nc >= MAXC) return;
     const o = nc * CF, p = k * 6, i = pick[k], asleep = B && B.sleep, live = B && !B.sleep;
     ci[nc * 4] = A.id; ci[nc * 4 + 1] = live ? B.id : -1; ci[nc * 4 + 2] = i; ci[nc * 4 + 3] = B ? B.id : -1;
@@ -255,7 +333,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     nc++;
   }
   // Row q of contact o (its direction d in cf[q..q+2]): ra x d, rb x d, I (r x d) for each, and 1 / its effective mass.
-  function row(o, q, A, B) {
+  function row(o: number, q: number, A: Body, B: Body | null) {
     cf[q + 15] = A.im;
     arm(q, q + 3, q + 9, o, A.Iw);
     if (B) { cf[q + 15] += B.im; arm(q, q + 6, q + 12, o + 3, B.Iw); }
@@ -263,7 +341,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     cf[q + 15] = 1 / cf[q + 15];
   }
   // r (at cf[r]) x d (cf[q]) into cf[at], I (r x d) into cf[at2], and (r x d) . I (r x d) added to cf[q + 15].
-  function arm(q, at, at2, r, I) {
+  function arm(q: number, at: number, at2: number, r: number, I: Float64Array) {
     const rx = cf[r], ry = cf[r + 1], rz = cf[r + 2], dx = cf[q], dy = cf[q + 1], dz = cf[q + 2];
     const ax = ry * dz - rz * dy, ay = rz * dx - rx * dz, az = rx * dy - ry * dx;
     const bx = I[0] * ax + I[1] * ay + I[2] * az, by = I[3] * ax + I[4] * ay + I[5] * az, bz = I[6] * ax + I[7] * ay + I[8] * az;
@@ -274,7 +352,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
   // One row of contact o solved: r 0 the normal (pushing apart, toward its wanted speed), 1 and 2 friction (within mu of
   // the normal impulse), 3 the overlap push (on the push velocities). Floats are never passed or returned here: V8 boxes
   // those that cross a call.
-  function solveRow(o, r) {
+  function solveRow(o: number, r: number) {
     const push = r === 3 ? 6 : 0, q = o + ROW + (push ? 0 : r) * RW, a = ia + push, at = o + (push ? 11 : 8 + r);
     let s = cf[q] * vel[a] + cf[q + 1] * vel[a + 1] + cf[q + 2] * vel[a + 2] + cf[q + 3] * vel[a + 3] + cf[q + 4] * vel[a + 4] + cf[q + 5] * vel[a + 5];
     if (ib >= 0) { const b = ib + push; s -= cf[q] * vel[b] + cf[q + 1] * vel[b + 1] + cf[q + 2] * vel[b + 2] + cf[q + 6] * vel[b + 3] + cf[q + 7] * vel[b + 4] + cf[q + 8] * vel[b + 5]; }
@@ -287,7 +365,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     if (dl !== 0) { KV[0] = dl; kick(o, q, a, push); }
   }
   // The impulse KV[0] along row q of contact o (a: A's offset into vel, plus push's).
-  function kick(o, q, a, push) {
+  function kick(o: number, q: number, a: number, push: number) {
     const l = KV[0], ma = cf[o + 15] * l;
     vel[a] += cf[q] * ma; vel[a + 1] += cf[q + 1] * ma; vel[a + 2] += cf[q + 2] * ma;
     vel[a + 3] += cf[q + 9] * l; vel[a + 4] += cf[q + 10] * l; vel[a + 5] += cf[q + 11] * l;
@@ -299,14 +377,14 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
   }
   const KV = new Float64Array(1), RV = new Float64Array(1);
   // How fast contact o closes, along its normal, into RV[0] (negative: closing).
-  function closing(o) {
+  function closing(o: number) {
     const q = o + ROW, a = ia;
     let s = cf[q] * vel[a] + cf[q + 1] * vel[a + 1] + cf[q + 2] * vel[a + 2] + cf[q + 3] * vel[a + 3] + cf[q + 4] * vel[a + 4] + cf[q + 5] * vel[a + 5];
     if (ib >= 0) s -= cf[q] * vel[ib] + cf[q + 1] * vel[ib + 1] + cf[q + 2] * vel[ib + 2] + cf[q + 6] * vel[ib + 3] + cf[q + 7] * vel[ib + 4] + cf[q + 8] * vel[ib + 5];
     else s -= cf[q] * cf[o + 12] + cf[q + 1] * cf[o + 13] + cf[q + 2] * cf[o + 14];
     RV[0] = s;
   }
-  const use = (c) => { ia = ci[c * 4] * V; const b = ci[c * 4 + 1]; ib = b >= 0 ? b * V : -1; };
+  const use = (c: number) => { ia = ci[c * 4] * V; const b = ci[c * 4 + 1]; ib = b >= 0 ? b * V : -1; };
   function solve() {
     for (let c = 0; c < nc; c++) { // the warm start
       use(c);
@@ -328,24 +406,24 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
 // ---------- shapes ----------
 // A solid box W x H x D (along its x, y, z): contact points on a grid over its faces (no further apart than spacing),
 // its signed distance, its bound, and its inertia for a mass.
-export function boxShape(W, H, D, spacing) {
-  const hx = W / 2, hy = H / 2, hz = D / 2, pts = [];
-  const grid = (a) => { const n = Math.max(1, Math.ceil(a / spacing)); return Array.from({ length: n + 1 }, (_, i) => -a / 2 + (a * i) / n); };
-  const gx = grid(W), gy = grid(H), gz = grid(D), add = (x, y, z) => pts.push(x, y, z);
+export function boxShape(W: number, H: number, D: number, spacing: number): Shape {
+  const hx = W / 2, hy = H / 2, hz = D / 2, pts: number[] = [];
+  const grid = (a: number) => { const n = Math.max(1, Math.ceil(a / spacing)); return Array.from({ length: n + 1 }, (_, i) => -a / 2 + (a * i) / n); };
+  const gx = grid(W), gy = grid(H), gz = grid(D), add = (x: number, y: number, z: number) => pts.push(x, y, z);
   for (const x of gx) for (const y of gy) { add(x, y, -hz); add(x, y, hz); }
   for (const x of gx) for (const z of gz.slice(1, -1)) { add(x, -hy, z); add(x, hy, z); }
   for (const y of gy.slice(1, -1)) for (const z of gz.slice(1, -1)) { add(-hx, y, z); add(hx, y, z); }
-  const sdf = (n) => {
+  const sdf = (n: Float64Array) => {
     const x = n[0], y = n[1], z = n[2], qx = Math.abs(x) - hx, qy = Math.abs(y) - hy, qz = Math.abs(z) - hz, mx = Math.max(qx, 0), my = Math.max(qy, 0), mz = Math.max(qz, 0), out = Math.sqrt(mx * mx + my * my + mz * mz);
     if (out > 0) { n[0] = (mx / out) * Math.sign(x); n[1] = (my / out) * Math.sign(y); n[2] = (mz / out) * Math.sign(z); n[3] = out; return; }
     n[0] = n[1] = n[2] = 0;
     if (qx >= qy && qx >= qz) n[0] = Math.sign(x) || 1; else if (qy >= qz) n[1] = Math.sign(y) || 1; else n[2] = Math.sign(z) || 1;
     n[3] = Math.max(qx, qy, qz);
   };
-  return { points: Float64Array.from(pts), sdf, bound: Math.hypot(hx, hy, hz), inertia: (m) => [(m * (H * H + D * D)) / 12, (m * (W * W + D * D)) / 12, (m * (W * W + H * H)) / 12] };
+  return { points: Float64Array.from(pts), sdf, bound: Math.hypot(hx, hy, hz), inertia: (m: number): [number, number, number] => [(m * (H * H + D * D)) / 12, (m * (W * W + D * D)) / 12, (m * (W * W + H * H)) / 12] };
 }
 
-function qmat(w, x, y, z, m) {
+function qmat(w: number, x: number, y: number, z: number, m: Float64Array) {
   m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y - w * z); m[2] = 2 * (x * z + w * y);
   m[3] = 2 * (x * y + w * z); m[4] = 1 - 2 * (x * x + z * z); m[5] = 2 * (y * z - w * x);
   m[6] = 2 * (x * z - w * y); m[7] = 2 * (y * z + w * x); m[8] = 1 - 2 * (x * x + y * y);

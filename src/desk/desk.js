@@ -14,7 +14,7 @@
 import { clips, mediaUrl } from 'virtual:desk-media';
 import { createChips, NCH } from './chips.js';
 import { createChipRenderer } from './chip-render.js';
-import { createWorld, boxShape } from './physics.js';
+import { createWorld, boxShape } from './physics.ts';
 import { createCurl } from './curl.js';
 import { createNote, NS, paperChain, stepChain } from './note.js';
 import { TALLY_PARAMS, tallySurface, paintTally } from './tally.js';
