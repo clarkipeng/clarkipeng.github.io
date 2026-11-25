@@ -16,7 +16,7 @@ import { createChips, NCH } from './chips.js';
 import { createChipRenderer } from './chip-render.js';
 import { createWorld, boxShape } from './physics.js';
 import { createCurl } from './curl.js';
-import { createNote, NS } from './note.js';
+import { createNote, NS, paperChain, stepChain } from './note.js';
 import { TALLY_PARAMS, tallySurface, paintTally } from './tally.js';
 
 export function mountDesk(root, router) {
@@ -92,12 +92,11 @@ const GROUPS = {
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
-    ['foldTop', 1.2, 0.2, 4, 0.05, 'note: turn speed upright (turns/s)'],
-    ['foldG', 30, 0, 80, 1, 'note: how hard it falls'],
-    ['foldBounce', 0.3, 0, 0.8, 0.02, 'note: bounce off the desk'],
-    ['foldR', 14, 0, 60, 1, 'note: bend radius at the strip mid-turn px'],
-    ['foldLag', 0.25, 0, 1, 0.01, 'note: free edge lag'],
-    ['foldSag', 90, 0, 300, 5, 'note: free edge sag'],
+    ['paperN', 16, 8, 24, 1, 'note: paper links, strip to free edge'],
+    ['paperBend', 50, 20, 120, 1, 'note: paper stiffness (px it holds out straight)'],
+    ['paperG', 8000, 2000, 20000, 100, 'note: gravity px/s^2'],
+    ['paperDrag', 0.03, 0, 0.1, 0.001, 'note: air drag on the paper'],
+    ['paperLift', 12000, 2000, 40000, 500, 'note: finger lift on the free edge'],
     ['backs', 'pen', 0, 0, 0, 'back style'],
     ['cards', 'compact', 0, 0, 0, 'card size preset'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
@@ -1052,19 +1051,23 @@ const STRIP = 22; // the sticky note's strip, design px (the stylesheet's .note 
 // The sticky note turns over its top edge, about its horizontal axis, like a real one lifted to read its back; every other
 // card turns over its side.
 const hinged = (s) => s.kind === 'note';
-// Its strip stays stuck: the rest of it swings up over it as bending paper (note.js) and lies on it, back up.
-const noteMesh = (s) => hinged(s) && (s.flip > 0 || s.bend) && !s.fly && !s.deck && !s.carrier;
-// The sheet past the strip as it turns (CSS px from the strip's edge, along the note and up, and its angle there): it
-// turns by pi flip, bending over a length that is a tight crease lying down and widest upright, and its free part
-// leads or trails by s.bend (radians at the free edge).
+// Its strip stays stuck: the rest of it turns over it as paper (s.ch, note.js) and lies on it, back up.
+const noteMesh = (s) => hinged(s) && s.ch && !s.fly && !s.deck && !s.carrier;
+const paperL = (s) => s.h / (s.k || 1) - STRIP; // the sheet past the strip, design px
+// The sheet's profile for the mesh (CSS px from the strip's edge, along the note and up, and its angle there): the
+// chain's joints, through a Catmull-Rom spline, at NS + 1 even steps along it.
 const NOTE_P = new Float32Array((NS + 1) * 4);
-function noteBend(s) {
-  const k = s.k || 1, L = s.h - STRIP * k, Th = Math.PI * clamp(s.flip), l = Math.max(2 * Th * (1.5 + T.foldR * Math.sin(Th)) * k, 1e-3);
-  const ang = (t) => clamp(Th * (t < l ? 1 - (1 - t / l) ** 2 : 1) + (s.bend || 0) * (t / L) ** 2, 0, Math.PI);
-  let y = 0, z = 0;
-  for (let i = 0; i <= NS; i++) {
-    for (let j = 0; i && j < 4; j++) { const a = ang(((i - 1 + (j + 0.5) / 4) * L) / NS); y += (Math.cos(a) * L) / NS / 4; z += (Math.sin(a) * L) / NS / 4; }
-    NOTE_P[i * 4] = y; NOTE_P[i * 4 + 1] = z; NOTE_P[i * 4 + 2] = ang((i * L) / NS);
+function noteProfile(s) {
+  const { n, x } = s.ch, k = s.k || 1, q = (j, a) => (j < 0 ? 2 * x[a] - x[2 + a] : j > n ? 2 * x[2 * n + a] - x[2 * n - 2 + a] : x[2 * j + a]);
+  for (let i = 0, th = 0; i <= NS; i++) {
+    const t = (i * n) / NS, j = Math.min(Math.floor(t), n - 1), u = t - j;
+    const cr = (a) => { // the spline through joints j-1..j+2 at u, and its slope
+      const p0 = q(j - 1, a), p1 = q(j, a), p2 = q(j + 1, a), p3 = q(j + 2, a), b = p2 - p0, c = 2 * p0 - 5 * p1 + 4 * p2 - p3, d = 3 * (p1 - p2) + p3 - p0;
+      return [p1 + 0.5 * u * (b + u * (c + u * d)), b + u * (2 * c + 3 * u * d)];
+    };
+    const [y, dy] = cr(0), [z, dz] = cr(1), a = Math.atan2(dz, dy);
+    th = i ? th + Math.atan2(Math.sin(a - th), Math.cos(a - th)) : a; // unwrapped, so rows never turn the long way between
+    NOTE_P[i * 4] = y * k; NOTE_P[i * 4 + 1] = z * k; NOTE_P[i * 4 + 2] = th;
   }
   return NOTE_P;
 }
@@ -1292,7 +1295,7 @@ function placeDom(s) {
 // The note lying folded over its strip: its hit area and its back (the links; without WebGPU the drawn back) move up
 // onto the sheet, and the back's strip band (under the strip, never seen) is cut off. Design px.
 function placeFold(s) {
-  const k = s.k || 1, C = s.flip === 1 ? (STRIP * k + noteBend(s)[NS * 4]) / k : 0;
+  const k = s.k || 1, C = s.flip === 1 && s.ch ? STRIP + s.ch.x[2 * s.ch.n] : 0;
   s.backEl.style.transform = C ? `translateY(${C}px)` : '';
   s.backEl.style.clipPath = C ? `inset(0 0 ${STRIP}px)` : '';
   Object.assign(s.hit.style, { top: C ? C + 'px' : '', bottom: C ? s.h / k - STRIP + 'px' : '' });
@@ -1682,14 +1685,17 @@ function flip(s) {
   s.flipTo = s.flipTo ? 0 : 1;
   s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
-  s.slap = hinged(s); // the note is thrown over (or back) and slaps down
   // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
   s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
     if (!gpu && s.flipTo) paintDomBack(s);
+    if (hinged(s)) s.ch = s.flipTo ? paperChain(T.paperN, paperL(s), 1) : null;
     s.flip = s.emit = s.face = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
     if (gpu) drawStill();
+  } else if (hinged(s)) { // the note: a finger lifts its free edge over (or back)
+    s.ch ||= paperChain(T.paperN, paperL(s), 0);
+    Object.assign(s.ch, { dir: s.flipTo ? 1 : -1, push: true, slap: true, rest: false });
   }
 }
 
@@ -1721,7 +1727,7 @@ function stepCards(dt) {
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
-    if (hinged(s)) stepFold(s, dt);
+    if (hinged(s)) stepPaper(s, dt);
     else if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1);
@@ -1784,27 +1790,21 @@ function stepKey(s, dt) {
   if (!s.keyHeld && Math.hypot(k.tx - s.x, k.ty - s.y) < 0.5) Object.assign(s, { x: k.tx, y: k.ty, kb: null });
 }
 
-// The note is thrown over its strip: fast as it peels off, slowest upright (foldTop), then it falls (foldG), slaps down
-// (the landing), and bounces a little before it rests. Its free part lags each change of speed and sags under gravity
-// while it swings (s.bend, a stiff damped spring, stepped implicitly).
-function stepFold(s, dt) {
-  const v0 = s.flipV || 0, dir = s.flipTo ? 1 : -1, th = Math.PI * s.flip, g = -T.foldG * Math.cos(th);
-  if (s.flip !== s.flipTo) {
-    s.flipV = s.slap ? dir * Math.sqrt(T.foldTop ** 2 + T.foldG * (1 - Math.sin(th))) : v0 + g * dt;
-    s.flip += s.flipV * dt;
-    if (dir * (s.flip - s.flipTo) >= 0) {
-      if (s.slap) { s.slap = false; land(s, 1); }
-      s.flipV *= -T.foldBounce;
-      s.flip = Math.abs(s.flipV) < Math.abs(g) * dt ? s.flipTo : s.flipTo - dir * 1e-4;
-      if (s.flip === s.flipTo) { s.flipV = 0; placeDom(s); } // at rest
-    }
-    s.el.classList.toggle('flipped', s.flip === 1);
-    s.el.classList.toggle('turning', s.flip !== s.flipTo);
+// The note turns as paper (note.js): the finger lets go past upright and the sim does the rest. Its free edge slapping
+// down is its landing; it rests once it lies still, on whichever side it fell.
+function stepPaper(s, dt) {
+  const c = s.ch;
+  if (!c || c.rest) return;
+  const v = stepChain(c, dt, { g: T.paperG, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
+  if (v) land(s, clamp(v / 600));
+  s.flip = clamp(Math.atan2(c.x[2 * c.n + 1], c.x[2 * c.n]) / Math.PI);
+  if (c.rest) {
+    s.flip = s.flipTo = c.x[2 * c.n] < 0 ? 1 : 0; s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
+    if (!s.flipTo) s.ch = null;
+    placeDom(s);
   }
-  const swing = s.flip !== s.flipTo, K = 900;
-  s.bendV = ((s.bendV || 0) - T.foldLag * Math.PI * ((s.flipV || 0) - v0) + dt * ((swing ? -T.foldSag * Math.cos(th) : 0) - K * (s.bend || 0))) / (1 + 20 * dt + K * dt * dt);
-  s.bend = (s.bend || 0) + s.bendV * dt;
-  if (!swing && Math.abs(s.bend) < 1e-3 && Math.abs(s.bendV) < 1e-2) s.bend = s.bendV = 0;
+  s.el.classList.toggle('flipped', c.rest && !!s.flipTo);
+  s.el.classList.toggle('turning', !c.rest);
 }
 
 // ---------- landing ----------
@@ -1989,7 +1989,7 @@ function deal(s, deck, at, stack, [x, y, r]) {
   const i = deck.pile.indexOf(s);
   deck.pile.splice(i, 1); deck.dirty = true;
   s.fly = { out: true, at, x, y, r, deck, stack, i, ur: upright(s), pw: Math.min(s.w, s.h) };
-  Object.assign(s, { deck: null, flying: true, face: 1, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
+  Object.assign(s, { deck: null, flying: true, face: 1, flip: 0, flipTo: 0, ch: null, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); // clicks go through to the box
   s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
 }
@@ -2028,7 +2028,7 @@ function pileUp(region, own = false) {
   const cards = sources.filter((s) => s.region === region && decked(s) && !s.deck && !s.fly && !s.dragging && (own || region !== page || !s.slot)).sort((a, b) => b.order - a.order);
   for (const s of cards) {
     deck.pile.push(s);
-    Object.assign(s, { deck, flying: true, face: 1, flip: 0, flipTo: 0, emit: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
+    Object.assign(s, { deck, flying: true, face: 1, flip: 0, flipTo: 0, ch: null, emit: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
     s.el.classList.add('flying'); s.el.classList.remove('flipped'); s.hit.setAttribute('aria-expanded', 'false');
   }
   if (cards.length) { deck.z = ++topZ; deck.dirty = true; if (!deck.launch) moveDeck(deck); } // a flying box takes them once it is back
@@ -2499,7 +2499,7 @@ function collect(s, deck, at, dur = GATHER.dur, say = '') {
   const [sx, sy, r0] = shown(s), [fz, fv] = flipPath(s), a = (r0 * Math.PI) / 180, x0 = sx - Math.sin(a) * fv, y0 = sy + Math.cos(a) * fv; // mid-flip: from where its turn has it
   deck.pile.push(s); deck.z = ++topZ; deck.dirty = true;
   s.fly = { in: true, deck, at, dur, x0, y0, r0, face0: s.face, lift0: fz / T.lift, open: s.flip > 0, say };
-  Object.assign(s, { deck, x: x0, y: y0, rot: r0, snap: 0, over: false, flying: true, flip: 0, flipTo: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
+  Object.assign(s, { deck, x: x0, y: y0, rot: r0, snap: 0, over: false, flying: true, flip: 0, flipTo: 0, ch: null, vx: 0, vy: 0, released: false, shove: null, kb: null });
   s.el.classList.add('flying'); s.el.classList.remove('flipped', 'turning', 'dragging'); s.hit.setAttribute('aria-expanded', 'false');
 }
 // Putting one card back by hand (a drop over its box, or Enter while it waits there): it slides in, keyboard focus goes to
@@ -3396,7 +3396,7 @@ function mildInk(hex, baseHex, mix = 1) {
 }
 // A click's flip, off the desk: how high its middle is (CSS px) and how far it is from where the card lies, along the
 // card's vertical axis. A card lifts in the first ~22%, turns over in the middle, and lays back down in the last ~22% (the
-// same path in reverse). The note stays on its strip (stepFold).
+// same path in reverse). The note stays on its strip (stepPaper).
 function flipPath(s) {
   if (!(s.flip > 0 && s.flip < 1) || hinged(s)) return [0, 0];
   return [(view.phone ? 0.3 : 0.9) * T.lift * smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)), 0]; // on a phone a flip lifts less, so the card stays inside the screen
@@ -3411,7 +3411,7 @@ function noteUniform(s, x, y, th, z) {
   gpu.note.size(Math.ceil(2 * ex * dev) + 2, Math.ceil(2 * ey * dev) + 2);
   NOTE_U.set([hw, hh, 3, STRIP * (s.k || 1) - hh, x, y, c, n, ...t0, gpu.note.w, gpu.note.h, dev, 1800, z, M,
     c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), T.shadowSoft, L, 0, 0]);
-  NOTE_U.set(noteBend(s), 24);
+  NOTE_U.set(noteProfile(s), 24);
   return [...t0, Math.hypot(ex, ey) + Math.abs(cy) + s.h];
 }
 function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
@@ -3420,7 +3420,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   let [sx, sy, sr] = shown(s);
   let th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
   // The note as paper: past half way, the slime and its landing see it where it lies, over its strip.
-  const mesh = noteMesh(s), yh = STRIP * (s.k || 1) - s.h / 2, lo = mesh ? Math.min(yh + noteBend(s)[NS * 4], -s.h / 2) : 0, tile = mesh && noteUniform(s, sx - originX, sy, th, lift * T.lift);
+  const mesh = noteMesh(s), yh = STRIP * (s.k || 1) - s.h / 2, lo = mesh ? Math.min(yh + s.ch.x[2 * s.ch.n] * (s.k || 1), -s.h / 2) : 0, tile = mesh && noteUniform(s, sx - originX, sy, th, lift * T.lift);
   if (mesh && s.flip > 0.5) fv = (lo + yh) / 2;
   sx -= Math.sin(th) * fv; sy += Math.cos(th) * fv;
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];

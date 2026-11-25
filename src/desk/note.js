@@ -1,9 +1,9 @@
 // The sticky note turning over its strip, as paper: a column of quads bent along the note about the strip's edge (the
-// profile, desk.js noteBend), seen by the desk's camera, each face lit by its normal. One small pass draws it into a
+// profile, desk.js noteProfile), seen by the desk's camera, each face lit by its normal. One small pass draws it into a
 // tile the desk's render reads where it lays the note: the top half the paper (where on the note, its light, negative
 // for the back, coverage), the bottom half its shadows on the desk (near, far; as strong as at that height).
 // The bend is along the note only, so one column is the exact surface; drawn from the strip out, each row lies over
-// the ones before it (the sheet only rises along its length), so no depth buffer is needed.
+// the ones before it where they overlap on screen (its free part only folds back over the rest), so no depth buffer.
 export const NS = 64; // the profile's samples, strip edge to free edge
 
 const WGSL = /* wgsl */ `
@@ -60,7 +60,9 @@ fn edge(v: VO) -> f32 { let sd = boxSd(v.l, u.a.xy, u.a.z); return sd / clamp(le
   let cov = clamp(0.5 - edge(v), 0.0, 1.0);
   if (cov <= 0.0) { discard; }
   let n = vec3f(0.0, -sin(v.th), cos(v.th)) * select(-1.0, 1.0, ff);
-  let lit = (0.6 + 0.4 * max(dot(n, u.e.xyz), 0.0)) / (0.6 + 0.4 * u.e.z); // 1 lying flat, either face up
+  // Paper is thin: mostly lit by the room (a), and a face turned from the light glows with half what comes through it.
+  let d = dot(n, u.e.xyz); let a = 0.8;
+  let lit = (a + (1.0 - a) * (max(d, 0.0) + 0.5 * max(-d, 0.0))) / (a + (1.0 - a) * u.e.z); // 1 lying flat, either face up
   return vec4f(v.l / (2.0 * u.a.xy) + 0.5, select(-lit, lit, ff), cov);
 }
 @fragment fn fsShadow(v: VO) -> @location(0) vec4f {
@@ -97,4 +99,56 @@ export function createNote(device) {
   };
   note.size(1, 1);
   return note;
+}
+
+// The sheet past the strip, as paper: one cross-section, a chain of n equal links from the strip's edge (fixed) to the
+// free edge, along the note (y) and up from the desk (z), design px. Links never stretch; each joint resists bending
+// (the strip's edge is a free hinge), gravity pulls it down, the air pushes back on its face, and the desk holds it up.
+// A finger lifts the free edge toward the other side and lets go once it is past upright; the rest is the sim.
+export function paperChain(n, L, flip) { // lying flat (flip 0), or turned over onto the strip (1)
+  const x = new Float64Array(2 * n + 2);
+  for (let i = 0; i <= n; i++) x[2 * i] = ((flip ? -1 : 1) * i * L) / n;
+  return { n, l: L / n, x, p: x.slice(), dir: 0, push: false, slap: false, rest: true };
+}
+const H = 1 / 3000; // the sim's step (s): fine enough that the stiffest joints stay stable
+// P: g (px/s^2), drag (1/px: quadratic, across the face), bend (px: the length paper holds itself out straight against
+// gravity), lift (px/s^2: the finger on the free edge, per link). Returns the free edge's downward speed the step it first
+// touches the desk after the finger lets go (the slap), else 0; c.rest once it lies still on the desk.
+export function stepChain(c, dt, P) {
+  const { n, l, x, p } = c, B = P.g * P.bend ** 3 / l ** 2, f = new Float64Array(2 * n + 2);
+  let slap = 0;
+  for (let t = 0; t < dt - 1e-9; t += H) {
+    const h = Math.min(H, dt - t);
+    f.fill(0);
+    for (let j = 1; j < n; j++) { // the joint at node j turns link j-1 into link j (the strip's edge is a free hinge)
+      const ay = x[2 * j] - x[2 * j - 2], az = x[2 * j + 1] - x[2 * j - 1], by = x[2 * j + 2] - x[2 * j], bz = x[2 * j + 3] - x[2 * j + 1];
+      const k = (-B * Math.atan2(ay * bz - az * by, ay * by + az * bz)) / l; // the torque, as a force on the link ends (all links are l long)
+      f[2 * j + 2] -= (k * bz) / l; f[2 * j + 3] += (k * by) / l; f[2 * j - 2] -= (k * az) / l; f[2 * j - 1] += (k * ay) / l;
+      f[2 * j] += (k * (bz + az)) / l; f[2 * j + 1] -= (k * (by + ay)) / l;
+    }
+    for (let i = 1; i <= n; i++) { // the air across the face (the normal: averaged over the links either side)
+      const a = Math.max(i - 1, 0), b = Math.min(i + 1, n), ny = -(x[2 * b + 1] - x[2 * a + 1]), nz = x[2 * b] - x[2 * a], m = Math.hypot(ny, nz) || 1;
+      const vn = ((x[2 * i] - p[2 * i]) * ny + (x[2 * i + 1] - p[2 * i + 1]) * nz) / m / h;
+      f[2 * i] -= (P.drag * vn * Math.abs(vn) * ny) / m; f[2 * i + 1] -= (P.drag * vn * Math.abs(vn) * nz) / m + P.g;
+    }
+    const ey = x[2 * n], ez = x[2 * n + 1], r = Math.hypot(ey, ez) || 1;
+    if (c.push) {
+      f[2 * n] -= (P.lift * n * c.dir * ez) / r; f[2 * n + 1] += (P.lift * n * c.dir * ey) / r; // across the chord, toward the other side
+      if (c.dir * ey < -0.1 * r) c.push = false; // past upright: let go
+    }
+    const vz = (x[2 * n + 1] - p[2 * n + 1]) / h;
+    for (let i = 2; i < 2 * n + 2; i++) { const v = x[i] - p[i]; p[i] = x[i]; x[i] += v * (1 - 2 * h) + f[i] * h * h; }
+    for (let it = 0; it < 6; it++) for (let i = 0; i < n; i++) { // links keep their length, from the strip out
+      const dy = x[2 * i + 2] - x[2 * i], dz = x[2 * i + 3] - x[2 * i + 1], d = Math.hypot(dy, dz) || 1, e = (d - l) / d;
+      const w = i ? 0.5 : 0; x[2 * i] += w * e * dy; x[2 * i + 1] += w * e * dz; x[2 * i + 2] -= (1 - w) * e * dy; x[2 * i + 3] -= (1 - w) * e * dz;
+    }
+    for (let i = 1; i <= n; i++) if (x[2 * i + 1] < 0) { // the desk: no sinking in, no sliding along it
+      if (i === n && !c.push && c.slap) { slap = Math.max(slap, -vz); c.slap = false; }
+      x[2 * i + 1] = 0; p[2 * i + 1] = 0; p[2 * i] = x[2 * i];
+    }
+  }
+  let m = 0;
+  for (let i = 1; i <= n; i++) m = Math.max(m, x[2 * i + 1], Math.hypot(x[2 * i] - p[2 * i], x[2 * i + 1] - p[2 * i + 1]) / H);
+  c.rest = !c.push && m < 1; // within a px of the desk, slower than a px/s
+  return slap;
 }
