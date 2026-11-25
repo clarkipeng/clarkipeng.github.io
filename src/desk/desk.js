@@ -3461,7 +3461,7 @@ function writeUniforms(g, sm = sim, hold = false) {
 const chips = createChips(T, () => throwWorld().world);
 const chipRegion = () => chips.bodies[0]?.chip.region ?? page;
 const chipX0 = () => (view.phone ? 0 : chipRegion() * view.w);
-let chipFeedAt = 0;
+let chipFeedAt = 0, chipWait = []; // chipWait: drops waiting for a slot
 // Each chip's food, for the agents and the excitation field (sim px), and where its drawn layer sits on the canvas.
 function chipUniforms(s) {
   U.fill(0, CHIP_OFF, CHIP_OFF + CHIP_VEC4 * 4);
@@ -3477,6 +3477,7 @@ function chipUniforms(s) {
 // The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
 // a finished turn left on it carry on on the new page, where they are on the screen.
 function stepChips(dt) {
+  while (chipWait.length && chips.bodies.length < NCH) { const [x, y, p] = chipWait.shift(); if (p === page) dropChip(x, y); }
   if (!chips.bodies.length) return;
   if (chipRegion() !== page && !turn.on) {
     const dx = view.phone ? 0 : (page - chipRegion()) * view.w;
@@ -3493,11 +3494,16 @@ function stepChips(dt) {
   if (chips.bodies.some((b) => !b.sleep || b.dirty)) redraw = true;
   if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; gpu.chipR.feed(chips, sim.trail[sim.parity], { x0: sim.origin, dpr: sim.dpr, gain: T.chipTaste }); }
 }
-// Over the cap the oldest chip is eaten faster; with every slot taken the click does nothing.
+// Over the cap the oldest chip is eaten faster; with every slot taken the oldest crumbles away, and the new one drops as
+// soon as its slot is free (with reduced motion, at once).
 function dropChip(x, y) {
-  const calm = [...new Set(chips.bodies.map((b) => b.chip))].filter((c) => c.hurry === 1).sort((a, b) => a.born - b.born);
+  const live = [...new Set(chips.bodies.map((b) => b.chip))].sort((a, b) => a.born - b.born), calm = live.filter((c) => c.hurry === 1);
   if (calm.length >= T.chipMax) calm[0].hurry = T.chipHurry;
-  if (chips.bodies.length >= NCH) return null;
+  if (chips.bodies.length >= NCH) {
+    const c = live.find((c) => !c.crumbles), its = chips.bodies.filter((b) => b.chip === c);
+    if (reduced) its.forEach((b) => chips.remove(b)); // no motion: it is just gone
+    else { if (c) c.crumbles = true; for (const b of its) b.crumb.fill(1); chipWait.push([x, y, page]); return null; }
+  }
   const b = chips.drop(x, y, T.chipSize * view.k, (Math.random() * 2 ** 31) >>> 0, { region: page, born: clock.t, still: reduced });
   redraw = true;
   if (reduced) drawStill(); // no frame loop: it is drawn where it came to rest
