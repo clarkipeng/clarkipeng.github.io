@@ -6,7 +6,7 @@
 
 import { CN, NCH, FEED, DIST } from './chips.js';
 
-const BODY_VEC4 = 14, HEAD_VEC4 = 7, G = 40; // a chip's mesh: G x G quads
+const BODY_VEC4 = 14, HEAD_VEC4 = 6, G = 40; // a chip's mesh: G x G quads
 const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell
 // A shadow falls this far right and down per px of height, like the cards' far shadows.
 const LS = [0.15, 0.6];
@@ -25,12 +25,11 @@ struct Body {
 };
 struct CU {
   a: vec4f,  // device px per CSS px, tile size (device px), the shadow's margin past the rim, the height it fades out by (px)
-  l0: vec4f, // gold, browned rim, ripples, salt
-  l1: vec4f, // translucent edges, oil sheen, shadow, nibbled edges
-  l2: vec4f, // slime stain, light (x, y toward it), light contrast
-  l3: vec4f, // crests and troughs, broad highlight, lifted rims glow, the camera's height (px)
-  l4: vec4f, // shadow softening per px of height, contact shadow, blisters, how gradually the edges curl
-  l5: vec4f, // the soft light from the sky and the desk that fills the side turned away, unused x3
+  l0: vec4f, // gold, browned rim, salt, the edge's thickness showing
+  l1: vec4f, // shadow, nibbled edges, slime stain, light contrast
+  l2: vec4f, // light (x, y toward it), crests and troughs, broad highlight
+  l3: vec4f, // the camera's height (px), shadow softening per px of height, contact shadow, how gradually the edges curl
+  l4: vec4f, // the soft light from the sky and the desk that fills the side turned away, unused x3
   b: array<Body, ${NCH}>,
 };
 @group(0) @binding(0) var<uniform> u: CU;
@@ -59,7 +58,7 @@ fn surf(p: vec2f) -> vec3f {
   return vec3f(h, hx, hy) + fold(p, b.f0) + fold(p, b.f1);
 }
 fn fold(p: vec2f, f: vec4f) -> vec3f {
-  let w = u.l4.w; let span = u.b[bi].s0.x - f.z; let e = (dot(f.xy, p) - f.z) / span; let r = length(vec2f(e, w));
+  let w = u.l3.w; let span = u.b[bi].s0.x - f.z; let e = (dot(f.xy, p) - f.z) / span; let r = length(vec2f(e, w));
   let q1 = 0.5 * (1.0 + length(vec2f(1.0, w))); let q = 0.5 * (e + r) / q1;
   return vec3f(f.w * q * q, f.w * q * (1.0 + e / r) / (q1 * span) * f.xy);
 }
@@ -93,7 +92,7 @@ fn chipSd(p: vec2f) -> Sd {
   let b = &u.b[bi];
   let fl = field(p); let cell = b.z.z;
   let q = p / cell + b.z.w;
-  let rag = (vnoise(q * 0.4) * 0.7 + vnoise(q * 0.9) * 0.3 - 0.5) * u.l1.w * cell * 2.0; // soft bites, never fuzz
+  let rag = (vnoise(q * 0.4) * 0.7 + vnoise(q * 0.9) * 0.3 - 0.5) * u.l1.y * cell * 2.0; // soft bites, never fuzz
   let eat = (fl.r - 0.5) * 6.0 * cell + rag * (1.0 - smoothstep(0.75, 1.0, fl.r)) - fl.b * ${DIST}.0 * cell; // steep, so the edge stays crisp where it was eaten slowly
   let rim = rimSd(p);
   return Sd(min(rim, eat), rim, eat, fl.r, fl.g);
@@ -117,13 +116,13 @@ fn corner(vi: u32) -> vec2f {
 }
 
 struct VO { @builtin(position) pos: vec4f, @location(0) p: vec2f, @location(1) z: f32, @location(2) @interpolate(flat) id: u32 };
-// The chip: its surface, posed, seen from a camera u.l3.w px above the desk, so the higher it is the larger it looks.
+// The chip: its surface, posed, seen from a camera u.l3.x px above the desk, so the higher it is the larger it looks.
 @vertex fn vsChip(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
   bi = ii; let b = &u.b[bi];
   let p = mix(vec2f(-b.s0.y), vec2f(b.s0.y), corner(vi));
   let w = world(vec3f(p, surf(p).x));
   let x = vec2f(b.r0.w, b.r1.w);
-  return VO(clip(x + (w.xy - x) * u.l3.w / max(u.l3.w - w.z, u.l3.w * 0.25), w.z), p, w.z, ii);
+  return VO(clip(x + (w.xy - x) * u.l3.x / max(u.l3.x - w.z, u.l3.x * 0.25), w.z), p, w.z, ii);
 }
 // Its shadow: the same surface carried level past its rim by the shadow's margin, laid on the desk along the light.
 @vertex fn vsShadow(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
@@ -139,15 +138,15 @@ struct VO { @builtin(position) pos: vec4f, @location(0) p: vec2f, @location(1) z
   bi = v.id;
   let s = chipSd(v.p).all; let h = v.z;
   let contact = exp(-h / 2.0) * smoothstep(-(1.0 + 0.4 * h), 0.5, s);
-  let ws = min(1.0 + u.l4.x * h, u.a.z);
+  let ws = min(1.0 + u.l3.y * h, u.a.z);
   let soft = smoothstep(-ws, ws, s) / (1.0 + h / 20.0);
   let room = smoothstep(-u.a.z, 0.0, s) * exp(-h / 30.0); // the room's light, blocked a little all round it
   let fade = 1.0 - smoothstep(0.5, 1.0, h / u.a.w);
-  return vec4f(0.0, 0.0, 0.0, clamp(u.l1.z * (0.55 * u.l4.y * contact + 0.6 * soft + 0.2 * room * room) * fade, 0.0, 1.0));
+  return vec4f(0.0, 0.0, 0.0, clamp(u.l1.x * (0.55 * u.l3.z * contact + 0.6 * soft + 0.2 * room * room) * fade, 0.0, 1.0));
 }
 
 const GOLD0 = vec3f(0.90, 0.74, 0.30); const GOLD1 = vec3f(0.80, 0.55, 0.14); // pale and deep gold (linear)
-const BROWN = vec3f(0.42, 0.21, 0.06); const OLIVE = vec3f(0.36, 0.37, 0.20); const AMBER = vec3f(1.0, 0.76, 0.32);
+const BROWN = vec3f(0.42, 0.21, 0.06); const OLIVE = vec3f(0.36, 0.37, 0.20);
 
 @fragment fn fsChip(v: VO) -> @location(0) vec4f {
   bi = v.id; let b = &u.b[bi];
@@ -156,47 +155,33 @@ const BROWN = vec3f(0.42, 0.21, 0.06); const OLIVE = vec3f(0.36, 0.37, 0.20); co
   var cover = clamp(sd.all / max(fwidth(sd.all), 0.05) + 0.5, 0.0, 1.0);
   if (cover <= 0.0) { discard; }
   let sg = surf(l);
-  // A fried surface: faint ripples across it and soft blisters, as a bump on the normal only.
-  let q = l / b.z.z + b.z.w;
-  let ra = b.z.w * 2.1;
-  let rip = cos(dot(l, vec2f(cos(ra), sin(ra))) * 0.55 + vnoise(q * 0.5) * 2.0) * 0.12 * u.l0.z;
-  let bl = vec2f(vnoise(q * 0.45 + 3.1) - vnoise(q * 0.45 - 2.7), vnoise(q * 0.45 + 7.7) - vnoise(q * 0.45 + 1.3)) * 0.12 * u.l0.z;
-  // Blisters: pale, irregular patches where the frying puffed it up.
-  let blis = smoothstep(0.55, 0.85, vnoise(l * 0.28 + b.z.w) * 0.7 + vnoise(l * 0.7 - b.z.w) * 0.3) * u.l4.z;
-  let nl = normalize(vec3f(-sg.y + rip * cos(ra) + bl.x, -sg.z + rip * sin(ra) + bl.y, 1.0));
+  let nl = normalize(vec3f(-sg.y, -sg.z, 1.0));
   var n = vec3f(dot(b.r0.xyz, nl), dot(b.r1.xyz, nl), dot(b.r2.xyz, nl));
   if (n.z < 0.0) { n = -n; } // the side that faces up
-  // Color: gold, browned where it crisped along the rim and in a few blisters, an olive stain where the slime has been.
-  var alb = mix(GOLD0, GOLD1, clamp(u.l0.x + (b.s1.w - 0.5) * 0.3, 0.0, 1.0)) * (0.93 + 0.14 * vnoise(q * 0.12));
-  // Thin where its edge is, or where it has been eaten thin: light comes through, a deeper, clearer amber.
-  let thin = max(1.0 - smoothstep(0.0, 4.0, min(sd.rim * 1.4, sd.eat)), 1.0 - sd.left) * u.l1.x;
-  let oil = smoothstep(0.55, 0.85, vnoise(q * 0.12 + 5.3) * 0.7 + vnoise(q * 0.31 - 2.2) * 0.3) * u.l1.x; // soaked, see-through patches
-  alb = mix(alb, alb * AMBER, clamp(thin * 0.6 + oil * 0.3, 0.0, 0.6));
-  let crisp = (1.0 - smoothstep(0.2, 2.2 + 2.5 * vnoise(q * 0.7), sd.rim)) * (0.4 + 0.6 * vnoise(q * 1.7 + 4.0)) * u.l0.y
-    + smoothstep(0.66, 0.9, vnoise(q * 0.22 + 9.0) * 0.75 + vnoise(q * 0.7 - 3.0) * 0.25) * 0.3 * u.l0.y;
+  let q = l / b.z.z + b.z.w;
+  let hn = smoothstep(0.0, 1.0, clamp((v.z - b.z.x) / max(b.z.y - b.z.x, 1.0), 0.0, 1.0)); // 0 down on the desk, 1 its highest
+  // Color: a mottled gold, browned along its rim (most where the rim curls up), an olive stain where the
+  // slime has been.
+  var alb = mix(GOLD0, GOLD1, clamp(u.l0.x + (b.s1.w - 0.5) * 0.3, 0.0, 1.0)) * (0.9 + 0.12 * vnoise(q * 0.12) + 0.08 * vnoise(q * 0.6));
+  let crisp = (1.0 - smoothstep(0.2, (1.5 + 2.0 * vnoise(q * 0.7)) * (1.0 + 2.0 * hn), sd.rim)) * (0.5 + 0.5 * vnoise(q * 1.7 + 4.0)) * u.l0.y;
   alb = mix(alb, BROWN, clamp(crisp, 0.0, 1.0) * 0.7);
-  alb = mix(alb, vec3f(0.96, 0.88, 0.62), clamp(blis, 0.0, 1.0) * 0.3);
-  alb = mix(alb, OLIVE, clamp(sd.stain * u.l2.x * (1.0 - smoothstep(0.0, 4.0, sd.eat)) * 1.5, 0.0, 0.8));
+  alb = mix(alb, OLIVE, clamp(sd.stain * u.l1.z * (1.0 - smoothstep(0.0, 4.0, sd.eat)) * 1.5, 0.0, 0.8));
   // Light from the top of the page, as on the paper: the slopes that face it bright, the ones that turn away dim; its
-  // crests catch more of the room's light than its troughs; a broad sheen where it faces the light and a sharp glint.
-  let L = normalize(vec3f(u.l2.yz, 0.8)); let H = normalize(L + vec3f(0.0, 0.0, 1.0));
+  // crests catch more of the room's light than its troughs, and a broad sheen where it faces the light.
+  let L = normalize(vec3f(u.l2.xy, 0.8)); let H = normalize(L + vec3f(0.0, 0.0, 1.0));
   let lam = dot(n, L) - L.z; // 0 lying flat
-  let hn = smoothstep(0.0, 1.0, clamp((v.z - b.z.x) / max(b.z.y - b.z.x, 1.0), 0.0, 1.0));
   // The side turned away still gets the sky's and the desk's soft light, and light passes into it, so it dims only so
   // far (to the fill), to a warmer gold, never to brown or grey.
-  let dl = 1.0 + u.l2.w * lam; let dk = max(1.0 - dl, 0.0);
-  let f = select(1.0 - (1.0 - u.l5.x) * dk / (1.0 + dk), dl, dl > 1.0) * (1.0 - u.l3.x * (0.4 - 0.5 * hn));
+  let dl = 1.0 + u.l1.w * lam; let dk = max(1.0 - dl, 0.0);
+  let f = select(1.0 - (1.0 - u.l4.x) * dk / (1.0 + dk), dl, dl > 1.0) * (1.0 - u.l2.z * (0.4 - 0.5 * hn));
   var col = alb * select(pow(vec3f(f), vec3f(0.75, 1.0, 1.4)), vec3f(f), f > 1.0);
-  let nh = max(dot(n, H), 0.0);
-  col += vec3f(1.0, 0.9, 0.7) * pow(nh, 16.0) * 0.3 * u.l3.y * (0.4 + 0.6 * hn);
-  col += vec3f(1.0, 0.95, 0.82) * pow(nh, 60.0) * 0.5 * u.l1.y * (0.6 + 0.8 * vnoise(q * 0.3));
-  // A thin rim lifted off the desk lets the light through: it glows a paler, clearer gold, and a little of the desk shows.
-  let glow = clamp(thin * smoothstep(0.5, 6.0, v.z) * u.l3.z, 0.0, 1.0);
-  col = mix(col, vec3f(1.0, 0.82, 0.42), glow * 0.45);
-  cover *= 1.0 - 0.2 * glow;
+  col += vec3f(1.0, 0.9, 0.7) * pow(max(dot(n, H), 0.0), 16.0) * 0.3 * u.l2.w * (0.4 + 0.6 * hn);
+  // Its cut edge: where it tilts, its thickness shows along the edge as a thin band of its side, in shade.
+  let side = 1.0 - smoothstep(0.0, b.s0.z * sqrt(max(1.0 - n.z * n.z, 0.0)) * u.l0.w + 0.2, sd.all);
+  col *= 1.0 - 0.45 * side;
   // Salt: a few specks, catching the light.
   let cq = l / 4.0; let ci = floor(cq); let sp = hash2(ci + b.z.w); let dd = length((cq - ci - (0.2 + 0.6 * sp)) * 4.0);
-  let salt = select(0.0, 1.0 - smoothstep(0.2, 0.75, dd), hash(ci * 1.7 + 4.2 + b.z.w) < 0.12 * u.l0.w);
+  let salt = select(0.0, 1.0 - smoothstep(0.2, 0.75, dd), hash(ci * 1.7 + 4.2 + b.z.w) < 0.12 * u.l0.z);
   col = mix(col, vec3f(0.95, 0.92, 0.84) * (0.8 + 0.4 * lam), salt * 0.35);
   return vec4f(col * cover, cover);
 }`;
@@ -277,8 +262,8 @@ export async function createChipRenderer(device) {
   // each tile, lowest first: its corner and size on the canvas (device px), its layer. A chip is redrawn only when it
   // shows: it moved by a tenth of a px, or was eaten, or the look changed. A pile lying still costs nothing.
   function place(world, { x0, dev, T, t }) {
-    const look = [T.chipGold, T.chipCrisp, T.chipRipple, T.chipSalt, T.chipGlow, T.chipSheen, T.chipShadow, T.chipNibble, T.chipStain,
-      T.chipLight, T.chipRelief, T.chipGloss, T.chipLift, T.chipCam, T.chipSoft, T.chipContact, T.chipBlister, T.chipBend, T.chipFill, 0, 0, 0];
+    const look = [T.chipGold, T.chipCrisp, T.chipSalt, T.chipEdge, T.chipShadow, T.chipNibble, T.chipStain, T.chipLight,
+      T.chipRelief, T.chipGloss, T.chipCam, T.chipSoft, T.chipContact, T.chipBend, T.chipFill, 0, 0, 0];
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box);
     assign(bodies);
     for (const id of drawn.keys()) if (!slots.has(id)) drawn.delete(id);
@@ -307,7 +292,7 @@ export async function createChipRenderer(device) {
       depth = device.createTexture({ size: [side, side], format: 'depth16unorm', usage: 0x10 });
     }
     const L = Math.hypot(LS[0], LS[1]);
-    U.set([dev, side, M, HS, ...look.slice(0, 9), -LS[0] / L, -LS[1] / L, ...look.slice(9)]);
+    U.set([dev, side, M, HS, ...look.slice(0, 8), -LS[0] / L, -LS[1] / L, ...look.slice(8)]);
     // How far its shape moved since it was drawn (px, its rim's travel included). Its shape's origin, not its centre of
     // mass, which shifts as it is eaten.
     const moved = ({ b, o }, d) => {
