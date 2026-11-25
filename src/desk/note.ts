@@ -6,6 +6,31 @@
 // the ones before it where they overlap on screen (its free part only folds back over the rest), so no depth buffer.
 export const NS = 64; // the profile's samples, strip edge to free edge
 
+export interface Note {
+  view: GPUTextureView; // the tile: the paper on top, its shadows below
+  w: number;
+  h: number;
+  size(w: number, h: number): void;
+  encode(enc: GPUCommandEncoder, data: Float32Array<ArrayBuffer>): void;
+}
+// One cross-section of the sheet (paperChain).
+export interface Chain {
+  n: number;
+  l: number;
+  x: Float64Array;
+  p: Float64Array;
+  dir: number;
+  push: boolean;
+  slap: boolean;
+  rest: boolean;
+}
+export interface ChainParams {
+  g: number;
+  drag: number;
+  bend: number;
+  lift: number;
+}
+
 const WGSL = /* wgsl */ `
 struct NU {
   a: vec4f, // half size, corner radius, the strip's edge (CSS px, from the note's middle along it)
@@ -72,31 +97,31 @@ fn edge(v: VO) -> f32 { let sd = boxSd(v.l, u.a.xy, u.a.z); return sd / clamp(le
   return vec4f(0.0, (1.0 - smoothstep(-b, b, ds)) * (0.06 + 0.1 * l), 0.0, 0.0);
 }`;
 
-export function createNote(device) {
+export function createNote(device: GPUDevice): Note {
   const ub = device.createBuffer({ size: (6 + NS + 1) * 16, usage: 0x40 | 0x08 }), module = device.createShaderModule({ code: WGSL });
-  const pipe = (entryPoint, op, dstFactor) => device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' }, primitive: { frontFace: 'cw' }, // the front: seen with the strip up
+  const pipe = (entryPoint: string, op: GPUBlendOperation, dstFactor: GPUBlendFactor) => device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' }, primitive: { frontFace: 'cw' }, // the front: seen with the strip up
     fragment: { module, entryPoint, targets: [{ format: 'rgba16float', blend: { color: { operation: op, srcFactor: 'one', dstFactor }, alpha: { operation: op, srcFactor: 'one', dstFactor: op === 'max' ? 'one' : 'one-minus-src-alpha' } } }] } });
   // The paper: each row replaces what it covers (one face shows), its coverage over; shadows: the darkest of the rows.
   const pipes = [pipe('fsPaper', 'add', 'zero'), pipe('fsShadow', 'max', 'one')];
   const bgs = pipes.map((p) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ub } }] }));
-  let tex = null;
+  let tex: GPUTexture | null = null;
   const note = {
-    view: null,
+    view: null as GPUTextureView | null,
     // The tile (device px, each half), made again only when it must grow.
-    size(w, h) {
+    size(w: number, h: number) {
       if (tex && tex.width >= w && tex.height >= 2 * h) return;
       tex?.destroy();
       tex = device.createTexture({ size: [Math.max(w, tex?.width || 1), 2 * Math.max(h, (tex?.height || 2) / 2)], format: 'rgba16float', usage: 0x04 | 0x10 });
       note.view = tex.createView(); note.w = tex.width; note.h = tex.height / 2;
     },
-    encode(enc, data) {
+    encode(enc: GPUCommandEncoder, data: Float32Array<ArrayBuffer>) {
       device.queue.writeBuffer(ub, 0, data);
-      const h = tex.height / 2, pass = enc.beginRenderPass({ colorAttachments: [{ view: note.view, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] });
-      pass.setViewport(0, 0, tex.width, h, 0, 1); pass.setPipeline(pipes[0]); pass.setBindGroup(0, bgs[0]); pass.draw(6 * (NS + 2));
-      pass.setViewport(0, h, tex.width, h, 0, 1); pass.setPipeline(pipes[1]); pass.setBindGroup(0, bgs[1]); pass.draw(6 * (NS + 2), 2, 0, 1);
+      const h = tex!.height / 2, pass = enc.beginRenderPass({ colorAttachments: [{ view: note.view, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] });
+      pass.setViewport(0, 0, tex!.width, h, 0, 1); pass.setPipeline(pipes[0]); pass.setBindGroup(0, bgs[0]); pass.draw(6 * (NS + 2));
+      pass.setViewport(0, h, tex!.width, h, 0, 1); pass.setPipeline(pipes[1]); pass.setBindGroup(0, bgs[1]); pass.draw(6 * (NS + 2), 2, 0, 1);
       pass.end();
     },
-  };
+  } as Note; // view, w and h: set by size(1, 1) below
   note.size(1, 1);
   return note;
 }
@@ -105,7 +130,7 @@ export function createNote(device) {
 // free edge, along the note (y) and up from the desk (z), design px. Links never stretch; each joint resists bending
 // (the strip's edge is a free hinge), gravity pulls it down, the air pushes back on its face, and the desk holds it up.
 // A finger lifts the free edge toward the other side and lets go once it is past upright; the rest is the sim.
-export function paperChain(n, L, flip) { // lying flat (flip 0), or turned over onto the strip (1)
+export function paperChain(n: number, L: number, flip: number): Chain { // lying flat (flip 0), or turned over onto the strip (1)
   const x = new Float64Array(2 * n + 2);
   for (let i = 0; i <= n; i++) x[2 * i] = ((flip ? -1 : 1) * i * L) / n;
   return { n, l: L / n, x, p: x.slice(), dir: 0, push: false, slap: false, rest: true };
@@ -114,7 +139,7 @@ const H = 1 / 3000; // the sim's step (s): fine enough that the stiffest joints 
 // P: g (px/s^2), drag (1/px: quadratic, across the face), bend (px: the length paper holds itself out straight against
 // gravity), lift (px/s^2: the finger on the free edge, per link). Returns the free edge's downward speed the step it first
 // touches the desk after the finger lets go (the slap), else 0; c.rest once it lies still on the desk.
-export function stepChain(c, dt, P) {
+export function stepChain(c: Chain, dt: number, P: ChainParams): number {
   const { n, l, x, p } = c, B = P.g * P.bend ** 3 / l ** 2, f = new Float64Array(2 * n + 2);
   let slap = 0;
   for (let t = 0; t < dt - 1e-9; t += H) {

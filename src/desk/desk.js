@@ -16,7 +16,7 @@ import { createChips, NCH } from './chips.js';
 import { createChipRenderer } from './chip-render.js';
 import { createWorld, boxShape } from './physics.ts';
 import { createCurl } from './curl.ts';
-import { createNote, NS, paperChain, stepChain } from './note.js';
+import { createNote, NS, paperChain, stepChain } from './note.ts';
 import { TALLY_PARAMS, tallySurface, paintTally } from './tally.js';
 
 export function mountDesk(root, router) {
