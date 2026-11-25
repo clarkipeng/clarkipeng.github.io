@@ -275,8 +275,7 @@ export async function createChipRenderer(device) {
   }
   // Place the chips (bodies, desk px) in their layers: x0 the page's left edge (desk px), dev device px per CSS px. Returns
   // each tile, lowest first: its corner and size on the canvas (device px), its layer. A chip is redrawn only when it
-  // shows: it moved by a tenth of a px, or was eaten (a few times a second is plenty for an edge that creeps), or the
-  // look changed. A pile lying still costs nothing.
+  // shows: it moved by a tenth of a px, or was eaten, or the look changed. A pile lying still costs nothing.
   function place(world, { x0, dev, T, t }) {
     const look = [T.chipGold, T.chipCrisp, T.chipRipple, T.chipSalt, T.chipGlow, T.chipSheen, T.chipShadow, T.chipNibble, T.chipStain,
       T.chipLight, T.chipRelief, T.chipGloss, T.chipLift, T.chipCam, T.chipSoft, T.chipContact, T.chipBlister, T.chipBend, T.chipFill, 0, 0, 0];
@@ -316,10 +315,9 @@ export async function createChipRenderer(device) {
       return Math.abs(o[0] - d.o[0]) + Math.abs(o[1] - d.o[1]) + Math.abs(o[2] - d.o[2]) + b.S.B * 2 * Math.sqrt(Math.max(0, 2 * (1 - dq)));
     };
     // Redraws a frame are capped, the longest waiting first, so many chips moving at once (or a pile being eaten) never
-    // land in one frame. A chip in motion is due at once and a little ahead of the queue; one that only creeps (sinking
-    // as it is eaten) or whose edge was eaten waits a few frames, since it changes by less than a px.
+    // land in one frame. A chip in motion goes a little ahead of the queue.
     const fast = (b) => Math.hypot(...b.v) + Math.hypot(...b.w) * b.S.B > 6;
-    const due = (x) => { const { b } = x, d = drawn.get(b.id); return fast(b) ? moved(x, d) > 0.12 : t - d.at > (b.dirty ? 0.3 : 0.1) && (b.dirty || moved(x, d) > 0.12); };
+    const due = (x) => x.b.dirty || moved(x, drawn.get(x.b.id)) > 0.12;
     const wait = (x) => drawn.get(x.b.id).at - (fast(x.b) ? 0.1 : 0);
     const turn = new Set(all ? boxes : [...boxes.filter((x) => !drawn.has(x.b.id)), ...boxes.filter((x) => drawn.has(x.b.id) && due(x)).sort((p, q) => wait(p) - wait(q)).slice(0, T.chipRedraws)]);
     for (const x of boxes) {

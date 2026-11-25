@@ -67,7 +67,7 @@ class Body {
         this.px[k] = x; this.py[k] = y; this.pz[k] = h + ((l + 0.5) / CL - 0.5) * S.t; this.d[k] = inside ? 1 : 0; this.mass0 += this.d[k];
       }
     }
-    this.p = null; this.c = [0, 0, 0]; this.landed = false; this.pulse = 0; this.vz = 0; this.dirty = true;
+    this.p = null; this.c = [0, 0, 0]; this.landed = false; this.pulse = 0; this.vz = 0; this.dirty = true; this.cutT = -1;
     this.feed = null; // the slime under it, read back from the GPU: { cx, cy, h, v: Float32Array(FEED * FEED) }
   }
   // Its pose and motion are its body's in the shared sim (physics.js).
@@ -143,7 +143,7 @@ const clamp01 = (v) => Math.min(1, Math.max(0, v));
 // world: () => the shared sim (physics.js) they fall, tumble and are thrown in.
 export function createChips(P, world) {
   const bodies = [];
-  let eatAcc = 0;
+  let clock = 0;
 
   function drop(x, y, R, seed, { region = 0, born = 0, still = false } = {}) {
     const r = rng(seed ^ 0x51ed), W = world();
@@ -166,13 +166,16 @@ export function createChips(P, world) {
   // ---------- eating ----------
   // Voxels within P.chipBand of the desk are eaten where the slime is; a voxel that gives way changes the body's mass,
   // centre and support, so it tips and settles lower. A body that comes apart becomes two (the crumbs are just eaten up).
+  // The voxels are eaten every frame, so the edge creeps; remaking a body (props, split) is the costly part, so one body a
+  // frame is remade, the one waiting longest, and a body at most every 0.05 s.
   function eat(dt) {
     const out = [], W = world();
+    let cut = null;
     for (const b of bodies) {
       if (!b.m) continue;
       const R = b.R, c = b.c, base = b.x[2] - (R[6] * c[0] + R[7] * c[1] + R[8] * c[2]);
       const rate = P.chipEat * b.chip.hurry * dt, band = P.chipBand + b.rs;
-      let gone = false, changed = false;
+      let changed = false;
       for (let ci = 0; ci < CN * CN; ci++) {
         const crumb = b.crumb[ci];
         for (let l = 0; l < CL; l++) {
@@ -190,15 +193,18 @@ export function createChips(P, world) {
           }
           if (dd <= 0) continue;
           const nd = Math.max(0, d - dd);
-          if (d > SOLID && nd <= SOLID) gone = true;
+          if (d > SOLID && nd <= SOLID) b.gone = true;
           b.d[k] = nd; changed = true;
         }
       }
       if (changed) b.dirty = true;
-      if (!gone || b.frozen) continue;
-      split(b, out);
-      b.props(W, P);
-      if (b.m && b.solidCols < P.chipCrumbs) { b.crumb.fill(1); b.freeze(W); } // the last bit is just eaten up where it lies
+      if (b.gone && !b.frozen && clock - b.cutT >= 0.05 && !(cut?.cutT <= b.cutT)) cut = b;
+    }
+    if (cut) {
+      cut.gone = false; cut.cutT = clock;
+      split(cut, out);
+      cut.props(W, P);
+      if (cut.m && cut.solidCols < P.chipCrumbs) { cut.crumb.fill(1); cut.freeze(W); } // the last bit is just eaten up where it lies
     }
     bodies.push(...out);
     for (const b of bodies.filter((b) => !b.d.some((v) => v > 0.004))) remove(b);
@@ -269,8 +275,8 @@ export function createChips(P, world) {
       if (b.landed || b.frozen) continue;
       if (b.p.touch) { b.landed = true; b.pulse = b.vz < -150 ? Math.min(1, -b.vz / 900) : 0; } else b.vz = b.v[2];
     }
-    eatAcc += eatOn ? dt : 0;
-    if (eatAcc >= 0.05) { eat(eatAcc); eatAcc = 0; }
+    clock += dt;
+    if (eatOn) eat(dt);
   }
 
   // ---------- what the GPU draws ----------
