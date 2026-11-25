@@ -1,0 +1,146 @@
+import { currentDesk } from './state.ts';
+import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, J_KEYS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
+
+
+export function mountTweak() {
+const desk = currentDesk();
+const { T, reseed, applyLook, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, autoOn, activeAgents,
+  addEventListener, body } = desk;
+// ---------- tweak panel (press t) ----------
+
+// A quiet corner panel with a slider per tunable, the edge mode, the ink color, a copy-link and a reset button.
+function tweakPanel() {
+  const panel = Object.assign(document.createElement('div'), { className: 'tweak' });
+  type TweakInput = (HTMLInputElement | HTMLSelectElement) & { out?: HTMLOutputElement };
+  const inputs: Record<string, TweakInput> = {};
+  let reseedTimer = 0;
+  const set = (k: string, v: number | string) => {
+    T[k] = v;
+    if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
+    if (k === 'cards') { Object.assign(T, CARD_PRESETS[v]); sync(); if (desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } }
+    if (k === 'look') {
+      const before = RESEED.map((r) => T[r]).join();
+      applyLook(v as string); sync(); // the look select's value
+      if (desk.gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
+    }
+    // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
+    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
+    if (k.startsWith('tally')) for (const d of sources) if (d.tally) d.tally.dirty = true;
+  };
+  for (const [name, params] of Object.entries(GROUPS)) {
+    const group = Object.assign(document.createElement('details'), { open: name === 'Agents' || name === 'Card outlines' });
+    group.append(Object.assign(document.createElement('summary'), { textContent: name }));
+    if (name === 'Performance') group.append(Object.assign(document.createElement('div'), { className: 'tweak-perf' }));
+    for (const [k, , min, max, step, label] of params as readonly ParamRow[]) {
+      let input: TweakInput, out: HTMLOutputElement | undefined;
+      if (CHOICES[k]) {
+        input = document.createElement('select');
+        for (const m of CHOICES[k]) input.append(new Option(m, m));
+        input.oninput = () => set(k, input.value);
+      } else if (k === 'ink') {
+        input = Object.assign(document.createElement('input'), { type: 'color' });
+        input.oninput = () => set(k, input.value.slice(1));
+      } else if (step === 1 && max === 1) {
+        input = Object.assign(document.createElement('input'), { type: 'checkbox' });
+        input.oninput = () => set(k, (input as HTMLInputElement).checked ? 1 : 0);
+      } else {
+        input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
+        out = document.createElement('output');
+        input.oninput = () => { set(k, +input.value); out!.value = input.value; };
+      }
+      inputs[k] = Object.assign(input, { out });
+      const r = document.createElement('label');
+      r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
+      if (out) r.append(out);
+      group.append(r);
+    }
+    panel.append(group);
+  }
+  // Style: the current page's own surface and ink.
+  const styleGroup = Object.assign(document.createElement('details'), { open: true });
+  const styleTitle = document.createElement('summary');
+  styleGroup.append(styleTitle);
+  const styleInputs: Record<string, TweakInput & { row: HTMLLabelElement }> = {};
+  const curStyle = () => STYLE[PAGE_NAMES[desk.page]];
+  for (const [k, , min, max, step, label] of STYLE_PARAMS) {
+    let input: TweakInput, out: HTMLOutputElement | undefined;
+    if (CHOICES[k]) {
+      input = document.createElement('select');
+      for (const m of CHOICES[k]) input.append(new Option(m, m));
+      input.oninput = () => { curStyle()[k] = input.value; sync(); };
+    } else if (k === 'ink' || k === 'bg') {
+      input = Object.assign(document.createElement('input'), { type: 'color' });
+      input.oninput = () => (curStyle()[k] = input.value.slice(1));
+    } else {
+      input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
+      out = document.createElement('output');
+      input.oninput = () => { curStyle()[k] = +input.value; out!.value = input.value; };
+    }
+    const r = document.createElement('label');
+    styleInputs[k] = Object.assign(input, { out, row: r });
+    r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
+    if (out) r.append(out);
+    styleGroup.append(r);
+  }
+  panel.insertBefore(styleGroup, panel.children[1]);
+  const sync = () => {
+    for (const [k, el] of Object.entries(inputs)) {
+      if (el.type === 'checkbox') (el as HTMLInputElement).checked = !!T[k];
+      else el.value = k === 'ink' ? '#' + T[k] : String(T[k]);
+      if (el.out) el.out.value = String(T[k]);
+    }
+    styleTitle.textContent = `Style (${PAGE_NAMES[desk.page]} page)`;
+    // Each mode shows only the controls that do something in it.
+    const SHOWN: Record<string, (k: string) => boolean> = {
+      paper: (k) => !J_KEYS.includes(k),
+      spectrum: (k) => !J_KEYS.includes(k) && !['ink', 'grain', 'tint', 'hueMix'].includes(k),
+      j: (k) => !['tint', 'hueMix', 'gamma', 'soft', 'grain', 'glow', 'halo'].includes(k),
+    };
+    for (const [k, el] of Object.entries(styleInputs)) {
+      el.row.hidden = !SHOWN[curStyle().mode](k);
+      const v = curStyle()[k];
+      el.value = k === 'ink' || k === 'bg' ? '#' + v : String(v);
+      if (el.out) el.out.value = String(v);
+    }
+  };
+  desk.tweakSync = sync;
+  const bar = Object.assign(document.createElement('div'), { className: 'tweak-bar' });
+  const copy = Object.assign(document.createElement('button'), { textContent: 'copy link' });
+  copy.onclick = async () => {
+    const q = new URLSearchParams([...Object.keys(DEFAULTS).map((k) => [k, String(T[k])]),
+      ...PAGE_NAMES.flatMap((pg) => Object.keys(STYLE_DEFAULTS[pg]).map((k) => [`${pg}.${k}`, String(STYLE[pg][k])]))]);
+    const url = `${location.origin}${location.pathname}?${q}${location.hash}`;
+    history.replaceState(history.state, '', url);
+    try { await navigator.clipboard.writeText(url); copy.textContent = 'copied'; } catch { copy.textContent = 'in the address bar'; }
+    setTimeout(() => (copy.textContent = 'copy link'), 1400);
+  };
+  const reset = Object.assign(document.createElement('button'), { textContent: 'reset' });
+  reset.onclick = () => {
+    const before = RESEED.map((k) => T[k]).join();
+    Object.assign(T, DEFAULTS);
+    for (const pg of PAGE_NAMES) Object.assign(STYLE[pg], STYLE_DEFAULTS[pg]);
+    applyLook(T.look); Object.assign(T, PRINTS[T.print]);
+    sync();
+    if (desk.gpu && before !== RESEED.map((k) => T[k]).join()) reseed();
+  };
+  const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
+  replay.onclick = () => drawFrom(desk.page, { delay: INTRO_DELAY }); // starts over from bare paper
+  bar.append(copy, reset, replay);
+  panel.append(bar);
+  // Live readout of the frame interval from requestAnimationFrame, twice a second.
+  const perf = panel.querySelector<HTMLElement>('.tweak-perf')!;
+  setInterval(() => {
+    if (panel.hidden) return;
+    const iv = [...stats.intervals].slice(-60).sort((a, b) => a - b), med = iv[iv.length >> 1] || 0;
+    perf.textContent = `${med ? (1000 / med).toFixed(0) : '-'} fps · frame ${med.toFixed(1)} ms${Q.gpuMs ? ` · GPU ${Q.gpuMs.toFixed(1)} ms` : ''}\n` +
+      (desk.sim ? `${autoOn() ? `auto: ${Q.tier.name} tier, ` : ''}${(activeAgents(desk.sim) / 1000).toFixed(0)}k agents, sim ${desk.sim.W}x${desk.sim.H}` : '');
+  }, 500);
+  addEventListener('keydown', (e) => {
+    if (e.key === 't' && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(String(document.activeElement?.tagName))) panel.hidden = !panel.hidden;
+  });
+  sync();
+  body.append(panel);
+}
+return { tweakPanel };
+}
