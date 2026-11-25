@@ -1,5 +1,6 @@
 import { currentDesk, type Desk } from './state.ts';
 import { POSTCARD, PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER } from './tunables.ts';
+import type { Patch } from './cards.ts';
 import { type Chain, NS } from './note.ts';
 import type { Body as PBody } from './physics.ts';
 import type { Mark, TallySurface } from './tally.ts';
@@ -56,13 +57,14 @@ export interface Card {
   tilt: number[]; tiltV: number[]; sway: number; swayV: number;
   hover: number; hoverOn: boolean; burst: number; z: number; dragging: boolean; released: boolean;
   landK: boolean; landS: number; rel: number; flying: boolean; flyLift: number; shoveOnLand?: boolean;
+  relV: number; pk?: { t: number; n: number; a: number } | null; pv?: number[] | null; patch?: Patch; // contact: release speed, the most motion it has had above the band, last pose, the patch that landed
   videoSrc?: string; ts?: number;
   // layout
   k: number; media: Rect | null; lines?: string[]; sub?: string; titled?: boolean; baseline?: number; px?: number; py?: number;
   // the desk
   fly?: Flight | null; shove?: Shove | null; kb?: { tx: number; ty: number } | null; keyHeld?: boolean; keyTimer?: number;
   ch?: Chain | null; imp?: { x: number; y: number; t: number } | null; over?: boolean; snap?: number; squash: number; squashV: number;
-  said?: number; suppressClick?: boolean; bounced?: boolean; edgePen?: boolean; dropS?: number; rotFrom: number; rotTo: number; hoverSince: number;
+  said?: number; suppressClick?: boolean; edgePen?: boolean; rotFrom: number; rotTo: number; hoverSince: number;
   focused?: boolean; carrier?: Card | null; gone?: boolean; flyH?: number[]; plane?: { dc: V3; n: V3 }; flipA?: number;
   // media
   playlist: Clip[] | null; player?: InstanceType<Desk['Player']>;
@@ -127,7 +129,7 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
-    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0,
+    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0, relV: 0,
   } as Card; // the rest: see Card
 });
 desk.view = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, docH: innerHeight, dpr: 1 };

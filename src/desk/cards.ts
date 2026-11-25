@@ -3,6 +3,7 @@ import { lerp, clamp, MOTION, smooth, IMPRINT_S } from './tunables.ts';
 import type { Card } from './layout.ts';
 import { paperChain, stepChain } from './note.ts';
 
+export type Patch = [number, number, number, number]; // center, half size: fractions of the card's half size
 
 export function mountCards() {
 const desk = currentDesk();
@@ -56,7 +57,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m: PointerEvent) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.bounced = s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++desk.topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++desk.topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -87,9 +88,8 @@ for (const s of sources) {
       if (press.moved) {
         s.suppressClick = true; s.dragging = false; s.released = true; s.el.classList.remove('dragging');
         const keep = performance.now() - lt > 80 ? 0 : 0.35; // a little momentum, none if held still before letting go
-        // It lands when it touches down: a gentle drop gives a small burst, a throw a bigger one. It keeps its own angle.
-        s.dropS = 0.25 + (Math.hypot(s.vx, s.vy) * (keep ? 1 : 0)) / T.landThrow;
-        s.vx *= keep; s.vy *= keep;
+        // The hand lets go of it at the speed it keeps; it lands once it settles (see contact). It keeps its own angle.
+        s.vx *= keep; s.vy *= keep; s.relV = Math.hypot(s.vx, s.vy); s.pk = { t: s.relV, n: 0, a: 0 };
         if (!hit.matches(':hover')) setHover(s, false);
         next(); // a page change asked for during the drag goes now
       }
@@ -157,9 +157,12 @@ function stepCards(dt: number) {
       s.el.classList.toggle('turning', s.flip !== s.flipTo); // no flat focus ring around a card turning in 3D // the real links (their hover wash and focus ring) only once the back lies at rest: mid-flip they would float off the turning card
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
-      if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
+      if (s.flip === s.flipTo) placeDom(s); // laid down
     }
     if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(hinged(s) ? clamp(s.flip) : desk.easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift (the note all the way: it peels up first); over its box it turns face down
+    const rest = !s.fly && s.flip === s.flipTo && !s.kb && !s.over && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60;
+    if (rest && s.released) { s.released = false; if (desk.offCorner(s)) s.pk = null; else desk.shove(s); } // let go: it shoves the cards under it (or slides off the corner first, and does not land)
+    contact(s, dt, Math.max(T.lift * Math.max(s.lift, s.flyLift), desk.flipPath(s)[0]), rest);
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
@@ -169,9 +172,6 @@ function stepCards(dt: number) {
     }
     s.burst *= Math.exp(-dt * 7);
     if (s.imp && (s.imp.t += dt) >= IMPRINT_S) s.imp = null; // the veins have reclaimed it
-    if (s.released && !s.kb && !s.over && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
-      const k = s.bounced ? Math.min(s.dropS!, 0.45) : s.dropS!; s.released = false; s.bounced = false;
-      if (!desk.offCorner(s)) { land(s, k); desk.shove(s); } } // touched down, shoving the cards under it (or sliding off the corner first)
   }
 }
 
@@ -186,7 +186,7 @@ function edgeSpring(s: Card, x0: number, dt: number) {
   const push = (v: number, p: number) => { v += (k * p - c * v) * dt; return Math.sign(v) === Math.sign(p) ? Math.sign(p) * Math.min(Math.abs(v), Math.abs(p) * back) : v; };
   if (px) s.vx = push(s.vx, px);
   if (py) s.vy = push(s.vy, py);
-  if (px || py) s.bounced = true;
+  if ((px || py) && s.pk) s.pk.t = 0; // the wall takes its motion along the page
   s.edgePen = Math.abs(px) + Math.abs(py) > 0.5; // it touches down only once it is back inside
 }
 
@@ -199,7 +199,7 @@ function nudge(s: Card, [dx, dy]: number[], big: boolean) {
   const k = s.kb || { tx: s.shove ? s.shove.tx : s.x, ty: s.shove ? s.shove.ty : s.y };
   k.tx = clamp(k.tx + dx * step, Math.min(x0 + ex + m, s.x), Math.max(x0 + desk.view.w - ex - m, s.x)); // stays on screen
   k.ty = clamp(k.ty + dy * step, Math.min(ey + m, s.y), Math.max(desk.view.h - ey - m, s.y));
-  Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, dropS: 0.25 });
+  Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, relV: 0 });
   const deck = desk.dealing && desk.pageDeck(s.region); // over its box it waits at the open end; Enter puts it in
   if (deck) deck.welcome = s.over = desk.decked(s) && !turn.on && desk.overDeck(deck, k.tx + ex, k.ty, (s.over ? desk.BOX.keep : desk.BOX.enter) * desk.view.k); // its leading edge (it stays on screen, so its middle never reaches the box)
   if (s.z !== desk.topZ) s.z = ++desk.topZ;
@@ -219,7 +219,7 @@ function stepPaper(s: Card, dt: number) {
   const c = s.ch;
   if (!c || c.rest) return;
   const v = stepChain(c, dt, { g: T.paperG, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
-  if (v) land(s, clamp(v / 600));
+  if (v) land(s, Math.max(0.1, clamp(v / 600))); // the floor the old land() gave it
   s.flip = clamp(Math.atan2(c.x[2 * c.n + 1], c.x[2 * c.n]) / Math.PI);
   if (c.rest) {
     s.flip = s.flipTo = c.x[2 * c.n] < 0 ? 1 : 0; s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
@@ -230,15 +230,36 @@ function stepPaper(s: Card, dt: number) {
   s.el.classList.toggle('turning', !c.rest);
 }
 
-// ---------- landing ----------
-// The one thing that happens whenever a card comes down onto the desk: the next sim step sends the agents under and just
-// around it out through its edge with a burst of speed (scaled by strength), the ink there gets a pulse of excitation,
-// and agents held for it (a page whose cards fly in) leave from its edge.
-function land(s: Card, strength: number) {
-  const k = clamp(strength, 0.1, 1.5);
-  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k) });
-  if (s.rel < 0) s.rel = 0;
-  if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; desk.shove(s); } // a drawn card that had to land on something
+// ---------- contact ----------
+// One rule for everything that comes down on the page. Above the contact band (lifted, dealt, turning over) an item keeps
+// the most speed it has had along the page, coming down, and turning (at its radius of gyration). A hand, the keys, or a
+// box holding it, or a wall that stops it, takes that motion. Back at rest on the page it lands with the momentum it shed
+// there: (landWn x coming down + along + turning) / landP, at most 1. Sliding on the page, it never left: no landing.
+// Any item calls it every frame with its height over the page (px), whether it has come to rest, and the patch of it
+// that just came into contact (center, half size, as fractions of its half size); a patch that keeps growing (a sheet
+// rolling down) lands piece by piece, each with the motion shed since the last.
+const FULL: Patch = [0, 0, 1, 1];
+function contact(s: Card, dt: number, h: number, rest: boolean, patch = FULL) {
+  const p = s.pv;
+  if (s.dragging || s.kb || s.deck || s.kind === 'deck') { s.pk = s.pv = null; return; } // held (the box does not land)
+  s.pv = [s.x, s.y, h, s.rot, s.face];
+  if (!s.pk && h > T.landBand) s.pk = { t: 0, n: 0, a: 0 };
+  const m = s.pk;
+  if (!m) return;
+  if (p && dt > 0) {
+    m.t = Math.max(m.t, Math.hypot(s.x - p[0], s.y - p[1]) / dt);
+    m.n = Math.max(m.n, (p[2] - h) / dt);
+    m.a = Math.max(m.a, (Math.hypot(s.w, s.h) / Math.sqrt(12)) * Math.hypot(((s.rot - p[3]) * Math.PI) / 180, (s.face - p[4]) * Math.PI) / dt);
+  }
+  if (rest) { s.pk = null; land(s, Math.min(1, (T.landWn * m.n + m.t + m.a) / T.landP), patch); }
 }
-return { land, deskX, deskY, syncHover, stepCards, setHover };
+// Landing: the next sim step sends the agents under and just around the patch out through its edge with a burst of
+// speed (scaled by strength), the ink there gets a pulse of excitation, and agents held for it (a page whose cards fly
+// in) leave from its edge.
+function land(s: Card, k: number, patch?: Patch) {
+  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), patch });
+  if (s.rel < 0) s.rel = 0;
+  if (s.shoveOnLand) { s.shoveOnLand = false; s.relV = 0; desk.shove(s); } // a drawn card that had to land on something
+}
+return { FULL, deskX, deskY, syncHover, stepCards, setHover };
 }

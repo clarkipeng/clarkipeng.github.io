@@ -9,13 +9,13 @@ import { NS } from './note.ts';
 export function mountUniforms() {
 const desk = currentDesk();
 const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launchPose, BOX_STEP, carried, boxH,
-  cross, facing, FAR, capped, projR, BOX_T, STYLE, cam, sources, flyingOrder, FACE_SLOTS, coverRect, Q, cursor, turn,
-  dirOf, rollR, door, DOOR } = desk;
+  cross, facing, FAR, capped, projR, FULL, BOX_T, STYLE, cam, sources, flyingOrder, FACE_SLOTS, coverRect, Q, cursor,
+  turn, dirOf, rollR, door, DOOR } = desk;
 // ---------- uniforms ----------
 
 // Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
-const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 2; // then the chips: one vec4, and two per chip
+const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
+const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
 const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
 function invert3(m: number[]) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -118,7 +118,7 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, 
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
-    ...shd, 4 * flags + lv];
+    ...shd, 4 * flags + lv, ...(s.patch || FULL)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   if (tile) { v[52] = tile[0]; v[53] = tile[1]; v[32] = tile[2] * dpr; } // shd.xy: its tile's corner; bound.x: all of it
   U.set(v, o);

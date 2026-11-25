@@ -13,7 +13,7 @@ import type { Body as PBody, World } from './physics.ts';
 
 // The tunables chips read (desk.ts T); see createChips.
 type ChipKey = 'chipThick' | 'chipCurl' | 'chipFold' | 'chipBend' | 'chipDrop' | 'chipSpin' | 'chipMass' | 'chipMu' | 'chipE' | 'chipDamp' |
-  'chipEat' | 'chipBand' | 'chipCrumbS' | 'chipCrumbs';
+  'chipEat' | 'chipBand' | 'chipCrumbS' | 'chipCrumbs' | 'landWn' | 'landP';
 export type ChipTunables = Record<ChipKey, number>;
 // A chip's outline and surface (makeShape).
 export interface Shape {
@@ -118,6 +118,9 @@ export class Body {
   declare box: [number[], number[]];
   declare frozen?: boolean;
   declare gone?: boolean;
+  declare at?: Float32Array; // contact (touchdown): each column's lowest solid point on the desk, now and the frame before
+  declare atWas?: Float32Array;
+  declare land?: number[] | null; // the patch that just came down: center, radius (desk px), strength
   constructor(S: Shape, chip: Chip) {
     this.S = S; this.chip = chip; this.id = nextId++;
     const n = CN * CN * CL, cell = (2 * S.B) / CN;
@@ -357,9 +360,36 @@ export function createChips(P: ChipTunables, world: () => World) {
     }
   }
 
-  // After the sim has advanced: a chip's first touch is its landing; then eating.
+  // Contact, the cards' rule (desk.ts contact) on the part of it that has just come within chipBand of the desk: that patch
+  // lands with the motion it sheds there, (landWn x coming down + along) / landP. A rocking chip lands strip by strip as
+  // its curve rolls down; a slide or a lift brings no new part down, so it pushes no slime.
+  function touchdown(b: Body, dt: number) {
+    const R = b.R, c = b.c, band = P.chipBand + b.rs, was = b.at, at = b.at = b.atWas || new Float32Array(CN * CN * 3);
+    let n = 0, sx = 0, sy = 0, vn = 0, vt = 0;
+    b.atWas = was;
+    for (let ci = 0, o = 0; ci < CN * CN; ci++, o += 3) { // each column's lowest voxel that holds, on the desk (desk px)
+      let lo = -1, z = Infinity;
+      for (let k = ci * CL; k < ci * CL + CL; k++) {
+        const zk = R[6] * (b.px[k] - c[0]) + R[7] * (b.py[k] - c[1]) + R[8] * (b.pz[k] - c[2]);
+        if (b.d[k] > SOLID && zk < z) { z = zk; lo = k; }
+      }
+      at[o + 2] = b.x[2] + z;
+      if (lo < 0) continue;
+      const lx = b.px[lo] - c[0], ly = b.py[lo] - c[1], lz = b.pz[lo] - c[2];
+      at[o] = b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz; at[o + 1] = b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz;
+      if (!was || at[o + 2] > band || was[o + 2] <= band) continue; // only a part that has just come down
+      n++; sx += at[o]; sy += at[o + 1]; vn += Math.max(0, was[o + 2] - at[o + 2]) / dt; vt += Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1]) / dt;
+    }
+    if (n) b.land = [sx / n, sy / n, Math.sqrt(n / Math.PI) * b.cell, Math.min(1, (P.landWn * vn + vt) / n / P.landP)]; // center, radius (desk px), strength
+  }
+
+  // After the sim has advanced: a chip's first touch is its landing (contact); then eating.
   function step(dt: number, eatOn: boolean) {
-    for (const b of bodies) if (!b.frozen && b.p.touch) b.landed = true;
+    for (const b of bodies) {
+      if (b.frozen || b.sleep) continue;
+      if (b.p.touch) b.landed = true;
+      touchdown(b, dt);
+    }
     clock += dt;
     if (eatOn) eat(dt);
   }

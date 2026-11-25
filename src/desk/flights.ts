@@ -5,7 +5,7 @@ import type { Card, Stack, OutFlight, InFlight } from './layout.ts';
 
 export function mountFlights() {
 const desk = currentDesk();
-const { reduced, holdPage, T, sources, placeDom, next, land, turn, shown, obb, reach, keepOut } = desk;
+const { reduced, holdPage, T, sources, placeDom, next, turn, shown, obb, reach, keepOut } = desk;
 
 // ---------- tidy ----------
 // A card's home: its slot on this layout, at its slot's angle.
@@ -146,7 +146,7 @@ function stepOut(s: Card, k: OutFlight) {
   Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * smooth((u - DRAW.rotA) / (DRAW.rotB - DRAW.rotA)),
     face: 1 - desk.easeFlip(smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA))), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
   if (u < 1) return true;
-  Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, face: 0, flyLift: 0 }); s.el.classList.remove('flying'); land(s, 1); // contact
+  Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, face: 0, flyLift: 0 }); s.el.classList.remove('flying'); // it lands as it settles (contact)
   return false;
 }
 // A card going into its box, on one clock: from where it was (lifting, turning face down and upright) to the box's open
@@ -180,7 +180,7 @@ function endFlights(region: number | null = null) {
     if (!k) continue;
     if (k.in) { s.fly = null; k.deck.dirty = true; continue; }
     s.el.classList.remove('flying');
-    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, face: 0, flyLift: 0 });
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, face: 0, flyLift: 0, pk: null }); // put there: no landing
     placeDom(s);
   }
   flights.on = sources.some((s) => s.fly);

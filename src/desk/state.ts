@@ -88,7 +88,7 @@ interface Parts {
   NAMES: TurnPart['NAMES']; WARM_STEPS: TurnPart['WARM_STEPS']; syncInert: TurnPart['syncInert'];
   stepTurn: TurnPart['stepTurn']; stepWarm: TurnPart['stepWarm']; prewarm: TurnPart['prewarm'];
   // cards.ts
-  land: CardsPart['land']; deskX: CardsPart['deskX']; deskY: CardsPart['deskY']; syncHover: CardsPart['syncHover'];
+  FULL: CardsPart['FULL']; deskX: CardsPart['deskX']; deskY: CardsPart['deskY']; syncHover: CardsPart['syncHover'];
   stepCards: CardsPart['stepCards']; setHover: CardsPart['setHover'];
   // shove.ts
   obb: ShovePart['obb']; reach: ShovePart['reach']; stepShove: ShovePart['stepShove'];

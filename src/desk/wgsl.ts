@@ -5,7 +5,7 @@ import { NCH } from './chips.ts';
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f, pat: vec4f };
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S); w: how far its shadow has faded (a box flying off)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
@@ -15,6 +15,7 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, how long its horizontal axis looks (0 to 1)
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
+// pat: the patch that just came into contact, in the card's frame as fractions of its half size: center, half size
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
 struct G {
@@ -47,7 +48,7 @@ struct G {
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
   ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, chips thrown off the page you left
-  chipf: array<vec4f, ${NCH}>, // per chip: center, food radius, food strength (sim px)
+  chipf: array<vec4f, ${NCH * 2}>, // per chip: center, food radius, food strength (sim px); then per chip: the patch that just came down (contact): center, radius, strength
   chipt: array<vec4f, ${NCH}>, // each chip's tile: its corner and size on the canvas (device px), its layer in chipTex
 };
 @group(0) @binding(0) var<uniform> g: G;
@@ -62,6 +63,7 @@ fn boxSd(l: vec2f, half: vec2f, r: f32) -> f32 {
   return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 fn cardSd(k: u32, p: vec2f) -> f32 { let c = g.cards[k]; return boxSd(toLocal(c, p), c.geo.xy, c.geo.z) * c.misc.x; }
+fn patchSd(c: Card, p: vec2f) -> f32 { return boxSd(toLocal(c, p) - c.geo.xy * c.pat.xy, c.geo.xy * c.pat.zw, c.geo.z * min(c.pat.z, c.pat.w)) * c.misc.x; }
 fn pcg(v: u32) -> u32 {
   let s = v * 747796405u + 2891336453u;
   let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
@@ -199,11 +201,11 @@ fn wrap(p: vec2f) -> vec2f { return p - floor(p / g.a.xy) * g.a.xy; }
 fn eAt(p: vec2f) -> f32 { return textureLoad(etex, clamp(vec2i(p * 0.5), vec2i(0), vec2i(textureDimensions(etex)) - 1), 0).r; }
 fn dir(a: f32) -> vec2f { return vec2f(cos(a), sin(a)); }
 fn ridge(d: f32, at: f32) -> f32 { let b = (d - at) / g.x.z; return exp(-b * b); }
-// Heading straight out through card c's nearest edge from p (under the card or just outside it).
+// Heading straight out through the nearest edge of card c's contact patch from p (under it or just outside it).
 fn outward(c: Card, p: vec2f) -> f32 {
   let r = p - c.flat.xy; let cs = c.flat.zw;
-  let l = vec2f(cs.x * r.x + cs.y * r.y, -cs.y * r.x + cs.x * r.y);
-  let q = abs(l) - c.geo.xy * c.misc.x;
+  let l = vec2f(cs.x * r.x + cs.y * r.y, -cs.y * r.x + cs.x * r.y) - c.geo.xy * c.misc.x * c.pat.xy;
+  let q = abs(l) - c.geo.xy * c.misc.x * c.pat.zw;
   var n = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), q.x > q.y);
   if (q.x > 0.0 && q.y > 0.0) { n = normalize(q); }
   n *= select(vec2f(-1.0), vec2f(1.0), l >= vec2f(0.0));
@@ -309,10 +311,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // A card that emits ink (an open card, or every card in the j style) colors the agents passing close to its edge;
     // they carry its ink out along the network, and inks mix like dye where the veins meet.
     if (c.ink.w > 0.02 && distance(pos, c.flat.xy) < c.bound.x + 24.0 * g.a.w && rnd() < 0.3 * c.ink.w && cardSd(k, pos) < 24.0 * g.a.w) { tag = f32(k); }
-    if (c.bound.z > 0.5 && cardSd(k, pos) < g.x.w) {
+    if (c.bound.z > 0.5 && patchSd(c, pos) < g.x.w) {
       ang = outward(c, pos) + (rnd() - 0.5) * 1.2;
       puff = max(puff, c.inv2.w * (0.8 + 0.2 * rnd()));
     }
+  }
+  for (var ci = 0u; ci < u32(g.ch.x); ci++) { // a chip's patch landing: out from its middle
+    let l = g.chipf[${NCH}u + ci];
+    if (l.w > 0.0 && distance(pos, l.xy) < l.z + g.x.w) { ang = atan2(pos.y - l.y, pos.x - l.x) + (rnd() - 0.5) * 1.2; puff = max(puff, l.w * (0.8 + 0.2 * rnd())); }
   }
   puff *= g.y.y;
   let e = eAt(pos);

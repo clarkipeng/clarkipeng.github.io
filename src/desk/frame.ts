@@ -29,9 +29,10 @@ function chipUniforms(s: Sim) {
   const own = chipRegion() === desk.page, bs = own ? chips.bodies.slice(0, NCH) : [];
   const tiles = desk.gpu!.chipR.place(chips, { x0: chipX0(), dev: desk.shared!.dev, T });
   U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
-  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH + i) * 4));
+  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH * 2 + i) * 4));
   bs.forEach((b, i) => {
     U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * T.chipFoodR * s.dpr, b.landed ? T.chipFood : 0], CHIP_OFF + 4 + i * 4);
+    if (b.land) U.set([(b.land[0] - s.origin) * s.dpr, b.land[1] * s.dpr, b.land[2] * s.dpr, b.land[3]], CHIP_OFF + 4 + (NCH + i) * 4);
   });
 }
 // The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
@@ -197,6 +198,7 @@ function frame(now: number) {
       if (s.landK && qs.has('mlog')) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
       s.landK = false; // a landing bursts the agents on exactly one step
     }
+    for (const b of chips.bodies) { if (b.land && qs.has('mlog')) console.log('[land]', 'chip' + b.id, 'strength', b.land[3].toFixed(2)); b.land = null; }
   }
   if (steps === 2) acc = Math.min(acc, STEP);
   if (desk.sim!.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
