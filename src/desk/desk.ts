@@ -122,7 +122,9 @@ const GROUPS = {
     ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
     ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
     ['drawStagger', 0.1, 0, 0.4, 0.01, 'draw stagger s (cards dealt off a deck)'],
-    ['landThrow', 1500, 200, 4000, 50, 'drop speed for a full burst px/s'],
+    ['landP', 503, 100, 2000, 1, 'momentum shed for a full burst px/s'],
+    ['landWn', 0.36, 0, 2, 0.01, 'share of coming-down momentum'],
+    ['landBand', 12, 0, 60, 1, 'contact band px (higher is off the page)'],
     ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
     ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
     ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
@@ -334,7 +336,7 @@ const lin = (c: number) => Math.pow(c / 255, 2.2);
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f, pat: vec4f };
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S); w: how far its shadow has faded (a box flying off)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
@@ -344,6 +346,7 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // Sim px. geo: half size, corner radius, lift | flat: center, cos, sin | misc: scale, hover, burst, lift height
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, how long its horizontal axis looks (0 to 1)
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
+// pat: the patch that just came into contact, in the card's frame as fractions of its half size: center, half size
 // buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
 // ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
 struct G {
@@ -376,7 +379,7 @@ struct G {
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
   ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, chips thrown off the page you left
-  chipf: array<vec4f, ${NCH}>, // per chip: center, food radius, food strength (sim px)
+  chipf: array<vec4f, ${NCH * 2}>, // per chip: center, food radius, food strength (sim px); then per chip: the patch that just came down (contact): center, radius, strength
   chipt: array<vec4f, ${NCH}>, // each chip's tile: its corner and size on the canvas (device px), its layer in chipTex
 };
 @group(0) @binding(0) var<uniform> g: G;
@@ -391,6 +394,7 @@ fn boxSd(l: vec2f, half: vec2f, r: f32) -> f32 {
   return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 fn cardSd(k: u32, p: vec2f) -> f32 { let c = g.cards[k]; return boxSd(toLocal(c, p), c.geo.xy, c.geo.z) * c.misc.x; }
+fn patchSd(c: Card, p: vec2f) -> f32 { return boxSd(toLocal(c, p) - c.geo.xy * c.pat.xy, c.geo.xy * c.pat.zw, c.geo.z * min(c.pat.z, c.pat.w)) * c.misc.x; }
 fn pcg(v: u32) -> u32 {
   let s = v * 747796405u + 2891336453u;
   let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
@@ -437,11 +441,11 @@ fn wrap(p: vec2f) -> vec2f { return p - floor(p / g.a.xy) * g.a.xy; }
 fn eAt(p: vec2f) -> f32 { return textureLoad(etex, clamp(vec2i(p * 0.5), vec2i(0), vec2i(textureDimensions(etex)) - 1), 0).r; }
 fn dir(a: f32) -> vec2f { return vec2f(cos(a), sin(a)); }
 fn ridge(d: f32, at: f32) -> f32 { let b = (d - at) / g.x.z; return exp(-b * b); }
-// Heading straight out through card c's nearest edge from p (under the card or just outside it).
+// Heading straight out through the nearest edge of card c's contact patch from p (under it or just outside it).
 fn outward(c: Card, p: vec2f) -> f32 {
   let r = p - c.flat.xy; let cs = c.flat.zw;
-  let l = vec2f(cs.x * r.x + cs.y * r.y, -cs.y * r.x + cs.x * r.y);
-  let q = abs(l) - c.geo.xy * c.misc.x;
+  let l = vec2f(cs.x * r.x + cs.y * r.y, -cs.y * r.x + cs.x * r.y) - c.geo.xy * c.misc.x * c.pat.xy;
+  let q = abs(l) - c.geo.xy * c.misc.x * c.pat.zw;
   var n = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), q.x > q.y);
   if (q.x > 0.0 && q.y > 0.0) { n = normalize(q); }
   n *= select(vec2f(-1.0), vec2f(1.0), l >= vec2f(0.0));
@@ -547,10 +551,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // A card that emits ink (an open card, or every card in the j style) colors the agents passing close to its edge;
     // they carry its ink out along the network, and inks mix like dye where the veins meet.
     if (c.ink.w > 0.02 && distance(pos, c.flat.xy) < c.bound.x + 24.0 * g.a.w && rnd() < 0.3 * c.ink.w && cardSd(k, pos) < 24.0 * g.a.w) { tag = f32(k); }
-    if (c.bound.z > 0.5 && cardSd(k, pos) < g.x.w) {
+    if (c.bound.z > 0.5 && patchSd(c, pos) < g.x.w) {
       ang = outward(c, pos) + (rnd() - 0.5) * 1.2;
       puff = max(puff, c.inv2.w * (0.8 + 0.2 * rnd()));
     }
+  }
+  for (var ci = 0u; ci < u32(g.ch.x); ci++) { // a chip's patch landing: out from its middle
+    let l = g.chipf[${NCH}u + ci];
+    if (l.w > 0.0 && distance(pos, l.xy) < l.z + g.x.w) { ang = atan2(pos.y - l.y, pos.x - l.x) + (rnd() - 0.5) * 1.2; puff = max(puff, l.w * (0.8 + 0.2 * rnd())); }
   }
   puff *= g.y.y;
   let e = eAt(pos);
@@ -1088,13 +1096,14 @@ interface Card {
   tilt: number[]; tiltV: number[]; sway: number; swayV: number;
   hover: number; hoverOn: boolean; burst: number; z: number; dragging: boolean; released: boolean;
   landK: boolean; landS: number; rel: number; flying: boolean; flyLift: number; shoveOnLand?: boolean;
+  relV: number; pk?: { t: number; n: number; a: number } | null; pv?: number[] | null; patch?: Patch; // contact: release speed, the most motion it has had above the band, last pose, the patch that landed
   videoSrc?: string; ts?: number;
   // layout
   k: number; media: Rect | null; lines?: string[]; sub?: string; titled?: boolean; baseline?: number; px?: number; py?: number;
   // the desk
   fly?: Flight | null; shove?: Shove | null; kb?: { tx: number; ty: number } | null; keyHeld?: boolean; keyTimer?: number;
   ch?: Chain | null; imp?: { x: number; y: number; t: number } | null; over?: boolean; snap?: number; squash: number; squashV: number;
-  said?: number; suppressClick?: boolean; bounced?: boolean; edgePen?: boolean; dropS?: number; rotFrom: number; rotTo: number; hoverSince: number;
+  said?: number; suppressClick?: boolean; edgePen?: boolean; rotFrom: number; rotTo: number; hoverSince: number;
   focused?: boolean; carrier?: Card | null; gone?: boolean; flyH?: number[]; plane?: { dc: V3; n: V3 }; flipA?: number;
   // media
   playlist: Clip[] | null; player?: Player;
@@ -1130,7 +1139,7 @@ const sources = [...root.querySelectorAll<HTMLElement>('.src')].map((el, id) => 
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
-    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0,
+    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0, relV: 0,
   } as Card; // the rest: see Card
 });
 
@@ -1737,7 +1746,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m: PointerEvent) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.bounced = s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -1768,9 +1777,8 @@ for (const s of sources) {
       if (press.moved) {
         s.suppressClick = true; s.dragging = false; s.released = true; s.el.classList.remove('dragging');
         const keep = performance.now() - lt > 80 ? 0 : 0.35; // a little momentum, none if held still before letting go
-        // It lands when it touches down: a gentle drop gives a small burst, a throw a bigger one. It keeps its own angle.
-        s.dropS = 0.25 + (Math.hypot(s.vx, s.vy) * (keep ? 1 : 0)) / T.landThrow;
-        s.vx *= keep; s.vy *= keep;
+        // The hand lets go of it at the speed it keeps; it lands once it settles (see contact). It keeps its own angle.
+        s.vx *= keep; s.vy *= keep; s.relV = Math.hypot(s.vx, s.vy); s.pk = { t: s.relV, n: 0, a: 0 };
         if (!hit.matches(':hover')) setHover(s, false);
         next(); // a page change asked for during the drag goes now
       }
@@ -1838,9 +1846,12 @@ function stepCards(dt: number) {
       s.el.classList.toggle('turning', s.flip !== s.flipTo); // no flat focus ring around a card turning in 3D // the real links (their hover wash and focus ring) only once the back lies at rest: mid-flip they would float off the turning card
       // It eases into its new angle as it lays down (the last 22% of the turn), so it lands at the final angle.
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
-      if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
+      if (s.flip === s.flipTo) placeDom(s); // laid down
     }
     if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(hinged(s) ? clamp(s.flip) : easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift (the note all the way: it peels up first); over its box it turns face down
+    const rest = !s.fly && s.flip === s.flipTo && !s.kb && !s.over && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60;
+    if (rest && s.released) { s.released = false; if (offCorner(s)) s.pk = null; else shove(s); } // let go: it shoves the cards under it (or slides off the corner first, and does not land)
+    contact(s, dt, Math.max(T.lift * Math.max(s.lift, s.flyLift), flipPath(s)[0]), rest);
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
@@ -1850,9 +1861,6 @@ function stepCards(dt: number) {
     }
     s.burst *= Math.exp(-dt * 7);
     if (s.imp && (s.imp.t += dt) >= IMPRINT_S) s.imp = null; // the veins have reclaimed it
-    if (s.released && !s.kb && !s.over && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60) {
-      const k = s.bounced ? Math.min(s.dropS!, 0.45) : s.dropS!; s.released = false; s.bounced = false;
-      if (!offCorner(s)) { land(s, k); shove(s); } } // touched down, shoving the cards under it (or sliding off the corner first)
   }
 }
 
@@ -1867,7 +1875,7 @@ function edgeSpring(s: Card, x0: number, dt: number) {
   const push = (v: number, p: number) => { v += (k * p - c * v) * dt; return Math.sign(v) === Math.sign(p) ? Math.sign(p) * Math.min(Math.abs(v), Math.abs(p) * back) : v; };
   if (px) s.vx = push(s.vx, px);
   if (py) s.vy = push(s.vy, py);
-  if (px || py) s.bounced = true;
+  if ((px || py) && s.pk) s.pk.t = 0; // the wall takes its motion along the page
   s.edgePen = Math.abs(px) + Math.abs(py) > 0.5; // it touches down only once it is back inside
 }
 
@@ -1880,7 +1888,7 @@ function nudge(s: Card, [dx, dy]: number[], big: boolean) {
   const k = s.kb || { tx: s.shove ? s.shove.tx : s.x, ty: s.shove ? s.shove.ty : s.y };
   k.tx = clamp(k.tx + dx * step, Math.min(x0 + ex + m, s.x), Math.max(x0 + view.w - ex - m, s.x)); // stays on screen
   k.ty = clamp(k.ty + dy * step, Math.min(ey + m, s.y), Math.max(view.h - ey - m, s.y));
-  Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, dropS: 0.25 });
+  Object.assign(s, { kb: k, keyHeld: true, shove: null, vx: 0, vy: 0, relV: 0 });
   const deck = dealing && pageDeck(s.region); // over its box it waits at the open end; Enter puts it in
   if (deck) deck.welcome = s.over = decked(s) && !turn.on && overDeck(deck, k.tx + ex, k.ty, (s.over ? BOX.keep : BOX.enter) * view.k); // its leading edge (it stays on screen, so its middle never reaches the box)
   if (s.z !== topZ) s.z = ++topZ;
@@ -1900,7 +1908,7 @@ function stepPaper(s: Card, dt: number) {
   const c = s.ch;
   if (!c || c.rest) return;
   const v = stepChain(c, dt, { g: T.paperG, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
-  if (v) land(s, clamp(v / 600));
+  if (v) land(s, Math.max(0.1, clamp(v / 600))); // the floor the old land() gave it
   s.flip = clamp(Math.atan2(c.x[2 * c.n + 1], c.x[2 * c.n]) / Math.PI);
   if (c.rest) {
     s.flip = s.flipTo = c.x[2 * c.n] < 0 ? 1 : 0; s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
@@ -1911,15 +1919,37 @@ function stepPaper(s: Card, dt: number) {
   s.el.classList.toggle('turning', !c.rest);
 }
 
-// ---------- landing ----------
-// The one thing that happens whenever a card comes down onto the desk: the next sim step sends the agents under and just
-// around it out through its edge with a burst of speed (scaled by strength), the ink there gets a pulse of excitation,
-// and agents held for it (a page whose cards fly in) leave from its edge.
-function land(s: Card, strength: number) {
-  const k = clamp(strength, 0.1, 1.5);
-  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k) });
+// ---------- contact ----------
+// One rule for everything that comes down on the page. Above the contact band (lifted, dealt, turning over) an item keeps
+// the most speed it has had along the page, coming down, and turning (at its radius of gyration). A hand, the keys, or a
+// box holding it, or a wall that stops it, takes that motion. Back at rest on the page it lands with the momentum it shed
+// there: (landWn x coming down + along + turning) / landP, at most 1. Sliding on the page, it never left: no landing.
+// Any item calls it every frame with its height over the page (px), whether it has come to rest, and the patch of it
+// that just came into contact (center, half size, as fractions of its half size); a patch that keeps growing (a sheet
+// rolling down) lands piece by piece, each with the motion shed since the last.
+type Patch = [number, number, number, number]; // center, half size: fractions of the card's half size
+const FULL: Patch = [0, 0, 1, 1];
+function contact(s: Card, dt: number, h: number, rest: boolean, patch = FULL) {
+  const p = s.pv;
+  if (s.dragging || s.kb || s.deck || s.kind === 'deck') { s.pk = s.pv = null; return; } // held (the box does not land)
+  s.pv = [s.x, s.y, h, s.rot, s.face];
+  if (!s.pk && h > T.landBand) s.pk = { t: 0, n: 0, a: 0 };
+  const m = s.pk;
+  if (!m) return;
+  if (p && dt > 0) {
+    m.t = Math.max(m.t, Math.hypot(s.x - p[0], s.y - p[1]) / dt);
+    m.n = Math.max(m.n, (p[2] - h) / dt);
+    m.a = Math.max(m.a, (Math.hypot(s.w, s.h) / Math.sqrt(12)) * Math.hypot(((s.rot - p[3]) * Math.PI) / 180, (s.face - p[4]) * Math.PI) / dt);
+  }
+  if (rest) { s.pk = null; land(s, Math.min(1, (T.landWn * m.n + m.t + m.a) / T.landP), patch); }
+}
+// Landing: the next sim step sends the agents under and just around the patch out through its edge with a burst of
+// speed (scaled by strength), the ink there gets a pulse of excitation, and agents held for it (a page whose cards fly
+// in) leave from its edge.
+function land(s: Card, k: number, patch?: Patch) {
+  Object.assign(s, { landK: true, landS: k, burst: Math.max(s.burst, k), patch });
   if (s.rel < 0) s.rel = 0;
-  if (s.shoveOnLand) { s.shoveOnLand = false; s.dropS = 0.3; shove(s); } // a drawn card that had to land on something
+  if (s.shoveOnLand) { s.shoveOnLand = false; s.relV = 0; shove(s); } // a drawn card that had to land on something
 }
 
 
@@ -1987,7 +2017,7 @@ function placeable(s: Card, x: number, y: number, x0: number, boxes: Edges[]) {
 function shove(p: Card) {
   if (!T.shove || view.phone) return;
   const x0 = p.region * view.w, pad = 6 * view.k, boxes = keepOut(x0);
-  const m = T.shove * (1 + 0.8 * clamp(p.dropS! - 0.25)); // dropS - 0.25 is the release speed over landThrow
+  const m = T.shove * (1 + 0.8 * clamp(p.relV / T.landP)); // further after a throw
   const at = (s: Card) => (s.shove ? [s.shove.tx, s.shove.ty] : [s.x, s.y]);
   const others = sources.filter((s) => s !== p && s.region === p.region && !s.dragging && !s.flying && s.kind !== 'deck' && !s.deck);
   const pos = new Map([[p, [p.x + p.vx / 7, p.y + p.vy / 7]]]), depth = new Map([[p, 0]]); // p's resting spot
@@ -2167,7 +2197,7 @@ function stepOut(s: Card, k: OutFlight) {
   Object.assign(s, { x: wx + (k.x - wx) * e, y: wy + (k.y - wy) * e, rot: wr + (k.r - wr) * smooth((u - DRAW.rotA) / (DRAW.rotB - DRAW.rotA)),
     face: 1 - easeFlip(smooth((u - DRAW.flipA) / (DRAW.flipB - DRAW.flipA))), flyLift: 0.45 * smooth(u / 0.14) * (1 - smooth((u - 0.78) / 0.22)) });
   if (u < 1) return true;
-  Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, face: 0, flyLift: 0 }); s.el.classList.remove('flying'); land(s, 1); // contact
+  Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, face: 0, flyLift: 0 }); s.el.classList.remove('flying'); // it lands as it settles (contact)
   return false;
 }
 // A card going into its box, on one clock: from where it was (lifting, turning face down and upright) to the box's open
@@ -2201,7 +2231,7 @@ function endFlights(region: number | null = null) {
     if (!k) continue;
     if (k.in) { s.fly = null; k.deck.dirty = true; continue; }
     s.el.classList.remove('flying');
-    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, face: 0, flyLift: 0 });
+    Object.assign(s, { x: k.x, y: k.y, rot: k.r, flying: false, fly: null, rel: 1e3, face: 0, flyLift: 0, pk: null }); // put there: no landing
     placeDom(s);
   }
   flights.on = sources.some((s) => s.fly);
@@ -3483,8 +3513,8 @@ async function buildAtlas(g: Gpu) {
 // ---------- uniforms ----------
 
 // Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 15;
-const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 2; // then the chips: one vec4, and two per chip
+const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
+const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
 const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
 function invert3(m: number[]) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -3587,7 +3617,7 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, 
     // emits a mild share of its ink (tint) and the full ink while open.
     ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
-    ...shd, 4 * flags + lv];
+    ...shd, 4 * flags + lv, ...(s.patch || FULL)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   if (tile) { v[52] = tile[0]; v[53] = tile[1]; v[32] = tile[2] * dpr; } // shd.xy: its tile's corner; bound.x: all of it
   U.set(v, o);
@@ -3691,9 +3721,10 @@ function chipUniforms(s: Sim) {
   const own = chipRegion() === page, bs = own ? chips.bodies.slice(0, NCH) : [];
   const tiles = gpu!.chipR.place(chips, { x0: chipX0(), dev: shared!.dev, T });
   U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
-  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH + i) * 4));
+  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH * 2 + i) * 4));
   bs.forEach((b, i) => {
     U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * T.chipFoodR * s.dpr, b.landed ? T.chipFood : 0], CHIP_OFF + 4 + i * 4);
+    if (b.land) U.set([(b.land[0] - s.origin) * s.dpr, b.land[1] * s.dpr, b.land[2] * s.dpr, b.land[3]], CHIP_OFF + 4 + (NCH + i) * 4);
   });
 }
 // The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
@@ -3858,6 +3889,7 @@ function frame(now: number) {
       if (s.landK && qs.has('mlog')) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
       s.landK = false; // a landing bursts the agents on exactly one step
     }
+    for (const b of chips.bodies) { if (b.land && qs.has('mlog')) console.log('[land]', 'chip' + b.id, 'strength', b.land[3].toFixed(2)); b.land = null; }
   }
   if (steps === 2) acc = Math.min(acc, STEP);
   if (sim!.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
