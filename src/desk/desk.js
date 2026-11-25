@@ -158,6 +158,7 @@ const GROUPS = {
     ['throwBounce', 0.25, 0, 0.9, 0.05, 'box restitution'],
     ['throwSag', 40, 0, 120, 1, 'curl coupling: flap edge sag px'],
     ['throwHz', 480, 120, 960, 60, 'physics steps per s'],
+    ['throwRest', 0.5, 0.05, 2, 0.05, 'asleep once it stays within px for 0.4 s'],
     ['throwPersp', 0.25, 0.05, 1, 0.05, 'box perspective ease s'],
     ['throwHome', 0.5, 0.1, 2, 0.05, 'fallen box eases home s'],
   ],
@@ -2083,7 +2084,7 @@ function throwWorld() {
   world.surface = curl;
   phys = { world, curl, hz: T.throwHz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
   const k = view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
-  curl.page(0, view.w, view.h); world.g = T.throwG * k;
+  curl.page(0, view.w, view.h); world.g = T.throwG * k; world.rest = T.throwRest;
   const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [view.w, 0.36 * view.h, 32.5 * k] });
   for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
   world.remove(b); phys.L = null;
@@ -2117,7 +2118,7 @@ function launch(d) {
     L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 };
   }
   Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
-  P.L = L; world.time = 0; world.g = T.throwG * view.k;
+  P.L = L; world.time = 0; world.g = T.throwG * view.k; world.rest = T.throwRest;
   curl.page(d.region * view.w, view.w, view.h); curl.sag = T.throwSag * view.k; curl.prepare(0);
   L.sv = world.save();
   const lid = lidOf(d);

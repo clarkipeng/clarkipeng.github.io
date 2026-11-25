@@ -115,7 +115,6 @@ class Body {
     const s = P.chipMass / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
     this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(lo[i] - c[i]), Math.abs(hi[i] - c[i])))) + this.cell, sdf: (io) => this.sdf(io),
       mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.chipMu, bounce: P.chipE, damp: P.chipDamp, x, q: from.q, v: from.v, w: from.w });
-    for (const o of world.bodies) if (o !== this.p && o.sleep && Math.hypot(o.x[0] - x[0], o.x[1] - x[1], o.x[2] - x[2]) < o.bound + this.p.bound + 2) { o.sleep = false; o.still = 0; } // what rests on it follows it down
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
   freeze(world) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
@@ -283,11 +282,12 @@ export function createChips(P, world) {
         if (!under && d >= r * 0.92) continue;
         const [nx, ny, pen] = !under ? [(lx - cx) / d, (ly - cy) / d, r * 0.92 - d] : ex < ey ? [Math.sign(lx) || 1, 0, ex + r] : [0, Math.sign(ly) || 1, ey + r];
         const wx = nx * p.c - ny * p.s, wy = nx * p.s + ny * p.c, want = Math.max(p.vx * wx + p.vy * wy, Math.min(pen * 10, 260));
+        if (b.sleep && p.vx * wx + p.vy * wy < 2) continue; // asleep (wedged against the rest), only a card moving into it moves it
         tx += wx * want; ty += wy * want;
       }
       const t = Math.hypot(tx, ty), dv = t - (b.v[0] * tx + b.v[1] * ty) / (t || 1);
       if (t < 2 || dv <= 0) continue;
-      b.v[0] += (tx / t) * dv; b.v[1] += (ty / t) * dv; b.p.sleep = false; b.p.still = 0;
+      b.v[0] += (tx / t) * dv; b.v[1] += (ty / t) * dv; b.p.sleep = false;
     }
   }
 

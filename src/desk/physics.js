@@ -40,7 +40,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
   const cf = new Float64Array(MAXC * CF), ci = new Int32Array(MAXC * 4); // A, B (-1: the surface or a sleeping body), point, B's id
   let nc = 0;
   const pick = new Int32Array(SEC), pd = new Float64Array(SEC), pk = new Float64Array(SEC * 6), cd = new Float64Array(7), so = new Float64Array(7), sn = new Float64Array(4);
-  const world = { g: 9000, surface: null, hz, bodies };
+  const world = { g: 9000, rest: 0.5, surface: null, hz, bodies };
 
   world.add = (o) => {
     const n = o.points.length / 3, I = o.inertia;
@@ -49,17 +49,18 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
       friction: o.friction ?? 0.5, bounce: o.bounce ?? 0.2, keep: Math.exp(-(o.damp || 0) * h), render: o.render || null,
       im: 1 / o.mass, Ib: Float64Array.of(1 / I[0], 0, 0, 0, 1 / I[1], 0, 0, 0, 1 / I[2]), Iw: new Float64Array(9), R: new Float64Array(9),
       x: Float64Array.from(o.x || [0, 0, 0]), q: Float64Array.from(o.q || [1, 0, 0, 0]), v: null, w: null,
-      px: new Float64Array(3), pq: new Float64Array(4),
+      px: new Float64Array(3), pq: new Float64Array(4), ax: new Float64Array(3), aq: new Float64Array(4), // ax, aq: where it came to rest
       warm: new Float64Array(n * 3), wid: new Int32Array(n), wstep: new Int32Array(n).fill(-9), wside: new Int8Array(n),
       sleep: false, still: 0, touch: false, moved: true, reach: 0, id: bodies.length,
     };
-    b.px.set(b.x); b.pq.set(b.q); orient(b);
+    b.px.set(b.x); b.pq.set(b.q); b.ax.set(b.x); b.aq.set(b.q); orient(b);
     bodies.push(b); reindex();
     b.v.set(o.v || [0, 0, 0]); b.w.set(o.w || [0, 0, 0]);
     return b;
   };
-  world.remove = (b) => { const i = bodies.indexOf(b); if (i >= 0) { bodies.splice(i, 1); reindex(); } };
   const wake = (b) => { b.sleep = false; b.still = 0; };
+  // Gone: what rested on it wakes, and falls.
+  world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
   // Velocities live side by side (the solver's hot loop reads them); each body's v and w are views into them.
   // Ids follow too, and so what each point touched last step (a gone body: -2, nothing's id).
   function reindex() {
@@ -88,15 +89,15 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
     const l = Math.sqrt(w * w + x * x + y * y + z * z);
     qmat(w / l, x / l, y / l, z / l, rot);
   };
-  const SV = 22;
+  const SV = 29;
   world.save = () => {
     const s = new Float64Array(2 + bodies.length * SV); s[0] = time; s[1] = alpha;
-    bodies.forEach((b, i) => { const o = 2 + i * SV; s.set(b.x, o); s.set(b.v, o + 3); s.set(b.w, o + 6); s.set(b.q, o + 9); s.set(b.px, o + 13); s.set(b.pq, o + 16); s[o + 20] = b.sleep ? 1 : 0; s[o + 21] = b.still; });
+    bodies.forEach((b, i) => { const o = 2 + i * SV; s.set(b.x, o); s.set(b.v, o + 3); s.set(b.w, o + 6); s.set(b.q, o + 9); s.set(b.px, o + 13); s.set(b.pq, o + 16); s[o + 20] = b.sleep ? 1 : 0; s[o + 21] = b.still; s.set(b.ax, o + 22); s.set(b.aq, o + 25); });
     return s;
   };
   world.load = (s) => {
     time = s[0]; alpha = s[1]; stepN += 2; // warm starts from before are stale
-    bodies.forEach((b, i) => { const o = 2 + i * SV; b.x.set(s.subarray(o, o + 3)); b.v.set(s.subarray(o + 3, o + 6)); b.w.set(s.subarray(o + 6, o + 9)); b.q.set(s.subarray(o + 9, o + 13)); b.px.set(s.subarray(o + 13, o + 16)); b.pq.set(s.subarray(o + 16, o + 20)); b.sleep = s[o + 20] > 0; b.still = s[o + 21]; orient(b); });
+    bodies.forEach((b, i) => { const o = 2 + i * SV; b.x.set(s.subarray(o, o + 3)); b.v.set(s.subarray(o + 3, o + 6)); b.w.set(s.subarray(o + 6, o + 9)); b.q.set(s.subarray(o + 9, o + 13)); b.px.set(s.subarray(o + 13, o + 16)); b.pq.set(s.subarray(o + 16, o + 20)); b.sleep = s[o + 20] > 0; b.still = s[o + 21]; b.ax.set(s.subarray(o + 22, o + 25)); b.aq.set(s.subarray(o + 25, o + 29)); orient(b); });
   };
 
   function step() {
@@ -124,11 +125,16 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}) {
       const a = q[0] - wx * q[1] - wy * q[2] - wz * q[3], x = q[1] + wx * q[0] + wy * q[3] - wz * q[2], y = q[2] - wx * q[3] + wy * q[0] + wz * q[1], z = q[3] + wx * q[2] - wy * q[1] + wz * q[0];
       const l = Math.sqrt(a * a + x * x + y * y + z * z); q[0] = a / l; q[1] = x / l; q[2] = y / l; q[3] = z / l;
       orient(b);
-      // Asleep once it has rested a moment on something; then it costs nothing until something moves it.
-      const v2 = vel[o] ** 2 + vel[o + 1] ** 2 + vel[o + 2] ** 2, w2 = vel[o + 3] ** 2 + vel[o + 4] ** 2 + vel[o + 5] ** 2;
-      b.still = b.touch && v2 < 16 && w2 < 0.006 ? b.still + h : 0;
-      if (b.still > 0.4 && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, o, o + 6); }
+      // Still while it touches something and stays within world.rest px (its rim's travel included) of where it came to
+      // rest: a pile's jitter never adds up to that.
+      const A = b.ax, Q = b.aq, dq = Math.abs(q[0] * Q[0] + q[1] * Q[1] + q[2] * Q[2] + q[3] * Q[3]);
+      const off = Math.abs(b.x[0] - A[0]) + Math.abs(b.x[1] - A[1]) + Math.abs(b.x[2] - A[2]) + 2 * b.bound * Math.sqrt(Math.max(0, 2 * (1 - dq)));
+      if (b.touch && off < world.rest) b.still += h; else { b.still = 0; A.set(b.x); Q.set(q); }
     }
+    // Asleep once it has been still a moment, and so has everything awake it touches (a pile sleeps together, so nothing
+    // settles onto one asleep); then it costs nothing until something moves it.
+    for (let c = 0; c < nc; c++) { const a = bodies[ci[c * 4]], b = ci[c * 4 + 1]; if (b >= 0 && Math.min(a.still, bodies[b].still) <= 0.4) a.still = bodies[b].still = Math.min(a.still, bodies[b].still, 0.4); }
+    for (const b of bodies) if (!b.sleep && b.still > 0.4 && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, b.id * V, b.id * V + 6); }
   }
   function orient(b) {
     const q = b.q; qmat(q[0], q[1], q[2], q[3], b.R);
