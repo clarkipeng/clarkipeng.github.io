@@ -59,9 +59,10 @@ class Body {
     this.cell = cell; this.rs = S.t / (2 * CL); // a voxel's half thickness
     this.px = new Float32Array(n); this.py = new Float32Array(n); this.pz = new Float32Array(n);
     this.d = new Float32Array(n); this.crumb = new Uint8Array(CN * CN); this.stain = new Float32Array(CN * CN);
-    this.mass0 = 0;
+    this.mass0 = 0; S.hf = new Float32Array(CN * CN * 3); // its surface's height and slope over each column, for what hits it
     for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
-      const x = -S.B + (i + 0.5) * cell, y = -S.B + (j + 0.5) * cell, inside = outlineR(S, x, y) - Math.hypot(x, y) > 0, h = surf(S, x, y)[0];
+      const x = -S.B + (i + 0.5) * cell, y = -S.B + (j + 0.5) * cell, inside = outlineR(S, x, y) - Math.hypot(x, y) > 0, f = surf(S, x, y), h = f[0];
+      S.hf.set(f, (j * CN + i) * 3);
       for (let l = 0; l < CL; l++) {
         const k = (j * CN + i) * CL + l;
         this.px[k] = x; this.py[k] = y; this.pz[k] = h + ((l + 0.5) / CL - 0.5) * S.t; this.d[k] = inside ? 1 : 0; this.mass0 += this.d[k];
@@ -91,6 +92,9 @@ class Body {
     this.foot = Math.sqrt(foot) + this.cell * 0.5;
     // Contact points: the outer faces of the rim's columns, and of every third column inside it.
     const solid = Uint8Array.from({ length: CN * CN }, (_, ci) => this.colSolid(ci));
+    // Its rim, for what hits it side on: each column's distance out past the edge of the solid ones (inside: negative), px.
+    const din = chamfer(Float32Array.from(solid, (s) => (s ? 1e9 : 0))), dout = chamfer(Float32Array.from(solid, (s) => (s ? 0 : 1e9)));
+    this.edge = Float32Array.from(solid, (s, ci) => (s ? 0.5 - din[ci] : dout[ci] - 0.5) * this.cell);
     const col = (i, j) => i >= 0 && j >= 0 && i < CN && j < CN && solid[j * CN + i];
     const pts = [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], xyz = [px, py, pz];
     for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
@@ -115,12 +119,20 @@ class Body {
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
   freeze(world) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
-  // Its shell, for what hits it: a point in its body's frame in, out its normal and distance (physics.js's sdf).
+  // Its shell, for what hits it: a point in its body's frame in, out its normal and distance (physics.js's sdf). Its
+  // surface and rim between the columns' centres, bilinear (it is called for every point near it, every step); a point
+  // nearer the rim than either face goes out through the rim, so what comes at it edge on meets the edge.
   sdf(io) {
-    const S = this.S, x = io[0] + this.c[0], y = io[1] + this.c[1], i = Math.floor((x + S.B) / this.cell), j = Math.floor((y + S.B) / this.cell);
-    if (i < 0 || j < 0 || i >= CN || j >= CN || !this.colSolid(j * CN + i)) { io[3] = 1; return; }
-    const [h, hx, hy] = surf(S, x, y), dz = io[2] + this.c[2] - h, s = dz < 0 ? -1 : 1, l = Math.hypot(hx, hy, 1);
-    io[0] = (-hx / l) * s; io[1] = (-hy / l) * s; io[2] = s / l; io[3] = Math.abs(dz) / l - S.t / 2;
+    const S = this.S, u = (io[0] + this.c[0] + S.B) / this.cell - 0.5, v = (io[1] + this.c[1] + S.B) / this.cell - 0.5;
+    if (u < -0.5 || v < -0.5 || u >= CN - 0.5 || v >= CN - 0.5) { io[3] = Infinity; return; }
+    const i = Math.min(CN - 2, Math.max(0, Math.floor(u))), j = Math.min(CN - 2, Math.max(0, Math.floor(v))), a = clamp01(u - i), b = clamp01(v - j);
+    const w0 = (1 - a) * (1 - b), w1 = a * (1 - b), w2 = (1 - a) * b, w3 = a * b, n = j * CN + i, E = this.edge, e0 = E[n], e1 = E[n + 1], e2 = E[n + CN], e3 = E[n + CN + 1];
+    const H = S.hf, k = n * 3, k1 = k + 3, k2 = k + CN * 3, k3 = k2 + 3;
+    const hx = w0 * H[k + 1] + w1 * H[k1 + 1] + w2 * H[k2 + 1] + w3 * H[k3 + 1], hy = w0 * H[k + 2] + w1 * H[k1 + 2] + w2 * H[k2 + 2] + w3 * H[k3 + 2];
+    const dz = io[2] + this.c[2] - (w0 * H[k] + w1 * H[k1] + w2 * H[k2] + w3 * H[k3]), s = io[3] || (dz < 0 ? -1 : 1), l = Math.sqrt(hx * hx + hy * hy + 1), d = (s * dz) / l - S.t / 2;
+    const e = w0 * e0 + w1 * e1 + w2 * e2 + w3 * e3;
+    if (e > d) { const ex = (1 - b) * (e1 - e0) + b * (e3 - e2), ey = (1 - a) * (e2 - e0) + a * (e3 - e1), el = Math.hypot(ex, ey) || 1; io[0] = ex / el; io[1] = ey / el; io[2] = 0; io[3] = e; return; }
+    io[0] = (-hx / l) * s; io[1] = (-hy / l) * s; io[2] = s / l; io[3] = d;
   }
   colSolid(ci) { for (let l = 0; l < CL; l++) if (this.d[ci * CL + l] > SOLID) return true; return false; }
   get solidCols() { let n = 0; for (let ci = 0; ci < CN * CN; ci++) if (this.colSolid(ci)) n++; return n; }
@@ -136,6 +148,15 @@ class Body {
   }
 }
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
+// D (per column: 0 where a distance starts, else large) becomes each column's distance, in columns, to the nearest start:
+// two chamfer passes, forward from the neighbours before, back from those after.
+function chamfer(D) {
+  for (let p = 0; p < 2; p++) for (let n = 0; n < D.length; n++) {
+    const k = p ? D.length - 1 - n : n, i = k % CN, j = (k - i) / CN;
+    for (let q = p * 4; q < p * 4 + 4; q++) { const x = i + NX[q], y = j + NY[q]; if (x >= 0 && y >= 0 && x < CN && y < CN) D[k] = Math.min(D[k], D[y * CN + x] + NW[q]); }
+  }
+  return D;
+}
 
 // ---------- the chips ----------
 // P: the tunables (desk.js T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipDamp how fast
@@ -285,10 +306,7 @@ export function createChips(P, world) {
     const N = CN * CN, m = new Float32Array(N), D = new Float32Array(N), S = b.S;
     if (!S.inside) { S.inside = new Uint8Array(N); for (let ci = 0; ci < N; ci++) S.inside[ci] = outlineR(S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0 ? 1 : 0; } // the outline never changes
     for (let ci = 0; ci < N; ci++) { let s = 0; for (let l = 0; l < CL; l++) s += b.d[ci * CL + l]; m[ci] = s / CL; D[ci] = m[ci] >= 0.5 && S.inside[ci] ? 0 : 1e9; }
-    for (let p = 0; p < 2; p++) for (let n = 0; n < N; n++) { // D: two chamfer passes, forward from the neighbours before, back from those after
-      const k = p ? N - 1 - n : n, i = k % CN, j = (k - i) / CN;
-      for (let q = p * 4; q < p * 4 + 4; q++) { const x = i + NX[q], y = j + NY[q]; if (x >= 0 && y >= 0 && x < CN && y < CN) D[k] = Math.min(D[k], D[y * CN + x] + NW[q]); }
-    }
+    chamfer(D);
     for (let ci = 0; ci < N; ci++) {
       const i = ci % CN, j = (ci - i) / CN;
       let v = m[ci];
