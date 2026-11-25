@@ -134,8 +134,7 @@ const GROUPS = {
     ['xfade', 0.6, 0.1, 2, 0.05, 'crossfade s'],
     ['hold', 0, 0, 10, 0.25, 'clip hold s (0 = whole clip)'],
     ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
-    ['focusSoft', 1.5, 0, 2, 0.05, 'background softness while hovering a card'],
-    ['focusS', MOTION.respond, 0.05, 2, 0.05, 'focus fade s (release takes exit x this)'],
+    ['focusS', MOTION.respond, 0.05, 2, 0.05, 'hover fade s (release takes exit x this)'],
   ],
   // Prints: card images treated as photos printed on the desk's paper. A preset sets the knobs below it.
   Prints: [
@@ -1409,8 +1408,6 @@ const absorbance = (ink: number[]) => ink.map((c, i) => -Math.log(Math.max(lin(c
 
 const cursor = { x: -1e4, y: -1e4, amt: 0 };
 let topZ = sources.length, hovered: Card | null = null;
-// Focus: the background eases from sharp to soft while a card is hovered (like depth of field), and back after.
-let focus = 0, focusAt = 0;
 
 // One page shows at a time: the camera is at x = 0 for the main page and at the viewport width for research. A page turn
 // moves it in one jump (the turning page covers the change).
@@ -1803,7 +1800,7 @@ function flip(s: Card) {
   }
 }
 
-// Hover's clock: the card's own response and the background's focus ease in together, and let go a little faster.
+// Hover's clock: a card responds to hover, and lets go a little faster.
 const hoverTau = (rising: boolean) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION.exit);
 // Springs: lift rises while dragging, tilt leans toward velocity (max ~8 deg), released cards glide and settle.
 function stepCards(dt: number) {
@@ -1830,7 +1827,7 @@ function stepCards(dt: number) {
     for (const [i, t] of [tx, ty].entries()) { s.tiltV[i] += (150 * (t - s.tilt[i]) - 9 * s.tiltV[i]) * dt; s.tilt[i] += s.tiltV[i] * dt; }
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
-    s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
+    s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn)));
     if (hinged(s)) stepPaper(s, dt);
     else if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
@@ -3642,11 +3639,6 @@ function writeUniforms(g: Gpu, sm: Sim = sim!, hold = false) {
     const el = vs.player!.a; // the video source is a card with a player and media
     vu = coverRect((el.videoWidth || 16) / (el.videoHeight || 9), vs.media!.w / vs.media!.h, vs.frame);
   }
-  { const now = performance.now(), dt = Math.min(0.1, (now - (focusAt || now)) / 1000); focusAt = now;
-    // While any card is flipping, the background snaps back toward sharp; afterwards it follows the hover again. Same smoothing.
-    const flipping = sources.some((o) => o.flip !== o.flipTo);
-    const want = hovered && !hovered.dragging && !flipping ? 1 : 0;
-    focus += (want - focus) * (1 - Math.exp(-dt / hoverTau(want > focus))); }
   U.set([s.W, s.H, hold ? s.n : activeAgents(s), d,
     T.speed / 60 * d, T.deposit * Q.depMul, T.decay, T.diffuse,
     T.sd * d, T.sa, T.turn, 0,
@@ -3656,7 +3648,7 @@ function writeUniforms(g: Gpu, sm: Sim = sim!, hold = false) {
     vs ? vs.id : -1, videoMix, vs?.player!.fading ? clamp(vs.player!.fade) : 0, dev * view.k,
     EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
-    st.soft + (T.focusSoft - st.soft) * smooth(focus), st.grain, over.length, order.length,
+    st.soft, st.grain, over.length, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
     T.shadowSoft, T.shadow, T.landRelease, shared!.TX,
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
