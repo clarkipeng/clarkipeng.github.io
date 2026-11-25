@@ -6,6 +6,7 @@
 // draws the same shape analytically, so the voxels never show.
 
 export const CN = 40, CL = 3, NCH = 12, FEED = 16, DIST = 10; // columns per side, layers, bodies, slime grid size, mask b's range
+const NX = [-1, 0, -1, 1, 1, 0, 1, -1], NY = [0, -1, -1, -1, 0, 1, 1, 1], NW = [1, 1, Math.SQRT2, Math.SQRT2, 1, 1, Math.SQRT2, Math.SQRT2]; // a column's 8 neighbours: the 4 before it in scan order, then the 4 after
 const SOLID = 0.2; // a voxel holds (and is a contact point) while its density is above this
 
 // ---------- shape ----------
@@ -277,23 +278,17 @@ export function createChips(P, world) {
   // columns), r dilated one column past the rim so the analytic outline, not the voxels, decides the edge. b makes the
   // eaten edge a true distance, so the soft shadow fades away from it instead of veiling the eaten part.
   function maskBytes(b, out) {
-    const m = new Float32Array(CN * CN);
-    for (let ci = 0; ci < CN * CN; ci++) { let s = 0; for (let l = 0; l < CL; l++) s += b.d[ci * CL + l]; m[ci] = s / CL; }
-    const S = b.S;
-    if (!S.inside) { S.inside = new Uint8Array(CN * CN); for (let ci = 0; ci < CN * CN; ci++) S.inside[ci] = outlineR(S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0 ? 1 : 0; } // the outline never changes
-    const inside = (ci) => S.inside[ci];
-    const D = Float32Array.from(m, (v, ci) => (v >= 0.5 && inside(ci) ? 0 : 1e9)); // two chamfer passes
-    for (const s of [1, -1]) for (let k = s > 0 ? 0 : CN * CN - 1; k >= 0 && k < CN * CN; k += s) {
-      const i = k % CN, j = (k - i) / CN;
-      for (const [a, c, w] of [[1, 0, 1], [0, 1, 1], [1, 1, Math.SQRT2], [-1, 1, Math.SQRT2]]) {
-        const x = i - s * a, y = j - s * c;
-        if (x >= 0 && y >= 0 && x < CN && y < CN) D[k] = Math.min(D[k], D[y * CN + x] + w);
-      }
+    const N = CN * CN, m = new Float32Array(N), D = new Float32Array(N), S = b.S;
+    if (!S.inside) { S.inside = new Uint8Array(N); for (let ci = 0; ci < N; ci++) S.inside[ci] = outlineR(S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0 ? 1 : 0; } // the outline never changes
+    for (let ci = 0; ci < N; ci++) { let s = 0; for (let l = 0; l < CL; l++) s += b.d[ci * CL + l]; m[ci] = s / CL; D[ci] = m[ci] >= 0.5 && S.inside[ci] ? 0 : 1e9; }
+    for (let p = 0; p < 2; p++) for (let n = 0; n < N; n++) { // D: two chamfer passes, forward from the neighbours before, back from those after
+      const k = p ? N - 1 - n : n, i = k % CN, j = (k - i) / CN;
+      for (let q = p * 4; q < p * 4 + 4; q++) { const x = i + NX[q], y = j + NY[q]; if (x >= 0 && y >= 0 && x < CN && y < CN) D[k] = Math.min(D[k], D[y * CN + x] + NW[q]); }
     }
-    for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
-      const ci = j * CN + i;
+    for (let ci = 0; ci < N; ci++) {
+      const i = ci % CN, j = (ci - i) / CN;
       let v = m[ci];
-      if (!inside(ci)) { v = 0; for (const [a, c] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1], [i - 1, j - 1], [i + 1, j + 1], [i - 1, j + 1], [i + 1, j - 1]]) if (a >= 0 && c >= 0 && a < CN && c < CN && inside(c * CN + a)) v = Math.max(v, m[c * CN + a]); }
+      if (!S.inside[ci]) { v = 0; for (let q = 0; q < 8; q++) { const x = i + NX[q], y = j + NY[q]; if (x >= 0 && y >= 0 && x < CN && y < CN && S.inside[y * CN + x]) v = Math.max(v, m[y * CN + x]); } }
       out[ci * 4] = Math.round(clamp01(v) * 255); out[ci * 4 + 1] = Math.round(b.stain[ci] * 255); out[ci * 4 + 2] = Math.round(clamp01((D[ci] - 1) / DIST) * 255); out[ci * 4 + 3] = 255;
     }
     return out;
