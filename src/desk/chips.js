@@ -244,6 +244,7 @@ export function createChips(P, world) {
       // what is not part of any piece (partly eaten voxels below SOLID) stays with the body it was in
       if (nb) { nb.props(world(), P, b.p); if (nb.p) out.push(nb); }
     }
+    if (out.length) b.id = nextId++; // a new id draws it afresh in the frame its pieces first show, so no piece shows twice
   }
   function remove(b) { world().remove(b.p); bodies.splice(bodies.indexOf(b), 1); }
 

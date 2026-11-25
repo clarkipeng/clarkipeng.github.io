@@ -319,7 +319,8 @@ export async function createChipRenderer(device) {
     const fast = (b) => Math.hypot(...b.v) + Math.hypot(...b.w) * b.S.B > 6;
     const due = (x) => x.b.dirty || moved(x, drawn.get(x.b.id)) > 0.12;
     const wait = (x) => drawn.get(x.b.id).at - (fast(x.b) ? 0.1 : 0);
-    const turn = new Set(all ? boxes : [...boxes.filter((x) => !drawn.has(x.b.id)), ...boxes.filter((x) => drawn.has(x.b.id) && due(x)).sort((p, q) => wait(p) - wait(q)).slice(0, T.chipRedraws)]);
+    const fresh = boxes.filter((x) => !drawn.has(x.b.id)); // new ones (drops, and a body and the pieces it split into) count against the cap
+    const turn = new Set(all ? boxes : [...fresh, ...boxes.filter((x) => drawn.has(x.b.id) && due(x)).sort((p, q) => wait(p) - wait(q)).slice(0, Math.max(0, T.chipRedraws - fresh.length))]);
     for (const x of boxes) {
       if (!turn.has(x)) continue;
       const { b, lo, hi, c, o, size } = x, sl = slots.get(b.id);
