@@ -14,6 +14,7 @@
 import { clips, mediaUrl } from 'virtual:desk-media';
 import { createWorld, boxShape } from './physics.js';
 import { createCurl } from './curl.js';
+import { createNote, NS } from './note.js';
 import { TALLY_PARAMS, tallySurface, paintTally } from './tally.js';
 
 export function mountDesk(root, router) {
@@ -89,6 +90,12 @@ const GROUPS = {
     ['lift', 60, 0, 60, 1, 'lift height px'],
     ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
+    ['foldTop', 1.2, 0.2, 4, 0.05, 'note: turn speed upright (turns/s)'],
+    ['foldG', 30, 0, 80, 1, 'note: how hard it falls'],
+    ['foldBounce', 0.3, 0, 0.8, 0.02, 'note: bounce off the desk'],
+    ['foldR', 14, 0, 60, 1, 'note: bend radius at the strip mid-turn px'],
+    ['foldLag', 0.25, 0, 1, 0.01, 'note: free edge lag'],
+    ['foldSag', 90, 0, 300, 5, 'note: free edge sag'],
     ['backs', 'pen', 0, 0, 0, 'back style'],
     ['cards', 'compact', 0, 0, 0, 'card size preset'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
@@ -302,7 +309,7 @@ struct G {
   st: vec4f,  // style (0 paper, 1 spectrum, 2 j), glow, halo, page clock (s)
   bg: vec4f,  // page background, linear rgb
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
-  jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px); hold (1: clear the ink, hold the agents), unused
+  jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px); hold (1: clear the ink, hold the agents), the note drawn as paper (-1: none)
   pr: vec4f,  // prints: desaturate, white balance to paper, black lift, duotone at rest
   pq: vec4f,  // prints: paper grain, matte edge (CSS px); the first agent this pass runs (a warm-up step's later part), unused
   cu: vec4f,  // page turn: the outgoing page's roll (direction from the corner xy, fold distance, roll radius; device px)
@@ -601,6 +608,7 @@ const renderWGSL = (video) => COMMON + /* wgsl */ `
 @group(0) @binding(6) var frozen: texture_2d<f32>;
 ${video ? '@group(0) @binding(7) var vidA: texture_external;\n@group(0) @binding(8) var vidB: texture_external;' : ''}
 @group(0) @binding(9) var<storage, read> tiles: array<vec2u>;
+@group(0) @binding(10) var noteTex: texture_2d<f32>; // the turning note, drawn as paper (note.js)
 
 const PAPER = vec3f(${PAPER.map(lin).map((x) => x.toFixed(5)).join(', ')});
 
@@ -727,7 +735,21 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   if (distance(p, c.flat.xy) > c.bound.x + select((40.0 + 60.0 * lift) * s * max(g.u.x, 1.0), 0.0, face)) { return col; }
   let lp = toLocal(c, p);
   let d = select(boxSd(lp, c.geo.xy, c.geo.z) * c.misc.x, footSd(c, p - c.flat.xy), base);
-  if (jmode && !face) {
+  let mesh = f32(k) == g.jq.w;
+  var nm = vec4f(0.0); // the note as paper: where on it, its light (< 0: its back), coverage; shd.xy: its tile's corner
+  var fp = vec2f(0.0); // and how much of the note this pixel spans (the most across to a neighbor on the same face)
+  if (mesh) {
+    let n = vec2i(textureDimensions(noteTex)) / vec2i(1, 2); let t = vec2i(p / q - c.shd.xy);
+    if (all(t >= vec2i(0)) && all(t < n)) {
+      nm = textureLoad(noteTex, t, 0);
+      for (var i = 0; i < 4; i++) {
+        let o = textureLoad(noteTex, clamp(t + vec2i(select(vec2i(0, 1), vec2i(1, 0), (i & 1) == 0) * select(1, -1, i > 1)), vec2i(0), n - 1), 0);
+        if (o.a > 0.0 && (o.z < 0.0) == (nm.z < 0.0) && distance(o.xy, nm.xy) > length(fp)) { fp = o.xy - nm.xy; }
+      }
+      let sh = textureLoad(noteTex, t + vec2i(0, n.y), 0);
+      col *= (1.0 - sh.x * (0.09 + 0.08 * conc) * g.u.y) * (1.0 - sh.y * g.u.y);
+    }
+  } else if (jmode && !face) {
     // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
     if (d > -1.0) {
       let dd = max(d, 0.0) / s;
@@ -743,12 +765,19 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
     col *= (1.0 - near * (1.0 - c.imp.w)) * (1.0 - far * (1.0 - c.imp.w)); // imp.w: its shadow fades as it flies off
   }
   if (base) { return col; }
-  let cov = clamp(0.5 - d / q, 0.0, 1.0);
+  let cov = select(clamp(0.5 - d / q, 0.0, 1.0), nm.a, mesh);
   if (cov > 0.0) {
-    var un = lp / (2.0 * c.geo.xy) + 0.5;
-    let back = c.bound.y < 0.0;
-    if (back) { if ((ow & 1u) != 0u) { un.y = 1.0 - un.y; } else { un.x = 1.0 - un.x; } } // seen from behind (turned over its horizontal or vertical axis), so the back reads the right way round
-    let tex = textureSampleLevel(atlas, samp, mix(select(c.uv.xy, c.buv.xy, back), select(c.uv.zw, c.buv.zw, back), un), 0.0);
+    var un = select(lp / (2.0 * c.geo.xy) + 0.5, clamp(nm.xy, vec2f(0.0), vec2f(1.0)), mesh);
+    let back = select(c.bound.y < 0.0, nm.z < 0.0, mesh);
+    if (back) { if ((ow & 1u) != 0u) { un.y = 1.0 - un.y; fp.y = -fp.y; } else { un.x = 1.0 - un.x; fp.x = -fp.x; } } // seen from behind (turned over its horizontal or vertical axis), so the back reads the right way round
+    let ua = select(c.uv.xy, c.buv.xy, back); let ub = select(c.uv.zw, c.buv.zw, back);
+    var tex = textureSampleLevel(atlas, samp, mix(ua, ub, un), 0.0);
+    // The atlas has no mipmaps, and paper seen steeply squeezes much of the note into a pixel: average taps across it.
+    let nt = min(i32(length(fp * (ub - ua) * vec2f(textureDimensions(atlas))) / 1.5), 16);
+    if (nt > 1) {
+      tex = vec4f(0.0);
+      for (var i = 0; i < nt; i++) { tex += textureSampleLevel(atlas, samp, mix(ua, ub, clamp(un + fp * ((f32(i) + 0.5) / f32(nt) - 0.5), vec2f(0.0), vec2f(1.0))), 0.0) / f32(nt); }
+    }
     var cc = pow(tex.rgb, vec3f(2.2));
     ${video ? `if (!back && f32(k) == g.v.x && g.v.y > 0.0) {
       let mu = (un - c.media.xy) / (c.media.zw - c.media.xy);
@@ -785,7 +814,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       let band = dot(sq, vec2f(0.55, 0.83)) + 0.3 + 0.5 * lift;
       cc += 0.015 * exp(-band * band * 6.0) * (1.0 - cc);
     }
-    cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
+    cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face), abs(nm.z), mesh) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
     if (jmode) {
       // J: ink runs under the card and shows through as a light stain, soaking in harder along the border's fibers;
       // over captions it stays faint so the text reads. A lifted card is above the ink and comes away clean.
@@ -951,6 +980,22 @@ const STRIP = 22; // the sticky note's strip, design px (the stylesheet's .note 
 // The sticky note turns over its top edge, about its horizontal axis, like a real one lifted to read its back; every other
 // card turns over its side.
 const hinged = (s) => s.kind === 'note';
+// Its strip stays stuck: the rest of it swings up over it as bending paper (note.js) and lies on it, back up.
+const noteMesh = (s) => hinged(s) && (s.flip > 0 || s.bend) && !s.fly && !s.deck && !s.carrier;
+// The sheet past the strip as it turns (CSS px from the strip's edge, along the note and up, and its angle there): it
+// turns by pi flip, bending over a length that is a tight crease lying down and widest upright, and its free part
+// leads or trails by s.bend (radians at the free edge).
+const NOTE_P = new Float32Array((NS + 1) * 4);
+function noteBend(s) {
+  const k = s.k || 1, L = s.h - STRIP * k, Th = Math.PI * clamp(s.flip), l = Math.max(2 * Th * (1.5 + T.foldR * Math.sin(Th)) * k, 1e-3);
+  const ang = (t) => clamp(Th * (t < l ? 1 - (1 - t / l) ** 2 : 1) + (s.bend || 0) * (t / L) ** 2, 0, Math.PI);
+  let y = 0, z = 0;
+  for (let i = 0; i <= NS; i++) {
+    for (let j = 0; i && j < 4; j++) { const a = ang(((i - 1 + (j + 0.5) / 4) * L) / NS); y += (Math.cos(a) * L) / NS / 4; z += (Math.sin(a) * L) / NS / 4; }
+    NOTE_P[i * 4] = y; NOTE_P[i * 4 + 1] = z; NOTE_P[i * 4 + 2] = ang((i * L) / NS);
+  }
+  return NOTE_P;
+}
 const boxSize = (s) => { const p = pageDeck(s.region).room; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
 function cardBox(s, w, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)) {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
@@ -1169,6 +1214,15 @@ function placeDom(s) {
   s.el.style.transform = `translate(${(x - w / 2).toFixed(2)}px, ${(y - h / 2).toFixed(2)}px) rotate(${r.toFixed(3)}deg) scale(${(sc * k).toFixed(4)})`;
   if (s.ts !== TS) { s.ts = TS; s.el.style.setProperty('--ts', TS); } // the DOM still's captions take the same type
   s.el.style.zIndex = Math.round(s.z);
+  if (hinged(s) && s.backEl) placeFold(s);
+}
+// The note lying folded over its strip: its hit area and its back (the links; without WebGPU the drawn back) move up
+// onto the sheet, and the back's strip band (under the strip, never seen) is cut off. Design px.
+function placeFold(s) {
+  const k = s.k || 1, C = s.flip === 1 ? (STRIP * k + noteBend(s)[NS * 4]) / k : 0;
+  s.backEl.style.transform = C ? `translateY(${C}px)` : '';
+  s.backEl.style.clipPath = C ? `inset(0 0 ${STRIP}px)` : '';
+  Object.assign(s.hit.style, { top: C ? C + 'px' : '', bottom: C ? s.h / k - STRIP + 'px' : '' });
 }
 
 // ---------- color ----------
@@ -1554,9 +1608,10 @@ function flip(s) {
   s.flipTo = s.flipTo ? 0 : 1;
   s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
   if (s.flipTo) { setHover(s, false); s.z = ++topZ; }
+  s.slap = hinged(s); // the note is thrown over (or back) and slaps down
   // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
-  s.rotFrom = s.rot; s.rotTo = view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay
+  s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay
   if (!gpu || reduced) { // the still fallback and reduced motion just swap faces
     if (!gpu && s.flipTo) paintDomBack(s);
     s.flip = s.emit = s.face = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
@@ -1592,7 +1647,8 @@ function stepCards(dt) {
     const swayT = s.dragging ? clamp(s.vx * 0.00005, -0.05, 0.05) : 0;
     s.swayV += (120 * (swayT - s.sway) - 10 * s.swayV) * dt; s.sway += s.swayV * dt;
     s.hover = lerp(s.hover, s.hoverOn ? 1 : 0, 1 - Math.exp(-dt / hoverTau(s.hoverOn))); // the same clock as the focus
-    if (s.flip !== s.flipTo) {
+    if (hinged(s)) stepFold(s, dt);
+    else if (s.flip !== s.flipTo) {
       s.flip = s.flipTo ? Math.min(1, s.flip + dt / T.flipS) : Math.max(0, s.flip - dt / (T.flipS * MOTION.exit)); // closing is quicker
       s.el.classList.toggle('flipped', s.flipTo === 1 && s.flip >= 1);
       s.el.classList.toggle('turning', s.flip !== s.flipTo); // no flat focus ring around a card turning in 3D // the real links (their hover wash and focus ring) only once the back lies at rest: mid-flip they would float off the turning card
@@ -1600,7 +1656,7 @@ function stepCards(dt) {
       s.rot = lerp(s.rotFrom, s.rotTo, smooth(s.flipTo ? (s.flip - 0.78) / 0.22 : (0.22 - s.flip) / 0.22));
       if (s.flip === s.flipTo) { land(s, 1); placeDom(s); } // laid down
     }
-    if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(hinged(s) ? smooth(s.flip) : easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift (the note all the way: it peels up first); over its box it turns face down
+    if (!s.fly && !s.deck && s.kind !== 'deck') s.face = Math.max(hinged(s) ? clamp(s.flip) : easeFlip(clamp((s.flip - 0.22) / 0.56)), smooth(s.snap || 0)); // a flip turns it over in the middle of its lift (the note all the way: it peels up first); over its box it turns face down
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
@@ -1652,6 +1708,29 @@ function stepKey(s, dt) {
   const k = s.kb, e = 1 - Math.exp(-dt / 0.06);
   s.x += (k.tx - s.x) * e; s.y += (k.ty - s.y) * e;
   if (!s.keyHeld && Math.hypot(k.tx - s.x, k.ty - s.y) < 0.5) Object.assign(s, { x: k.tx, y: k.ty, kb: null });
+}
+
+// The note is thrown over its strip: fast as it peels off, slowest upright (foldTop), then it falls (foldG), slaps down
+// (the landing), and bounces a little before it rests. Its free part lags each change of speed and sags under gravity
+// while it swings (s.bend, a stiff damped spring, stepped implicitly).
+function stepFold(s, dt) {
+  const v0 = s.flipV || 0, dir = s.flipTo ? 1 : -1, th = Math.PI * s.flip, g = -T.foldG * Math.cos(th);
+  if (s.flip !== s.flipTo) {
+    s.flipV = s.slap ? dir * Math.sqrt(T.foldTop ** 2 + T.foldG * (1 - Math.sin(th))) : v0 + g * dt;
+    s.flip += s.flipV * dt;
+    if (dir * (s.flip - s.flipTo) >= 0) {
+      if (s.slap) { s.slap = false; land(s, 1); }
+      s.flipV *= -T.foldBounce;
+      s.flip = Math.abs(s.flipV) < Math.abs(g) * dt ? s.flipTo : s.flipTo - dir * 1e-4;
+      if (s.flip === s.flipTo) { s.flipV = 0; placeDom(s); } // at rest
+    }
+    s.el.classList.toggle('flipped', s.flip === 1);
+    s.el.classList.toggle('turning', s.flip !== s.flipTo);
+  }
+  const swing = s.flip !== s.flipTo, K = 900;
+  s.bendV = ((s.bendV || 0) - T.foldLag * Math.PI * ((s.flipV || 0) - v0) + dt * ((swing ? -T.foldSag * Math.cos(th) : 0) - K * (s.bend || 0))) / (1 + 20 * dt + K * dt * dt);
+  s.bend = (s.bend || 0) + s.bendV * dt;
+  if (!swing && Math.abs(s.bend) < 1e-3 && Math.abs(s.bendV) < 1e-2) s.bend = s.bendV = 0;
 }
 
 // ---------- landing ----------
@@ -3007,7 +3086,7 @@ async function initGpu() {
     const uniform = device.createBuffer({ size: U.byteLength, usage: SB.UNIFORM | SB.COPY_DST });
     const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     device.lost.then((i) => { console.warn('WebGPU device lost', i.message); });
-    return { device, ctx, format, ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainPipe: grainP, tilePipe, uniform, sampler, ts };
+    return { note: createNote(device), device, ctx, format, ePipe, agentPipe, diffusePipe, renderPipe, videoPipe, grainPipe: grainP, tilePipe, uniform, sampler, ts };
   } catch (err) {
     console.warn('WebGPU unavailable', err);
     return null;
@@ -3121,7 +3200,7 @@ function renderEntries(g, sm, extra = []) {
   return [
     { binding: 0, resource: { buffer: g.uniform } }, { binding: 1, resource: sm.trail[sm.parity].createView() },
     { binding: 2, resource: sm.mask.createView() }, { binding: 3, resource: shared.atlas.createView() }, { binding: 4, resource: g.sampler },
-    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } }, ...extra];
+    { binding: 5, resource: shared.paper.createView() }, { binding: 6, resource: shared.frozenTex[shared.fz].createView() }, { binding: 9, resource: { buffer: shared.tiles } }, { binding: 10, resource: g.note.view }, ...extra];
 }
 // A card in a deck (on the pile, in the fan, on its way in or out) shows a plain paper back with only the deck's name
 // on it, handwritten where the upright pile shows and reading up it like the box's spine; the card's own back shows
@@ -3241,24 +3320,37 @@ function mildInk(hex, baseHex, mix = 1) {
 }
 // A click's flip, off the desk: how high its middle is (CSS px) and how far it is from where the card lies, along the
 // card's vertical axis. A card lifts in the first ~22%, turns over in the middle, and lays back down in the last ~22% (the
-// same path in reverse). The note peels up from its strip (turning about its top edge, which stays down), then lifts clear
-// and turns on over in the air, so it lays back down where it was, back up, its strip now along its bottom.
+// same path in reverse). The note stays on its strip (stepFold).
 function flipPath(s) {
-  if (!(s.flip > 0 && s.flip < 1)) return [0, 0];
-  if (!hinged(s)) return [(view.phone ? 0.3 : 0.9) * T.lift * smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)), 0]; // on a phone a flip lifts less, so the card stays inside the screen
-  const a = Math.PI * s.face, r = s.h / 2, b = smooth((s.face - 0.2) / 0.6); // b: from turning about its top edge to about its middle
-  return [((1 - b) * r + b * (r + 0.45 * T.lift)) * Math.sin(a), (1 - b) * r * (Math.cos(a) - 1)];
+  if (!(s.flip > 0 && s.flip < 1) || hinged(s)) return [0, 0];
+  return [(view.phone ? 0.3 : 0.9) * T.lift * smooth(s.flip / 0.22) * (1 - smooth((s.flip - 0.78) / 0.22)), 0]; // on a phone a flip lifts less, so the card stays inside the screen
+}
+// The note as paper (note.js): its pose (x, y on its page, turn th, height z; CSS px), light, profile, and the tile its
+// sheet and shadows fit in, from the box they can reach in its frame (the sheet up to 15% nearer the camera), turned.
+const NOTE_U = new Float32Array(24 + (NS + 1) * 4);
+function noteUniform(s, x, y, th, z) {
+  const dev = shared.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * Math.max(T.shadowSoft, 1), L = s.h - STRIP * (s.k || 1);
+  const X = hw * 1.15 + M + 20, y0 = -hh - L * 1.15 - M, y1 = hh + M + 60, cy = (y0 + y1) / 2, hy = (y1 - y0) / 2;
+  const ex = X * Math.abs(c) + hy * Math.abs(n), ey = X * Math.abs(n) + hy * Math.abs(c), t0 = [Math.floor((x - n * cy - ex) * dev), Math.floor((y + c * cy - ey) * dev)];
+  gpu.note.size(Math.ceil(2 * ex * dev) + 2, Math.ceil(2 * ey * dev) + 2);
+  NOTE_U.set([hw, hh, 3, STRIP * (s.k || 1) - hh, x, y, c, n, ...t0, gpu.note.w, gpu.note.h, dev, 1800, z, M,
+    c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), T.shadowSoft, L, 0, 0]);
+  NOTE_U.set(noteBend(s), 24);
+  return [...t0, Math.hypot(ex, ey) + Math.abs(cy) + s.h];
 }
 function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null, hueMix = 1) {
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
-  const [fz, fv] = flipPath(s), lift = Math.max(s.lift, fz / T.lift, s.flyLift);
+  let [fz, fv] = flipPath(s), lift = Math.max(s.lift, fz / T.lift, s.flyLift);
   let [sx, sy, sr] = shown(s);
   let th = (sr * Math.PI) / 180 + s.sway, sc = 1 - 0.014 * (s.squash || 0); // a card is one size everywhere (only the box's nudge squashes it)
+  // The note as paper: past half way, the slime and its landing see it where it lies, over its strip.
+  const mesh = noteMesh(s), yh = STRIP * (s.k || 1) - s.h / 2, lo = mesh ? Math.min(yh + noteBend(s)[NS * 4], -s.h / 2) : 0, tile = mesh && noteUniform(s, sx - originX, sy, th, lift * T.lift);
+  if (mesh && s.flip > 0.5) fv = (lo + yh) / 2;
   sx -= Math.sin(th) * fv; sy += Math.cos(th) * fv;
   let mu = [Math.cos(th) * sc, Math.sin(th) * sc, 0], mv = [-Math.sin(th) * sc, Math.cos(th) * sc, 0];
   // Never exactly edge-on, where the homography would be singular. The note's lower edge rises as it turns.
   const fe = Math.sign(fc || 1) * Math.max(Math.abs(fc), 0.02), fs = Math.sqrt(1 - fe * fe) * (Math.sin(fa) < 0 ? -1 : 1), hz = hinged(s);
-  if (s.face > 0 || s.flipA) { if (hz) mv = rodrigues(mv, mu.map((v) => v / sc), Math.atan2(fs, fe)); else mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe)); }
+  if ((s.face > 0 || s.flipA) && !mesh) { if (hz) mv = rodrigues(mv, mu.map((v) => v / sc), Math.atan2(fs, fe)); else mu = rodrigues(mu, mv.map((v) => v / sc), Math.atan2(fs, fe)); }
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   let z = lift * T.lift, fade = 0, H = null, flags = hz ? 1 : 0;
@@ -3280,7 +3372,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
   const zh = z * dpr, f = 1800 * dpr - zh; // the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
   let cx = (sx - originX) * dpr, cy = sy * dpr; // page-local
   H ||= [f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f];
-  const hw = (s.w * dpr) / 2, hh = (s.h * dpr) / 2, fh = s.carrier && s.carrier !== s ? facing(H) : fc, edgeOn = Math.abs(fh) < 1e-4;
+  const hw = (s.w * dpr) / 2, hh = ((mesh && s.flip > 0.5 ? yh - lo : s.h) * dpr) / 2, fh = s.carrier && s.carrier !== s ? facing(H) : mesh ? 1 : fc, edgeOn = Math.abs(fh) < 1e-4;
   const inv = edgeOn ? FAR : invert3(H);
   if (s.carrier && s.carrier !== s) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
@@ -3293,6 +3385,7 @@ function cardUniform(s, dpr, o, originX = 0, jbloom = -1, tint = 0, base = null,
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
     ...shd, 4 * flags + lv];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
+  if (tile) { v[52] = tile[0]; v[53] = tile[1]; v[32] = tile[2] * dpr; } // shd.xy: its tile's corner; bound.x: all of it
   U.set(v, o);
 }
 
@@ -3365,7 +3458,7 @@ function writeUniforms(g, sm = sim, hold = false) {
     CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     shared.CW, shared.CH, trans.fade, turn.on && !capturing ? 1 : 0,
-    st.stain, st.bleed * d, hold ? 1 : 0, 0,
+    st.stain, st.bleed * d, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
     T.pDesat, T.pWarm, T.pBlack, T.pDuo,
     T.pGrain, T.pMatte, 0, 0,
     ...(turn.on && !capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
@@ -3401,6 +3494,7 @@ function encodeRender(enc, target, ts = null, s = sim) {
       bg = gpu.device.createBindGroup({ layout: gpu.videoPipe.getBindGroupLayout(0), entries: renderEntries(gpu, s, [{ binding: 7, resource: ext }, { binding: 8, resource: extB }]) });
     } catch { /* frame not ready yet: draw the poster */ }
   }
+  if (sources.some(noteMesh)) gpu.note.encode(enc, NOTE_U);
   const tp = enc.beginComputePass();
   tp.setPipeline(gpu.tilePipe); tp.setBindGroup(0, shared.tileBG); tp.dispatchWorkgroups(Math.ceil(shared.nTiles / 64)); tp.end();
   const pass = enc.beginRenderPass({ colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
