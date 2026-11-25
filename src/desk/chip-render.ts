@@ -13,7 +13,6 @@ type LookKey = 'chipGold' | 'chipCrisp' | 'chipSalt' | 'chipEdge' | 'chipShadow'
 interface Box { b: Body; lo: number; hi: number; c: number[]; o: number[]; size: number }
 // A body as last drawn: origin, orientation, tile corner and size.
 interface Drawn { o: number[]; q: number[]; c: number[]; n: number }
-export type ChipRenderer = Awaited<ReturnType<typeof createChipRenderer>>;
 
 const BODY_VEC4 = 14, HEAD_VEC4 = 6, G = 40; // a chip's mesh: G x G quads
 const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell
