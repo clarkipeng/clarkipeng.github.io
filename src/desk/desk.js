@@ -359,7 +359,7 @@ struct G {
   vu: vec4f,  // video uv offset, scale
   cards: array<Card, ${MAX}>,
   ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, chips thrown off the page you left
-  chipf: array<vec4f, ${NCH}>, // per chip: center, food radius, food strength (sim px)
+  chipf: array<vec4f, ${NCH * 2}>, // per chip: center, food radius, food strength (sim px); then per chip: the patch that just came down (contact): center, radius, strength
   chipt: array<vec4f, ${NCH}>, // each chip's tile, lowest first: its corner and size on the canvas (device px), its layer in chipTex
 };
 @group(0) @binding(0) var<uniform> g: G;
@@ -535,6 +535,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ang = outward(c, pos) + (rnd() - 0.5) * 1.2;
       puff = max(puff, c.inv2.w * (0.8 + 0.2 * rnd()));
     }
+  }
+  for (var ci = 0u; ci < u32(g.ch.x); ci++) { // a chip's patch landing: out from its middle
+    let l = g.chipf[${NCH}u + ci];
+    if (l.w > 0.0 && distance(pos, l.xy) < l.z + g.x.w) { ang = atan2(pos.y - l.y, pos.x - l.x) + (rnd() - 0.5) * 1.2; puff = max(puff, l.w * (0.8 + 0.2 * rnd())); }
   }
   puff *= g.y.y;
   let e = eAt(pos);
@@ -3302,7 +3306,7 @@ async function buildAtlas(g) {
 
 // Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
 const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
-const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 2; // then the chips: one vec4, and two per chip
+const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
 const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
 function invert3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -3492,9 +3496,10 @@ function chipUniforms(s) {
   const own = chipRegion() === page, bs = own ? chips.bodies.slice(0, NCH) : [];
   const tiles = gpu.chipR.place(chips, { x0: chipX0(), dev: shared.dev, T, t: clock.t });
   U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
-  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH + i) * 4));
+  tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH * 2 + i) * 4));
   bs.forEach((b, i) => {
     U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * T.chipFoodR * s.dpr, b.landed ? T.chipFood : 0], CHIP_OFF + 4 + i * 4);
+    if (b.land) U.set([(b.land[0] - s.origin) * s.dpr, b.land[1] * s.dpr, b.land[2] * s.dpr, b.land[3]], CHIP_OFF + 4 + (NCH + i) * 4);
   });
 }
 // The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
@@ -3652,6 +3657,7 @@ function frame(now) {
       if (s.landK && qs.has('mlog')) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
       s.landK = false; // a landing bursts the agents on exactly one step
     }
+    for (const b of chips.bodies) { if (b.land && qs.has('mlog')) console.log('[land]', 'chip' + b.id, 'strength', b.land[3].toFixed(2)); b.land = null; }
   }
   if (steps === 2) acc = Math.min(acc, STEP);
   if (sim.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
