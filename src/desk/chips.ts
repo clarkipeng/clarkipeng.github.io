@@ -1,23 +1,63 @@
 // Potato chips the slime eats. Each chip is a thin curved shell of voxels (CN x CN columns, CL layers through its
-// thickness) on a saddle: a rigid body in the desk's one sim (physics.js) that falls, tumbles, bounces and rocks to rest on
+// thickness) on a saddle: a rigid body in the desk's one sim (physics.ts) that falls, tumbles, bounces and rocks to rest on
 // its curve, bumps other chips, and is thrown with the card box by a page turn. The slime eats only the voxels where it
 // touches the desk; as they go, its mass, centre of mass and support are recomputed from what is left, so it tips and
-// settles lower until nothing is left. Units: CSS px, seconds; z is height above the desk. The render (chip-render.js)
+// settles lower until nothing is left. Units: CSS px, seconds; z is height above the desk. The render (chip-render.ts)
 // draws the same shape analytically, so the voxels never show.
 
 export const CN = 40, CL = 3, NCH = 12, FEED = 16, DIST = 10; // columns per side, layers, bodies, slime grid size, mask b's range
 const NX = [-1, 0, -1, 1, 1, 0, 1, -1], NY = [0, -1, -1, -1, 0, 1, 1, 1], NW = [1, 1, Math.SQRT2, Math.SQRT2, 1, 1, Math.SQRT2, Math.SQRT2]; // a column's 8 neighbours: the 4 before it in scan order, then the 4 after
 const SOLID = 0.2; // a voxel holds (and is a contact point) while its density is above this
 
+import type { Body as PBody, World } from './physics.ts';
+
+// The tunables chips read (desk.ts T); see createChips.
+type ChipKey = 'chipThick' | 'chipCurl' | 'chipFold' | 'chipBend' | 'chipDrop' | 'chipSpin' | 'chipMass' | 'chipMu' | 'chipE' | 'chipDamp' |
+  'chipEat' | 'chipBand' | 'chipCrumbS' | 'chipCrumbs';
+export type ChipTunables = Record<ChipKey, number>;
+// A chip's outline and surface (makeShape).
+export interface Shape {
+  seed: number;
+  R: number;
+  B: number;
+  t: number;
+  sag: number;
+  bowl: number;
+  ca: number;
+  sa: number;
+  harm: number[];
+  warp: number[];
+  folds: number[];
+  bend: number;
+  tone: number;
+  hb: number;
+  hf: Float32Array; // set by the first body made on it
+  inside?: Uint8Array; // set by maskBytes
+}
+// The chip a body is part of (its pieces share it).
+export interface Chip {
+  seed: number;
+  region: number;
+  born: number;
+  hurry: number;
+  crumbles?: boolean;
+}
+// The slime under a chip, read back from the GPU (chip-render.ts).
+export interface Feed { cx: number; cy: number; h: number; v: Float32Array }
+// Where a body's shape is (props): its old body, or a pose to drop it at.
+interface Pose { x: ArrayLike<number>; q: ArrayLike<number>; R: Float64Array | null; v?: ArrayLike<number>; w?: ArrayLike<number> }
+// A card pushing chips (desk px).
+export interface Pusher { x: number; y: number; hw: number; hh: number; c: number; s: number; vx: number; vy: number }
+
 // ---------- shape ----------
-function rng(seed) {
+function rng(seed: number) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 // A chip's outline (radius by angle, a slightly oval, wavy rim) and its surface (a saddle, a little bowl, two slow warps,
 // one or two edges folded up).
-function makeShape(seed, R, thick, curl, fold = 1, bend = 0.8) {
-  const r = rng(seed), u = (a, b) => a + (b - a) * r(), ph = () => r() * 6.2832;
+function makeShape(seed: number, R: number, thick: number, curl: number, fold = 1, bend = 0.8): Shape {
+  const r = rng(seed), u = (a: number, b: number) => a + (b - a) * r(), ph = () => r() * 6.2832;
   const harm = [u(0.06, 0.13), ph(), u(0.03, 0.06), ph(), u(0.015, 0.035), ph(), u(0.008, 0.02), ph()];
   const sag = u(0.1, 0.16) * R * curl, bowl = u(-0.03, 0.03) * R * curl, ax = ph();
   const k = 6.2832 / (R * u(1.6, 2.6)), k2 = 6.2832 / (R * u(0.9, 1.4)), a1 = ph(), a2 = ph();
@@ -27,14 +67,14 @@ function makeShape(seed, R, thick, curl, fold = 1, bend = 0.8) {
   // over a width of bend times the distance to the rim, so there is never a crease.
   const folds = [0, 1].flatMap((i) => { const a = ph(), o = u(0.3, 0.6) * R; return [Math.cos(a), Math.sin(a), o, u(i ? 0 : 0.15, 0.32) * R * fold]; });
   const hb = sag + Math.abs(bowl) + warp[2] + warp[6] + folds[3] + folds[7] + thick;
-  return { seed, R, B, t: thick, sag, bowl, ca: Math.cos(ax), sa: Math.sin(ax), harm, warp, folds, bend, tone, hb };
+  return { seed, R, B, t: thick, sag, bowl, ca: Math.cos(ax), sa: Math.sin(ax), harm, warp, folds, bend, tone, hb } as Shape; // hf: set by Body
 }
-function outlineR(S, x, y) {
+function outlineR(S: Shape, x: number, y: number) {
   const th = Math.atan2(y, x), h = S.harm;
   return S.R * (1 + h[0] * Math.cos(2 * th + h[1]) + h[2] * Math.cos(3 * th + h[3]) + h[4] * Math.cos(4 * th + h[5]) + h[6] * Math.cos(5 * th + h[7]));
 }
 // Height of the mid-surface over (x, y), and its slope.
-function surf(S, x, y) {
+function surf(S: Shape, x: number, y: number) {
   const u = S.ca * x + S.sa * y, v = -S.sa * x + S.ca * y, R2 = S.R * S.R, w = S.warp;
   const p1 = w[0] * x + w[1] * y + w[3], p2 = w[4] * x + w[5] * y + w[7];
   const h = (S.sag * (u * u - v * v) + S.bowl * (x * x + y * y)) / R2 + w[2] * Math.sin(p1) + w[6] * Math.sin(p2);
@@ -52,8 +92,33 @@ function surf(S, x, y) {
 
 // ---------- a body ----------
 let nextId = 1;
-class Body {
-  constructor(S, chip) {
+export class Body {
+  // Fields set in the constructor or later (declare: no class field is emitted, so the object is built as before).
+  declare S: Shape;
+  declare chip: Chip;
+  declare id: number;
+  declare cell: number;
+  declare rs: number;
+  declare px: Float32Array;
+  declare py: Float32Array;
+  declare pz: Float32Array;
+  declare d: Float32Array;
+  declare crumb: Uint8Array;
+  declare stain: Float32Array;
+  declare mass0: number;
+  declare p: PBody; // its body in the shared sim: set by props once it has voxels
+  declare c: number[];
+  declare landed: boolean;
+  declare dirty: boolean;
+  declare cutT: number;
+  declare feed: Feed | null;
+  declare m: number;
+  declare foot: number;
+  declare edge: Float32Array;
+  declare box: [number[], number[]];
+  declare frozen?: boolean;
+  declare gone?: boolean;
+  constructor(S: Shape, chip: Chip) {
     this.S = S; this.chip = chip; this.id = nextId++;
     const n = CN * CN * CL, cell = (2 * S.B) / CN;
     this.cell = cell; this.rs = S.t / (2 * CL); // a voxel's half thickness
@@ -68,14 +133,14 @@ class Body {
         this.px[k] = x; this.py[k] = y; this.pz[k] = h + ((l + 0.5) / CL - 0.5) * S.t; this.d[k] = inside ? 1 : 0; this.mass0 += this.d[k];
       }
     }
-    this.p = null; this.c = [0, 0, 0]; this.landed = false; this.dirty = true; this.cutT = -1;
+    this.p = null!; this.c = [0, 0, 0]; this.landed = false; this.dirty = true; this.cutT = -1;
     this.feed = null; // the slime under it, read back from the GPU: { cx, cy, h, v: Float32Array(FEED * FEED) }
   }
-  // Its pose and motion are its body's in the shared sim (physics.js).
+  // Its pose and motion are its body's in the shared sim (physics.ts).
   get x() { return this.p.x; } get q() { return this.p.q; } get R() { return this.p.R; } get v() { return this.p.v; } get w() { return this.p.w; } get sleep() { return this.p.sleep; }
   // Mass, centre of mass, inertia and contact points from the voxels that are left, and its body in the shared sim made
   // again from them where `from` (its old body) was, so the shape stays where it is.
-  props(world, P, from = this.p) {
+  props(world: World, P: ChipTunables, from: Pose = this.p) {
     const { px, py, pz, d } = this;
     let m = 0, sx = 0, sy = 0, sz = 0;
     for (let k = 0; k < d.length; k++) { const w = d[k]; if (w <= 0) continue; m += w; sx += w * px[k]; sy += w * py[k]; sz += w * pz[k]; }
@@ -91,12 +156,12 @@ class Body {
     }
     this.foot = Math.sqrt(foot) + this.cell * 0.5;
     // Contact points: the outer faces of the rim's columns, and of every third column inside it.
-    const solid = Uint8Array.from({ length: CN * CN }, (_, ci) => this.colSolid(ci));
+    const solid = Uint8Array.from({ length: CN * CN }, (_, ci) => +this.colSolid(ci));
     // Its rim, for what hits it side on: each column's distance out past the edge of the solid ones (inside: negative), px.
     const din = chamfer(Float32Array.from(solid, (s) => (s ? 1e9 : 0))), dout = chamfer(Float32Array.from(solid, (s) => (s ? 0 : 1e9)));
     this.edge = Float32Array.from(solid, (s, ci) => (s ? 0.5 - din[ci] : dout[ci] - 0.5) * this.cell);
-    const col = (i, j) => i >= 0 && j >= 0 && i < CN && j < CN && solid[j * CN + i];
-    const pts = [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], xyz = [px, py, pz];
+    const col = (i: number, j: number) => i >= 0 && j >= 0 && i < CN && j < CN && solid[j * CN + i];
+    const pts: number[] = [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], xyz = [px, py, pz];
     for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
       if (!col(i, j)) continue;
       const rim = !col(i - 1, j) || !col(i + 1, j) || !col(i, j - 1) || !col(i, j + 1);
@@ -113,15 +178,15 @@ class Body {
     if (this.p) world.remove(this.p);
     this.c = c;
     const s = P.chipMass / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
-    this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(lo[i] - c[i]), Math.abs(hi[i] - c[i])))) + this.cell, sdf: (io) => this.sdf(io),
+    this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(lo[i] - c[i]), Math.abs(hi[i] - c[i])))) + this.cell, sdf: (io: Float64Array) => this.sdf(io),
       mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.chipMu, bounce: P.chipE, damp: P.chipDamp, x, q: from.q, v: from.v, w: from.w });
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
-  freeze(world) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
-  // Its shell, for what hits it: a point in its body's frame in, out its normal and distance (physics.js's sdf). Its
+  freeze(world: World) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
+  // Its shell, for what hits it: a point in its body's frame in, out its normal and distance (physics.ts's sdf). Its
   // surface and rim between the columns' centres, bilinear (it is called for every point near it, every step); a point
   // nearer the rim than either face goes out through the rim, so what comes at it edge on meets the edge.
-  sdf(io) {
+  sdf(io: Float64Array) {
     const S = this.S, u = (io[0] + this.c[0] + S.B) / this.cell - 0.5, v = (io[1] + this.c[1] + S.B) / this.cell - 0.5;
     if (u < -0.5 || v < -0.5 || u >= CN - 0.5 || v >= CN - 0.5) { io[3] = Infinity; return; }
     const i = Math.min(CN - 2, Math.max(0, Math.floor(u))), j = Math.min(CN - 2, Math.max(0, Math.floor(v))), a = clamp01(u - i), b = clamp01(v - j);
@@ -133,12 +198,12 @@ class Body {
     if (e > d) { const ex = (1 - b) * (e1 - e0) + b * (e3 - e2), ey = (1 - a) * (e2 - e0) + a * (e3 - e1), el = Math.hypot(ex, ey) || 1; io[0] = ex / el; io[1] = ey / el; io[2] = 0; io[3] = e; return; }
     io[0] = (-hx / l) * s; io[1] = (-hy / l) * s; io[2] = s / l; io[3] = d;
   }
-  colSolid(ci) { for (let l = 0; l < CL; l++) if (this.d[ci * CL + l] > SOLID) return true; return false; }
+  colSolid(ci: number) { for (let l = 0; l < CL; l++) if (this.d[ci * CL + l] > SOLID) return true; return false; }
   get solidCols() { let n = 0; for (let ci = 0; ci < CN * CN; ci++) if (this.colSolid(ci)) n++; return n; }
   // A body-frame point to the world.
-  toWorld(R, p) { const x = p[0] - this.c[0], y = p[1] - this.c[1], z = p[2] - this.c[2]; return [0, 3, 6].map((r, i) => this.x[i] + R[r] * x + R[r + 1] * y + R[r + 2] * z); }
+  toWorld(R: Float64Array, p: number[]) { const x = p[0] - this.c[0], y = p[1] - this.c[1], z = p[2] - this.c[2]; return [0, 3, 6].map((r, i) => this.x[i] + R[r] * x + R[r + 1] * y + R[r + 2] * z); }
   // The slime under a desk point (0 to 1), from the last read-back.
-  slime(x, y) {
+  slime(x: number, y: number) {
     const f = this.feed;
     if (!f) return 0;
     const u = clamp01((x - f.cx + f.h) / (2 * f.h)) * FEED - 0.5, v = clamp01((y - f.cy + f.h) / (2 * f.h)) * FEED - 0.5;
@@ -146,10 +211,10 @@ class Body {
     return (g[j * FEED + i] * (1 - a) + g[j * FEED + i + 1] * a) * (1 - b) + (g[(j + 1) * FEED + i] * (1 - a) + g[(j + 1) * FEED + i + 1] * a) * b;
   }
 }
-const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 // D (per column: 0 where a distance starts, else large) becomes each column's distance, in columns, to the nearest start:
 // two chamfer passes, forward from the neighbours before, back from those after.
-function chamfer(D) {
+function chamfer(D: Float32Array) {
   for (let p = 0; p < 2; p++) for (let n = 0; n < D.length; n++) {
     const k = p ? D.length - 1 - n : n, i = k % CN, j = (k - i) / CN;
     for (let q = p * 4; q < p * 4 + 4; q++) { const x = i + NX[q], y = j + NY[q]; if (x >= 0 && y >= 0 && x < CN && y < CN) D[k] = Math.min(D[k], D[y * CN + x] + NW[q]); }
@@ -158,15 +223,15 @@ function chamfer(D) {
 }
 
 // ---------- the chips ----------
-// P: the tunables (desk.js T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipDamp how fast
+// P: the tunables (desk.ts T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipDamp how fast
 // it stops rocking, chipEat eating speed, chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the
 // oldest chip over the cap.
-// world: () => the shared sim (physics.js) they fall, tumble and are thrown in.
-export function createChips(P, world) {
-  const bodies = [];
+// world: () => the shared sim (physics.ts) they fall, tumble and are thrown in.
+export function createChips(P: ChipTunables, world: () => World) {
+  const bodies: Body[] = [];
   let clock = 0;
 
-  function drop(x, y, R, seed, { region = 0, born = 0, still = false } = {}) {
+  function drop(x: number, y: number, R: number, seed: number, { region = 0, born = 0, still = false }: { region?: number; born?: number; still?: boolean } = {}) {
     const r = rng(seed ^ 0x51ed), W = world();
     const S = makeShape(seed, R, P.chipThick * (R / 31), P.chipCurl, P.chipFold, P.chipBend);
     const b = new Body(S, { seed, region, born, hurry: 1 });
@@ -189,9 +254,9 @@ export function createChips(P, world) {
   // centre and support, so it tips and settles lower. A body that comes apart becomes two (the crumbs are just eaten up).
   // The voxels are eaten every frame, so the edge creeps; remaking a body (props, split) is the costly part, so one body a
   // frame is remade, the one waiting longest, and a body at most every 0.05 s.
-  function eat(dt) {
-    const out = [], W = world();
-    let cut = null;
+  function eat(dt: number) {
+    const out: Body[] = [], W = world();
+    let cut: Body | null = null;
     for (const b of bodies) {
       if (!b.m) continue;
       const R = b.R, c = b.c, base = b.x[2] - (R[6] * c[0] + R[7] * c[1] + R[8] * c[2]);
@@ -219,7 +284,7 @@ export function createChips(P, world) {
         }
       }
       if (changed) b.dirty = true;
-      if (b.gone && !b.frozen && clock - b.cutT >= 0.05 && !(cut?.cutT <= b.cutT)) cut = b;
+      if (b.gone && !b.frozen && clock - b.cutT >= 0.05 && !(cut && cut.cutT <= b.cutT)) cut = b;
     }
     if (cut) {
       cut.gone = false; cut.cutT = clock;
@@ -230,13 +295,13 @@ export function createChips(P, world) {
     bodies.push(...out);
     for (const b of bodies.filter((b) => !b.d.some((v) => v > 0.004))) remove(b);
   }
-  function split(b, out) {
-    const comp = new Int16Array(CN * CN).fill(-1), sizes = [];
+  function split(b: Body, out: Body[]) {
+    const comp = new Int16Array(CN * CN).fill(-1), sizes: number[] = [];
     for (let s = 0; s < CN * CN; s++) {
       if (comp[s] >= 0 || !b.colSolid(s) || b.crumb[s]) continue;
       const id = sizes.length, st = [s]; comp[s] = id; let n = 0;
       while (st.length) {
-        const c = st.pop(); n++;
+        const c = st.pop()!; n++;
         const i = c % CN, j = (c / CN) | 0;
         for (const [a, bb] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) {
           if (a < 0 || bb < 0 || a >= CN || bb >= CN) continue;
@@ -251,26 +316,26 @@ export function createChips(P, world) {
     for (let id = 0; id < sizes.length; id++) {
       if (id === keep) continue;
       const big = sizes[id] >= P.chipCrumbs && bodies.length + out.length < NCH;
-      let nb = null;
+      let nb: Body | null = null;
       if (big) { // a piece of its own: the same shape and pose, only its own voxels
-        nb = Object.create(Body.prototype);
+        nb = Object.create(Body.prototype) as Body;
         Object.assign(nb, { ...b, id: nextId++, p: null, d: new Float32Array(b.d.length), crumb: new Uint8Array(CN * CN), stain: b.stain.slice(), c: [...b.c] });
       }
       for (let ci = 0; ci < CN * CN; ci++) {
         if (comp[ci] !== id) continue;
         if (!big) { b.crumb[ci] = 1; continue; }
-        for (let l = 0; l < CL; l++) { const k = ci * CL + l; nb.d[k] = b.d[k]; b.d[k] = 0; }
+        for (let l = 0; l < CL; l++) { const k = ci * CL + l; nb!.d[k] = b.d[k]; b.d[k] = 0; }
       }
       // what is not part of any piece (partly eaten voxels below SOLID) stays with the body it was in
       if (nb) { nb.props(world(), P, b.p); if (nb.p) out.push(nb); }
     }
     if (out.length) b.id = nextId++; // a new id draws it afresh in the frame its pieces first show, so no piece shows twice
   }
-  function remove(b) { world().remove(b.p); bodies.splice(bodies.indexOf(b), 1); }
+  function remove(b: Body) { world().remove(b.p); bodies.splice(bodies.indexOf(b), 1); }
 
   // Cards (pushers: { x, y, hw, hh, c, s, vx, vy } in desk px) shove the chips down on the desk out from under them, at least
   // as fast as the card moves. A chip's pushes add, so one wedged between two cards settles where they balance.
-  function push(pushers) {
+  function push(pushers: Pusher[]) {
     for (const b of bodies) {
       const r = b.foot;
       if (b.frozen || b.x[2] - b.S.hb > r * 0.5) continue;
@@ -292,7 +357,7 @@ export function createChips(P, world) {
   }
 
   // After the sim has advanced: a chip's first touch is its landing; then eating.
-  function step(dt, eatOn) {
+  function step(dt: number, eatOn: boolean) {
     for (const b of bodies) if (!b.frozen && b.p.touch) b.landed = true;
     clock += dt;
     if (eatOn) eat(dt);
@@ -302,7 +367,7 @@ export function createChips(P, world) {
   // The eaten field (r: how much of the column's thickness is left, g: slime stain, b: how far past what is left, in DIST
   // columns), r dilated one column past the rim so the analytic outline, not the voxels, decides the edge. b makes the
   // eaten edge a true distance, so the soft shadow fades away from it instead of veiling the eaten part.
-  function maskBytes(b, out) {
+  function maskBytes(b: Body, out: Uint8Array) {
     const N = CN * CN, m = new Float32Array(N), D = new Float32Array(N), S = b.S;
     if (!S.inside) { S.inside = new Uint8Array(N); for (let ci = 0; ci < N; ci++) S.inside[ci] = outlineR(S, b.px[ci * CL], b.py[ci * CL]) - Math.hypot(b.px[ci * CL], b.py[ci * CL]) > 0 ? 1 : 0; } // the outline never changes
     for (let ci = 0; ci < N; ci++) { let s = 0; for (let l = 0; l < CL; l++) s += b.d[ci * CL + l]; m[ci] = s / CL; D[ci] = m[ci] >= 0.5 && S.inside[ci] ? 0 : 1e9; }
@@ -316,7 +381,7 @@ export function createChips(P, world) {
     return out;
   }
   // Screen bounds of a body (desk px): its voxels' box, turned and moved.
-  function rect(b) {
+  function rect(b: Body) {
     const R = b.R, [lo, hi] = b.box, pad = b.S.t + b.cell;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const X of [lo[0] - pad, hi[0] + pad]) for (const Y of [lo[1] - pad, hi[1] + pad]) for (const Z of [lo[2] - pad, hi[2] + pad]) {
@@ -325,7 +390,7 @@ export function createChips(P, world) {
     return [x0, y0, x1, y1];
   }
   // Its lowest and highest point above the desk, the same way.
-  function zspan(b) {
+  function zspan(b: Body) {
     const R = b.R, [lo, hi] = b.box, pad = b.S.t;
     let z0 = Infinity, z1 = -Infinity;
     for (const X of [lo[0], hi[0]]) for (const Y of [lo[1], hi[1]]) for (const Z of [lo[2] - pad, hi[2] + pad]) { const z = b.toWorld(R, [X, Y, Z])[2]; z0 = Math.min(z0, z); z1 = Math.max(z1, z); }

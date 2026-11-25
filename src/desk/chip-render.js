@@ -4,7 +4,7 @@
 // the resting cards (at each pixel, the lowest chip first) and under any lifted one, so a frame costs only what changed.
 // A second small pass reads the slime under each chip back to the physics, which eats only where it is.
 
-import { CN, NCH, FEED, DIST } from './chips.js';
+import { CN, NCH, FEED, DIST } from './chips.ts';
 
 const BODY_VEC4 = 14, HEAD_VEC4 = 6, G = 40; // a chip's mesh: G x G quads
 const NP = 64, NT = 4; // the noise: a lattice NP cells around, wrapping, NT texels a cell

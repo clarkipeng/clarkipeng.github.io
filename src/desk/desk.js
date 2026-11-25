@@ -12,7 +12,7 @@
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
 import { clips, mediaUrl } from 'virtual:desk-media';
-import { createChips, NCH } from './chips.js';
+import { createChips, NCH } from './chips.ts';
 import { createChipRenderer } from './chip-render.js';
 import { createWorld, boxShape } from './physics.ts';
 import { createCurl } from './curl.ts';
