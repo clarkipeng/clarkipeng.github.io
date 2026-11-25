@@ -916,8 +916,15 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
         let vuv = g.vu.xy + mu * g.vu.zw;
         // Video YUV->RGB can land slightly outside [0, 1] (limited-range blacks); pow() of a negative is undefined and
         // showed up as inverted colors. Clamp each frame, then crossfade in linear light.
-        let ra = textureSampleBaseClampToEdge(vidA, samp, vuv).rgb;
-        let rb = textureSampleBaseClampToEdge(vidB, samp, vuv).rgb;
+        // A video has no mipmaps, so one tap aliases its grain when shrunk; average four bilinear taps across the
+        // device pixel's footprint (q / scale local units) so a clip downsamples as smoothly as the stills do.
+        let o = 0.25 * g.vu.zw * q / (max(c.misc.x, 1e-3) * (c.media.zw - c.media.xy) * 2.0 * c.geo.xy);
+        var ra = vec3f(0.0); var rb = vec3f(0.0);
+        for (var i = 0; i < 4; i++) {
+          let t = vuv + o * vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1) * 2.0 - 1.0);
+          ra += 0.25 * textureSampleBaseClampToEdge(vidA, samp, t).rgb;
+          rb += 0.25 * textureSampleBaseClampToEdge(vidB, samp, t).rgb;
+        }
         let la = pow(clamp(ra, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
         let lb = pow(clamp(rb, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
         cc = mix(cc, mix(la, lb, clamp(g.v.z, 0.0, 1.0)), clamp(g.v.y, 0.0, 1.0));
@@ -2044,14 +2051,13 @@ function shove(p) {
     b.vx = b.vy = 0;
   }
 }
-// A shoved (or tidied) card slides out with an ease-out (chained cards a beat later) and lands, harder the further it went.
+// A shoved card slides out with an ease-out (chained cards a beat later) and just stops: only the card you drop bursts.
 function stepShove(s, dt) {
   const v = s.shove;
   v.t += dt;
   const e = easeOutQuart(clamp(v.t / v.dur));
   s.x = v.fx + (v.tx - v.fx) * e; s.y = v.fy + (v.ty - v.fy) * e;
-  if (v.tr !== undefined) s.rot = v.fr + (v.tr - v.fr) * e; // tidy turns it home too
-  if (v.t >= v.dur) { s.shove = null; land(s, clamp(0.15 + v.dist / (300 * view.k), 0.1, 0.7)); placeDom(s); }
+  if (v.t >= v.dur) { s.shove = null; if (s.rel < 0) s.rel = 0; placeDom(s); }
 }
 
 

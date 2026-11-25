@@ -1,13 +1,9 @@
 {
   "slime": {
     "poster": "slime-poster.jpg",
+    "cover": "slime-poster.jpg",
     "clips": [
-      {
-        "src": "slime-01.mp4",
-        "start": 4.5042
-      },
-      "slime-02.mp4",
-      "slime-03.mp4"
+      "slime-cinematic.mp4"
     ]
   },
   "vp2": {
@@ -36,17 +32,18 @@
     "poster": "ray-poster.jpg",
     "cover": "ray-cover.jpg",
     "clips": [
-      "ray-01.mp4",
+      {
+        "src": "ray-01.mp4",
+        "start": 2.0
+      },
       "ray-02.mp4"
     ]
   },
   "rl": {
     "poster": "rl-poster.jpg",
+    "cover": "rl-cover.jpg",
     "clips": [
-      {
-        "src": "rl-01.mp4",
-        "start": 4.0042
-      },
+      "rl-01.mp4",
       "rl-02.mp4",
       "rl-03.mp4"
     ]
