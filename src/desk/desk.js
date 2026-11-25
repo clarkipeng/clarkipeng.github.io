@@ -1194,6 +1194,7 @@ function layout() {
       if (!capped(s)) Object.assign(s, fitCard(s, w, full));
       s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
+      if (hinged(s)) y += Math.max(0, s.h - 2 * STRIP - 16); // turned over, the note lies above its strip: leave it room
       s.py = y + s.h / 2; y += s.h + 30;
     }
     view.cardsH = y;
