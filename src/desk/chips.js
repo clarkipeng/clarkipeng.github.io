@@ -90,16 +90,17 @@ class Body {
     }
     this.foot = Math.sqrt(foot) + this.cell * 0.5;
     // Contact points: the outer faces of the rim's columns, and of every third column inside it.
-    const col = (i, j) => i >= 0 && j >= 0 && i < CN && j < CN && this.colSolid(j * CN + i);
-    const pts = [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    const solid = Uint8Array.from({ length: CN * CN }, (_, ci) => this.colSolid(ci));
+    const col = (i, j) => i >= 0 && j >= 0 && i < CN && j < CN && solid[j * CN + i];
+    const pts = [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], xyz = [px, py, pz];
     for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
       if (!col(i, j)) continue;
       const rim = !col(i - 1, j) || !col(i + 1, j) || !col(i, j - 1) || !col(i, j + 1);
       for (let l = 0; l < CL; l++) {
-        const k = (j * CN + i) * CL + l, p = [px[k], py[k], pz[k]];
+        const k = (j * CN + i) * CL + l;
         if (d[k] <= SOLID) continue;
-        if ((l === 0 || l === CL - 1) && (rim || (i % 3 === 0 && j % 3 === 0))) pts.push(p[0] - c[0], p[1] - c[1], p[2] - c[2] + (l ? this.rs : -this.rs));
-        for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], p[a]); hi[a] = Math.max(hi[a], p[a]); }
+        if ((l === 0 || l === CL - 1) && (rim || (i % 3 === 0 && j % 3 === 0))) pts.push(px[k] - c[0], py[k] - c[1], pz[k] - c[2] + (l ? this.rs : -this.rs));
+        for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], xyz[a][k]); hi[a] = Math.max(hi[a], xyz[a][k]); }
       }
     }
     if (!pts.length) return this.freeze(world); // nothing left to stand on: it stays put while the last of it goes
