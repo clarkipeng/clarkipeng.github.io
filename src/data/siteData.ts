@@ -1,8 +1,6 @@
 export const siteConfig = {
   name: 'Clark Peng',
   wordmark: 'CLARK PENG',
-  title: 'CS at UCLA, previously CTO at',
-  company: { name: 'Catapult', url: 'https://playcatapult.io' },
   website: 'https://clarkipeng.github.io',
   resumeUrl: '/files/ClarkPengResearchResume.pdf',
   avatarUrl: '/images/clark-peng-profile.jpg',
@@ -10,45 +8,33 @@ export const siteConfig = {
 
 export const socialLinks = [
   {
-    type: 'x',
     label: 'X',
     href: 'https://x.com/clarkipeng',
-    username: 'clarkipeng',
   },
   {
-    type: 'linkedin',
     label: 'LinkedIn',
     href: 'https://www.linkedin.com/in/clarkpeng',
-    username: 'clarkpeng',
   },
   {
-    type: 'scholar',
     label: 'Scholar',
     href: 'https://scholar.google.com/citations?user=H2pCsDkAAAAJ&hl=en',
   },
   {
-    type: 'github',
     label: 'GitHub',
     href: 'https://github.com/clarkipeng',
-    username: 'clarkipeng',
   },
   {
-    type: 'kaggle',
     label: 'Kaggle',
     href: 'https://kaggle.com/werus23',
-    username: 'werus23',
   },
   {
-    type: 'itch',
     label: 'Itch.io',
     href: 'https://werus23.itch.io',
-    username: 'werus23',
   },
 ];
 
 export const navigation = [
   { label: 'Home', href: '/' },
-  { label: 'Gadgets', href: '/portfolio' },
   { label: 'Papers', href: '/publications' },
   { label: 'Resume', href: '/resume' },
 ];
@@ -62,37 +48,34 @@ export const aboutParagraphs = [
 
 export const portfolioProjects = [
   {
-    id: 1,
     title: '3D Slime Simulation',
     description: 'A real-time 3D slime mold simulation that grows dense, branching organic patterns.',
-    images: ['/images/Slime3D_Shot.webp', '/images/Slime3D_Shot1.webp', '/images/Slime3D_Shot2.webp'],
-    tags: ['Simulation', 'GPU', 'Unity'],
     year: '2025',
-    featured: true,
     links: [
       { label: 'Repository', href: 'https://github.com/clarkipeng/SlimeSim3D/' },
       { label: 'Video', href: 'https://youtu.be/nurGFZYDcag' },
     ],
   },
   {
-    id: 2,
-    title: '4D Fruit Merging Game',
+    title: '4D Suika',
     description: 'A playable 4D puzzle game that makes impossible geometry feel tangible.',
-    images: ['/images/gameImage.webp'],
-    tags: ['OpenGL', 'C++', 'Game'],
     year: '2025',
-    featured: true,
     links: [
       { label: 'Repository', href: 'https://github.com/clarkipeng/4dsuika' },
       { label: 'Itch.io', href: 'https://werus23.itch.io/4d-suika' },
     ],
   },
   {
-    id: 4,
+    title: 'Sine Oculus',
+    description: 'A 72-hour game jam game played in the dark: tapping your stick sends out sound that draws the room.',
+    year: '2025',
+    links: [
+      { label: 'Itch.io', href: 'https://lanzalot.itch.io/sine-oculus' },
+    ],
+  },
+  {
     title: 'Event Detection via PDF Regression',
     description: 'A smoother way to find clean event boundaries in noisy time-series data.',
-    images: ['/images/PDFR.gif'],
-    tags: ['Research', 'Time Series', 'ML'],
     year: '2024',
     links: [
       { label: 'Repository', href: 'https://github.com/clarkipeng/EventDetectionPDF' },
@@ -100,22 +83,16 @@ export const portfolioProjects = [
     ],
   },
   {
-    id: 5,
     title: 'RL Arm Targeting Agent',
     description: 'A small physics scene where a learned arm picks up objects and throws them at targets.',
-    images: ['/images/RLHandTarget.webp'],
-    tags: ['RL', 'Unity', 'ML-Agents'],
     year: '2022',
     links: [
       { label: 'Repository', href: 'https://github.com/clarkipeng/RLHandTargetProject' },
     ],
   },
   {
-    id: 6,
     title: 'Raytracer from Scratch',
     description: 'A from-scratch renderer for experimenting with light, sound, and noisy physical scenes.',
-    images: ['/images/raytracer-two-mirrors.mp4', '/images/raytracer.jpeg'],
-    tags: ['C++', 'Graphics', 'Raytracing'],
     year: '2022',
     links: [
       { label: 'Repository', href: 'https://github.com/clarkipeng/RayTraceModel' },
@@ -125,66 +102,43 @@ export const portfolioProjects = [
 
 export const publications = [
   {
-    id: 1,
     title: 'VideoPhy-2: A Challenging Action-Centric Physical Commonsense Evaluation in Video Generation',
     authors: 'Hritik Bansal, Clark Peng, Yonatan Bitton, Roman Goldenberg, Aditya Grover, Kai-Wei Chang',
     venue: 'ICLR 2026; Best Paper at ICML 2025 World Models Workshop',
     date: '2026-04-26',
     paperUrl: 'https://arxiv.org/abs/2503.06800',
-    links: [
-      { label: 'arXiv', href: 'https://arxiv.org/abs/2503.06800' },
-      { label: 'Project', href: 'https://videophy2.github.io/' },
-    ],
     abstract: 'A benchmark for whether generated videos obey everyday physical cause and effect.',
   },
   {
-    id: 4,
     title: 'Cross-Lingual Alignment for Decoder-Only Models using MoE Routers',
     authors: 'Lucas Bandarkar, Clark Peng, Ahmed Haj Ahmed, Aditi Khandelwal, Nanyun Peng',
     venue: 'arXiv 2026',
     date: '2026-10-01',
     paperUrl: 'https://arxiv.org/abs/2610.01921',
-    links: [
-      { label: 'arXiv', href: 'https://arxiv.org/abs/2610.01921' },
-    ],
     abstract: 'Aligning languages inside decoder-only LLMs by matching their mixture-of-experts router outputs, which improves multilingual performance.',
   },
   {
-    id: 2,
     title: 'DialectGen: Benchmarking and Improving Dialect Robustness in Multimodal Generation',
     authors: 'Yu Zhou, Sohyun An, Haikang Deng, Da Yin, Clark Peng, Cho-Jui Hsieh, Kai-Wei Chang, Nanyun Peng',
     venue: 'ResponsibleFM @ NeurIPS 2025',
     date: '2025-10-16',
     paperUrl: 'https://arxiv.org/abs/2510.14949',
-    links: [
-      { label: 'arXiv', href: 'https://arxiv.org/abs/2510.14949' },
-    ],
     abstract: 'A study of how image and video models handle English dialects, plus ways to make them fairer.',
   },
   {
-    id: 5,
     title: 'Variable-Rate Harmonic-Percussive Time-Scale Modification with Real-Time Playback in Python',
     authors: 'Sayema Lubis, Clark Peng, Jared Carreño, TJ Tsai',
     venue: 'arXiv 2026',
     date: '2026-07-20',
     paperUrl: 'https://arxiv.org/abs/2609.18999',
-    links: [
-      { label: 'arXiv', href: 'https://arxiv.org/abs/2609.18999' },
-      { label: 'Code', href: 'https://github.com/HMC-MIR/TSMRealTime' },
-    ],
     abstract: 'Real-time audio time stretching in Python, with a playback rate that can change every frame to follow a live performer.',
   },
   {
-    id: 3,
     title: 'Boundary Density Likelihood for Direct Event-Time Supervision',
     authors: 'Clark Peng, Tolga Dincer',
     venue: 'arXiv 2024',
     date: '2024-08-23',
     paperUrl: 'https://arxiv.org/abs/2408.12792',
-    links: [
-      { label: 'arXiv', href: 'https://arxiv.org/abs/2408.12792' },
-      { label: 'PDF', href: '/files/EDPDFR.pdf' },
-    ],
     abstract: 'A way to find event boundaries by predicting where changes are most likely to happen.',
   },
 ];

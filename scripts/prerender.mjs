@@ -3,7 +3,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const ssrDir = 'dist-ssr';
-const { pages, render, renderHead, llmsText } = await import(pathToFileURL(`${ssrDir}/entry-server.js`).href);
+const { pages, redirects, render, renderHead, llmsText } = await import(pathToFileURL(`${ssrDir}/entry-server.js`).href);
 const template = readFileSync('dist/index.html', 'utf8');
 const site = 'https://clarkipeng.github.io';
 
@@ -14,8 +14,20 @@ for (const { path } of pages) {
   writeFileSync(path === '/' ? 'dist/index.html' : `dist${path}.html`, html);
 }
 
+// Old addresses: a tiny page that replaces itself with the new one before anything loads (crawlers get the canonical).
+for (const { path, to } of redirects) {
+  const url = to === '/' ? site : site + to;
+  writeFileSync(`dist${path}.html`, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Clark Peng</title>
+<meta name="robots" content="noindex"><link rel="canonical" href="${url}">
+<meta http-equiv="refresh" content="0; url=${to}">
+<script>location.replace(${JSON.stringify(to)} + location.search);</script>
+</head><body><a href="${to}">Clark Peng</a></body></html>
+`);
+}
+
 const urls = pages.map(({ path }) => `  <url><loc>${path === '/' ? site : site + path}</loc></url>`).join('\n');
 writeFileSync('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`);
 writeFileSync('dist/llms.txt', llmsText());
 rmSync(ssrDir, { recursive: true, force: true });
-console.log(`prerendered ${pages.length} pages`);
+console.log(`prerendered ${pages.length} pages and ${redirects.length} redirects`);
