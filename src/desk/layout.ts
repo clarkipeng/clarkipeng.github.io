@@ -1,5 +1,5 @@
 import { currentDesk, type Desk } from './state.ts';
-import { POSTCARD, PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER, CORNER } from './tunables.ts';
+import { PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER, CORNER } from './tunables.ts';
 import type { Patch } from './cards.ts';
 import { type Chain, NS } from './note.ts';
 import type { Body as PBody } from './physics.ts';
@@ -53,7 +53,7 @@ export interface Card {
   backLinks: HTMLAnchorElement[] | null; flip: number; flipTo: number; face: number; deck: Card | null;
   frame: number[]; baseFrame: number[]; focus: number[] | null;
   slot: { x: number; y: number; w: number; r: number } | null; baseW: number; order: number; more: boolean; lid: boolean;
-  overflow: boolean; aspect: number; shape: number;
+  overflow: boolean; shape: number;
   x: number; y: number; w: number; h: number; rot: number; home: number; vx: number; vy: number; lift: number; liftV: number;
   tilt: number[]; tiltV: number[]; sway: number; swayV: number;
   hover: number; hoverOn: boolean; burst: number; z: number; dragging: boolean; released: boolean;
@@ -111,7 +111,7 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
   const d = el.dataset;
   const [sx, sy, sw, sr] = (d.slot || `0,0,${d.w || 260},0`).split(',').map(Number); // no slot: an overflow card
   const backEl = el.querySelector<HTMLElement>('.back');
-  const kind = ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo';
+  const kind = ['deck', 'note', 'paper'].find((k) => el.classList.contains(k)) || 'photo';
   return {
     id, el, hit: el.querySelector<HTMLElement>('.hit')!, img: el.querySelector('img'), key: d.key, kind,
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
@@ -125,7 +125,7 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: Number(d.order), more: el.classList.contains('more'), lid: el.classList.contains('lid'),
-    overflow: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap
+    overflow: !d.slot && !el.classList.contains('deck'), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap
     videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
@@ -168,7 +168,7 @@ function noteProfile(s: Card) {
   return NOTE_P;
 }
 const boxSize = (s: Card): [number, number] => { const p = desk.pageDeck(s.region)!.room; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
-function cardBox(s: Card, w: number, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)): CardBox {
+function cardBox(s: Card, w: number, h = 0): CardBox {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
@@ -178,16 +178,16 @@ function cardBox(s: Card, w: number, h = s.kind === 'polaroid' || s.kind === 'no
     const lines = wrapLines(s.hit.querySelector('b')!.textContent!, w - 39, '600 16px Inter'); // a paper card has its title and venue
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small')!.textContent! };
   }
-  const { side, top, bottom } = borders(s, w, Math.max(w, h || w / s.shape));
-  if (s.kind === 'polaroid' && !h) h = top + (w - 2 * side) / s.aspect + bottom; // phones: its picture at its own aspect
+  const { side, top, bottom } = borders(s, w, Math.max(w, h));
   const media = { x: side, y: top, w: w - 2 * side, h: h - top - bottom };
   const cap = capLines(s, w - 2 * side), baseline = media.y + media.h + (bottom - cap.lines.length * CAP_LH()) / 2 + CAP_LH() / 2 + 4.5 * desk.TS;
   return { w, h, media, ...cap, baseline };
 }
-// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or the polaroid's one line.
+// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or its one line (.hand).
 const CAP_LH = () => 18 * desk.TS;
 function capLines(s: Card, tw: number): { lines: string[]; titled?: boolean } {
-  if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand')!.textContent!] }; // a photo card has its caption
+  const hand = s.el.querySelector('.hand');
+  if (hand) return { lines: [hand.textContent!] };
   const title = s.el.querySelector('.cap b')!.textContent!, sub = s.el.querySelector('.cap span')!.textContent!;
   return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
 }
@@ -204,7 +204,7 @@ function borders(s: Card, w: number, L: number) {
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
 // the one card size.)
 const CARD_MAX = 280; // design px at 1440x900; scales with the desk
-const capped = (s: Card) => s.kind === 'photo' || s.kind === 'polaroid';
+const capped = (s: Card) => s.kind === 'photo';
 const cappedDims = (s: Card, cap: number): [number, number] => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
 // Each page's pile, upright: as wide as its widest card's short side and as tall as its longest long side (design px).
 function pileSizes() {
@@ -213,23 +213,11 @@ function pileSizes() {
     d.room = { pw: Math.max(1, ...cards.map((s) => Math.min(s.w, s.h) / k)), ph: Math.max(1, ...cards.map((s) => Math.max(s.w, s.h) / k)) };
   }
 }
-// The polaroid and the note keep their own shapes, one size for both faces: the front's own size when the back's copy
-// fits on it at the shared type scale; otherwise the polaroid becomes the smallest card (up to maxW wide) that fits it,
-// its image cropped (cover framing) to at most 25% wider or taller than its own aspect, and the note grows taller.
-function fitCard(s: Card, w0: number, maxW = Math.round(w0 * 1.5), loose = false) {
-  const box = cardBox(s, w0), need = s.backEl ? desk.backLayout(s, box, loose).need : 0;
-  if (need <= box.h) return box;
-  if (!s.media) return { ...box, h: need };
-  let best: CardBox | null = null;
-  for (let w = w0; w <= maxW; w += 2) {
-    const b = cardBox(s, w), chrome = b.h - b.media!.h, mw = b.media!.w; // a card with media has it at every width
-    const mh = Math.max(desk.backLayout(s, b).need - chrome, mw / (s.aspect * 1.25));
-    if (mh > (mw * 1.25) / s.aspect) continue; // the image would be cropped too narrow
-    if (!best || w * (chrome + mh) < best.w * best.h) best = { ...b, h: chrome + mh, media: { ...b.media!, h: mh } };
-  }
-  if (best) return best;
-  const b = cardBox(s, maxW), extra = desk.backLayout(s, b).need - b.h; // last resort: as wide as allowed, then taller
-  return extra > 0 ? { ...b, h: b.h + extra, media: { ...b.media!, h: b.media!.h + extra } } : b;
+// The note keeps its own shape, one size for both faces: the front's own size when the back's copy fits on it at the
+// shared type scale; otherwise it grows taller.
+function fitCard(s: Card, w: number, loose = false) {
+  const box = cardBox(s, w), need = s.backEl ? desk.backLayout(s, box, loose).need : 0;
+  return need <= box.h ? box : { ...box, h: need };
 }
 let measureCtx: OffscreenCanvasRenderingContext2D | null = null;
 const measure = () => (measureCtx ||= new OffscreenCanvas(8, 8).getContext('2d')!);
@@ -261,7 +249,7 @@ function layout() {
     // deck and on the desk, and keeps the layout's composition (slots are fractions of the desk).
     const c = clamp(T.cardScale, 0.6, 1);
     desk.TS = 1; // the sizes are the full-scale ones
-    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c), undefined, true)])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
+    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c), true)])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
     desk.TS = Math.max(1, 12 / (TOK.fs * c)); desk.view.cs = c;
     // The longest side (design px) scales with the desk like the layout, but never below the smallest at which every back fits.
     const fitsAt = (cp: number) => sources.every((s) => !capped(s) || !s.backEl || ((b: CardBox) => desk.backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
@@ -291,7 +279,7 @@ function layout() {
     for (const [i, s] of order.entries()) {
       if (s.region && !desk.view.labelY) { desk.view.labelY = y + 10; y += 56; } // research becomes a section further down
       const w = Math.round(s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
-      if (!capped(s)) Object.assign(s, fitCard(s, w, full));
+      if (!capped(s)) Object.assign(s, fitCard(s, w));
       s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       if (hinged(s)) y += Math.max(0, s.h - 2 * STRIP - 16); // turned over, the note lies above its strip: leave it room

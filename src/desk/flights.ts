@@ -189,7 +189,7 @@ function endFlights(region: number | null = null) {
 // page into it, or deals them all when none are on the desk; a card dropped on it goes in on top. Enter deals,
 // Shift+Enter gathers or deals; on an empty box, double-click or Enter gathers.
 const pageDeck = (r: number) => sources.find((s) => s.more && s.region === r);
-const decked = (s: Card) => s.kind !== 'deck'; // every card on a page goes in its box: the projects, the polaroid and the note
+const decked = (s: Card) => s.kind !== 'deck'; // every card on a page goes in its box: the photo cards and the note
 const onDesk = (r: number) => sources.filter((o) => o.region === r && decked(o) && !o.deck && !o.dragging); // (cards being dealt too)
 let deckTimer = 0;
 function deckClick(deck: Card, e: MouseEvent | KeyboardEvent) {

@@ -9,8 +9,7 @@ type Ctx = OffscreenCanvasRenderingContext2D;
 // ---------- card backs ----------
 // The back of a card: type alone, with a hand-drawn underline under each link; the sticky note's links are handwritten in
 // Caveat. Every back uses one type scale and an 8px spacing grid, and its first baseline sits 32px below its top edge.
-// Material follows the front: paper cards stay paper, the polaroid's back is matte photo-paper stock, the note stays
-// yellow. Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
+// Material follows the front: paper cards stay paper, photo cards their film's stock, the note stays yellow. Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
 
 // A back's layout: its lines of copy, its links, and how tall it needs to be (need).
 type Link = ReturnType<Desk['linkAt']>;
@@ -139,7 +138,7 @@ function paintLid(x: Ctx, s: Card, S: number, outside: boolean) {
 function drawCard(s0: Card, S0: number) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d')!;
-  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
+  x.fillStyle = STOCK(s.kind);
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, cw, STRIP * S); } // the sticky strip is a touch darker
@@ -155,7 +154,7 @@ function drawCard(s0: Card, S0: number) {
   }
   x.scale(S, S);
   x.textBaseline = 'alphabetic';
-  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or the polaroid's line centered
+  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or its one line centered
     s.lines!.forEach((l, i) => {
       const last = i === s.lines!.length - 1;
       x.font = font(s.titled ? (last ? 400 : 600) : 500); x.fillStyle = s.titled ? (last ? TOK.muted : TOK.text) : TOK.body;
@@ -174,7 +173,7 @@ function drawCard(s0: Card, S0: number) {
   }
   return { canvas: c, mediaPx };
 }
-const STOCK = (kind: string) => ({ photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // a photo card's back is its film's stock (read when drawn: the colors are tunable)
+const STOCK = (kind: string) => ({ photo: TOK.film, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // both faces (read when drawn: the colors are tunable)
 const TYPE = { // read when drawn: the type follows TS
   get body() { return { font: font(400), lh: 19 * desk.TS, color: TOK.body }; }, // the copy sits 1 px closer than the front's
   get link() { return { font: font(500), color: TOK.inkDeep }; },
@@ -240,7 +239,7 @@ function backText(s: Card, b: CardBox, stamp: [number, number] | null): BackLayo
 
 // Deterministic noise, so the atlas looks the same on every build.
 function rng(seed: number) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
-// Matte stock: a faint, fine grain (photo-paper backs and the note).
+// Matte stock: a faint, fine grain (the note).
 function grain(x: Ctx, cw: number, ch: number, amt: number, seed: number) {
   const img = x.getImageData(0, 0, cw, ch), d = img.data, r = rng(seed);
   for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * amt; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
@@ -263,7 +262,6 @@ function drawBack(s0: Card, S0: number) {
   const cw = Math.ceil(s0.w * S0), chh = Math.ceil(s0.h * S0);
   const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true })!;
   x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, cw, chh);
-  if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
@@ -324,7 +322,7 @@ function renderEntries(g: Gpu, sm: Sim, extra: GPUBindGroupEntry[] = []) {
 function paintPlainBack(s: Card, S: number) {
   const cs = desk.view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d')!;
-  x.scale(S, S); x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
+  x.scale(S, S); x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, w, h); // the note's yellow
   if (hinged(s)) { x.translate(w, h); x.rotate(Math.PI); } // the note is seen turned over its top edge, not its side
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
