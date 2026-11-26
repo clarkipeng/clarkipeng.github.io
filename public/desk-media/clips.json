@@ -60,5 +60,12 @@
       "sine-01.mp4",
       "sine-02.mp4"
     ]
+  },
+  "arena": {
+    "poster": "arena-poster.jpg",
+    "cover": "arena-cover.jpg",
+    "clips": [
+      "arena-01.mp4"
+    ]
   }
 }
