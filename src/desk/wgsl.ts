@@ -196,6 +196,8 @@ fn rnd() -> f32 { rs = pcg(rs); return f32(rs >> 8u) / 16777216.0; }
 fn wrap(p: vec2f) -> vec2f { return p - floor(p / g.a.xy) * g.a.xy; }
 fn eAt(p: vec2f) -> f32 { return textureLoad(etex, clamp(vec2i(p * 0.5), vec2i(0), vec2i(textureDimensions(etex)) - 1), 0).r; }
 fn dir(a: f32) -> vec2f { return vec2f(cos(a), sin(a)); }
+// Turn heading a toward b by the share k (0: unchanged, 1: b), the short way round.
+fn toward(a: f32, b: f32, k: f32) -> f32 { return a + k * atan2(sin(b - a), cos(b - a)); }
 fn ridge(d: f32, at: f32) -> f32 { let b = (d - at) / g.x.z; return exp(-b * b); }
 // Heading straight out through the nearest edge of card c's contact patch from p (under it or just outside it).
 fn outward(c: Card, p: vec2f) -> f32 {
@@ -286,13 +288,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // they carry its ink out along the network, and inks mix like dye where the veins meet.
     if (c.ink.w > 0.02 && distance(pos, c.flat.xy) < c.bound.x + 24.0 * g.a.w && rnd() < 0.3 * c.ink.w && cardSd(k, pos) < 24.0 * g.a.w) { tag = f32(k); }
     if (c.bound.z > 0.5 && patchSd(c, pos) < g.x.w) {
-      ang = outward(c, pos) + (rnd() - 0.5) * 1.2;
-      puff = max(puff, c.inv2.w * (0.8 + 0.2 * rnd()));
+      let k = c.inv2.w * (0.8 + 0.2 * rnd());
+      ang = toward(ang, outward(c, pos) + (rnd() - 0.5) * 1.2, k); puff = max(puff, k); // a soft landing barely turns them
     }
   }
   for (var ci = 0u; ci < u32(g.ch.x); ci++) { // a chip's patch landing: out from its middle
     let l = g.chipf[${NCH}u + ci];
-    if (l.w > 0.0 && distance(pos, l.xy) < l.z + g.x.w) { ang = atan2(pos.y - l.y, pos.x - l.x) + (rnd() - 0.5) * 1.2; puff = max(puff, l.w * (0.8 + 0.2 * rnd())); }
+    if (l.w > 0.0 && distance(pos, l.xy) < l.z + g.x.w) { let k = l.w * (0.8 + 0.2 * rnd()); ang = toward(ang, atan2(pos.y - l.y, pos.x - l.x) + (rnd() - 0.5) * 1.2, k); puff = max(puff, k); }
   }
   puff *= g.y.y;
   let e = eAt(pos);
