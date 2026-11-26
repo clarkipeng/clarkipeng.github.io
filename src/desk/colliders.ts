@@ -50,6 +50,12 @@ export function showColliders(chips: Chips) {
       g.stroke();
     });
   };
+  const outline = (pts: [number, number][], awake: boolean) => {
+    const h = desk.hull(pts.slice());
+    g.strokeStyle = g.fillStyle = awake ? `rgba(${AWAKE},0.95)` : `rgba(${ASLEEP},0.8)`;
+    g.beginPath(); h.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.stroke();
+    for (const [x, y] of pts) g.fillRect(x - 1, y - 1, 2, 2);
+  };
   let raf = 0;
   const frame = () => {
     raf = requestAnimationFrame(frame);
@@ -72,10 +78,20 @@ export function showColliders(chips: Chips) {
         const lx = b.points[i * 3], ly = b.points[i * 3 + 1], lz = b.points[i * 3 + 2];
         pts.push(view(e, C[0] + R[0] * lx + R[1] * ly + R[2] * lz, C[1] + R[3] * lx + R[4] * ly + R[5] * lz, C[2] + R[6] * lx + R[7] * ly + R[8] * lz));
       }
-      const col = b.sleep ? `rgba(${ASLEEP},0.8)` : `rgba(${AWAKE},0.95)`, h = desk.hull(pts.slice());
-      g.strokeStyle = g.fillStyle = col;
-      g.beginPath(); h.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.stroke();
-      for (const [x, y] of pts) g.fillRect(x - 1, y - 1, 2, 2);
+      outline(pts, !b.sleep);
+    }
+    // The note has no body: its sheet is a chain across its width (note.ts), seen by the eye that draws it (note.ts tile).
+    for (const s of desk.sources) {
+      if (!desk.hinged(s) || s.fly || s.deck) continue;
+      const [sx, sy, r] = desk.shown(s), th = (r * Math.PI) / 180 + s.sway, cs = Math.cos(th), sn = Math.sin(th), k = s.k || 1;
+      const c = s.ch, yh = desk.STRIP * k - s.h / 2, ox = sx - s.region * W, pts: [number, number][] = [];
+      const along = [[-s.h / 2, 0], [yh, 0]];
+      if (c) for (let i = 1; i <= c.n; i++) along.push([yh + c.x[2 * i] * k, c.x[2 * i + 1] * k]); else along.push([s.h / 2, 0]);
+      for (const [y, z] of along) for (const x of [-s.w / 2, s.w / 2]) {
+        const q = EYE / (EYE - z);
+        pts.push([ox + q * (cs * x - sn * y), sy + q * (sn * x + cs * y)]);
+      }
+      outline(pts, !!c && !c.rest);
     }
     // The last step's contacts, kept for FADE frames: new ones only when the sim has stepped since.
     if (world.time !== seen) {
