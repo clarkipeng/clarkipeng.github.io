@@ -67,7 +67,6 @@ export const GROUPS = {
     ['paperG', 8000, 2000, 20000, 100, 'note: gravity px/s^2'],
     ['paperDrag', 0.03, 0, 0.1, 0.001, 'note: air drag on the paper'],
     ['paperLift', 12000, 2000, 40000, 500, 'note: finger lift on the free edge'],
-    ['backs', 'pen', 0, 0, 0, 'back style'],
     ['cards', 'compact', 0, 0, 0, 'card size preset'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
     ['cardMax', 280, 180, 400, 1, 'card max side px (desk, at 1440x900; scales with the desk)'],
@@ -230,7 +229,7 @@ export const CARD_PRESETS: Record<string, Record<string, number>> = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
   compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
-export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), print: Object.keys(PRINTS) };
+export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim

@@ -199,6 +199,6 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
   desk.chipUniforms(s);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
-return { writeUniforms, easeFlip, CARD0, CARD_VEC4, U, invert3, flipPath, oklab, fromOklab, CHIP_OFF, CHIP_VEC4,
+return { writeUniforms, easeFlip, CARD0, CARD_VEC4, U, invert3, flipPath, CHIP_OFF, CHIP_VEC4,
   clock, NOTE_U, trans, VU_OFF };
 }

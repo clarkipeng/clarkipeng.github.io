@@ -45,8 +45,8 @@ function tweakPanel() {
       applyLook(v as string); sync(); // the look select's value
       if (desk.gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     }
-    // a back style can change card sizes, so it rebuilds the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['backs', 'cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
+    // card sizes rebuild the desk too (and a corner label size, the card atlas)
+    if ((RESEED.includes(k) || ['cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
     if (k.startsWith('tally')) for (const d of sources) if (d.tally) d.tally.dirty = true;
   };

@@ -125,7 +125,7 @@ interface Parts {
   // uniforms.ts
   writeUniforms: UniformsPart['writeUniforms']; easeFlip: UniformsPart['easeFlip']; CARD0: UniformsPart['CARD0'];
   CARD_VEC4: UniformsPart['CARD_VEC4']; U: UniformsPart['U']; invert3: UniformsPart['invert3'];
-  flipPath: UniformsPart['flipPath']; oklab: UniformsPart['oklab']; fromOklab: UniformsPart['fromOklab'];
+  flipPath: UniformsPart['flipPath'];
   CHIP_OFF: UniformsPart['CHIP_OFF']; CHIP_VEC4: UniformsPart['CHIP_VEC4']; clock: UniformsPart['clock'];
   NOTE_U: UniformsPart['NOTE_U']; trans: UniformsPart['trans']; VU_OFF: UniformsPart['VU_OFF'];
   // frame.ts

@@ -37,7 +37,6 @@ export const HELP: Record<string, string> = {
   paperG: 'Gravity on the peeling sticky note.',
   paperDrag: 'Air drag on the sticky note, which damps its swinging.',
   paperLift: 'How hard your finger lifts the sticky note\'s free edge.',
-  backs: 'The layout of card backs.',
   cards: 'A card size preset. Picking one overwrites the card size settings below.',
   cardScale: 'Card size on the desk (text never goes below 12 px).',
   cardMax: 'The longest a card side can be at 1440x900; scales with the desk.',
@@ -170,7 +169,7 @@ export const HELP: Record<string, string> = {
   hueMix: 'How far that color moves from the shared olive toward the card\'s open ink.',
   // Colors
   'tok.stock': 'The card box, and card faces without a film border.',
-  'tok.stockWarm': 'The polaroid card, the strip on card backs, and the stamp.',
+  'tok.stockWarm': 'The back of the polaroid card.',
   'tok.film': 'Photo cards\' instant-film paper, front and back.',
   'tok.note': 'The sticky note.',
   'tok.noteStrip': 'The sticky note\'s darker adhesive strip.',
@@ -178,9 +177,9 @@ export const HELP: Record<string, string> = {
   'tok.text2': 'Handwriting: the card box label and the sticky note.',
   'tok.body': 'Body text on card backs.',
   'tok.muted': 'Captions, labels and secondary text.',
-  'tok.ink': 'The faint veins drawn on the card box, and ruled lines on the sticky note.',
+  'tok.ink': 'The faint veins drawn on the card box.',
   'tok.inkDeep': 'Link text.',
-  'tok.inkLine': 'Drawn lines: link underlines, the card box frame, and the stamp\'s base color.',
+  'tok.inkLine': 'Drawn lines: link underlines and the card box frame.',
   'card.hue': 'This card\'s own color. It tints the stamp on its back.',
   'card.ink': 'The color this card puts into the slime while it is open.',
 };
