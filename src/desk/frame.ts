@@ -1,8 +1,8 @@
 import { mediaUrl } from 'virtual:desk-media';
 import { currentDesk } from './state.ts';
-import { STEP, PAGE_NAMES, MOTION, LAND } from './tunables.ts';
+import { STEP, PAGE_NAMES, MOTION } from './tunables.ts';
 import type { Sim, Gpu } from './gpu.ts';
-import { createChips, NCH, type ChipTunables } from './chips.ts';
+import { createChips, NCH } from './chips.ts';
 
 
 export function mountFrame() {
@@ -17,12 +17,7 @@ const { T, throwWorld, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, redu
 // Potato chips (chips.ts, drawn by chip-render.ts): click the bare desk to drop one. They live on the page you see, in the
 // same sim as the card box (physics.ts): a page turn throws them with it. A chip is gone once it is wholly off the screen
 // or eaten, never sooner.
-// The chips read the world's friction and bounce, their mass, and the landing rule under their own names (chips.ts).
-const chipP: ChipTunables = Object.defineProperties(Object.create(T), {
-  chipMu: { get: () => T.friction }, chipE: { get: () => T.bounce }, chipMass: { value: 0.05 }, // against the card box's 1 (box.ts)
-  landWn: { value: LAND.wn }, landP: { value: LAND.p },
-});
-const chips = createChips(chipP, () => throwWorld().world);
+const chips = createChips(T, () => throwWorld().world);
 const TASTE = 1.5, FOOD = 1, FOOD_R = 2; // the slime under a chip counts x toward eating it; its pull on the slime, reaching x its radius
 const LIVE = 8, HURRY = 6; // the most chips at once; over that, the oldest is eaten x faster
 const chipRegion = () => chips.bodies[0]?.chip.region ?? desk.page;

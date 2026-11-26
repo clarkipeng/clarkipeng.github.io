@@ -10,11 +10,24 @@ const NX = [-1, 0, -1, 1, 1, 0, 1, -1], NY = [0, -1, -1, -1, 0, 1, 1, 1], NW = [
 const SOLID = 0.2; // a voxel holds (and is a contact point) while its density is above this
 
 import type { Body as PBody, World } from './physics.ts';
+import { LAND } from './tunables.ts';
 
 // The tunables chips read (desk.ts T); see createChips.
-type ChipKey = 'chipThick' | 'chipCurl' | 'chipFold' | 'chipBend' | 'chipDrop' | 'chipSpin' | 'chipMass' | 'chipMu' | 'chipE' | 'chipDamp' |
-  'chipEat' | 'chipBand' | 'chipCrumbS' | 'chipCrumbs' | 'landWn' | 'landP';
+type ChipKey = 'chipCurl' | 'friction' | 'bounce' | 'chipEat';
 export type ChipTunables = Record<ChipKey, number>;
+const CHIP_MASS = 0.05; // a chip's mass, against the card box's 1 (box.ts)
+// A chip's fixed shape and feel; the panel tunes its size, curl and eating speed. Lengths are for a chip of radius 31.
+export const CHIP = {
+  thick: 2, // thickness px
+  fold: 1, // how far its edges curl up
+  bend: 0.8, // how gradually its edges curl (chip-render.ts shades the same curve)
+  drop: 150, // the height it falls from, px
+  spin: 10, // how fast it tumbles as it falls, rad/s
+  damp: 16, // its rocking dies at x/s on the desk
+  band: 1, // a voxel within this many px of the desk is eaten
+  crumbs: 30, // a broken-off piece under this many columns is crumbs
+  crumbS: 0.6, // crumbs are eaten in s
+};
 // A chip's outline and surface (makeShape).
 export interface Shape {
   seed: number;
@@ -180,9 +193,9 @@ export class Body {
     const R = from.R, dc = c.map((v, i) => v - this.c[i]), x = R ? [0, 3, 6].map((r, i) => from.x[i] + R[r] * dc[0] + R[r + 1] * dc[1] + R[r + 2] * dc[2]) : from.x;
     if (this.p) world.remove(this.p);
     this.c = c;
-    const s = P.chipMass / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
+    const s = CHIP_MASS / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
     this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(lo[i] - c[i]), Math.abs(hi[i] - c[i])))) + this.cell, sdf: (io: Float64Array) => this.sdf(io),
-      mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.chipMu, bounce: P.chipE, damp: P.chipDamp, x, q: from.q, v: from.v, w: from.w });
+      mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.friction, bounce: P.bounce, damp: CHIP.damp, x, q: from.q, v: from.v, w: from.w });
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
   freeze(world: World) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
@@ -226,9 +239,7 @@ function chamfer(D: Float32Array) {
 }
 
 // ---------- the chips ----------
-// P: the tunables (desk.ts T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipDamp how fast
-// it stops rocking, chipEat eating speed, chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the
-// oldest chip over the cap.
+// P: the tunables (desk.ts T): bounce and friction (the box's too), chipCurl its curl, chipEat eating speed.
 // world: () => the shared sim (physics.ts) they fall, tumble and are thrown in.
 export type Chips = ReturnType<typeof createChips>;
 export function createChips(P: ChipTunables, world: () => World) {
@@ -237,11 +248,11 @@ export function createChips(P: ChipTunables, world: () => World) {
 
   function drop(x: number, y: number, R: number, seed: number, { region = 0, born = 0, still = false }: { region?: number; born?: number; still?: boolean } = {}) {
     const r = rng(seed ^ 0x51ed), W = world();
-    const S = makeShape(seed, R, P.chipThick * (R / 31), P.chipCurl, P.chipFold, P.chipBend);
+    const S = makeShape(seed, R, CHIP.thick * (R / 31), P.chipCurl, CHIP.fold, CHIP.bend);
     const b = new Body(S, { seed, region, born, hurry: 1 });
     const tilt = (r() - 0.5) * 2 * 0.6, yaw = r() * 6.2832, ax = r() * 6.2832; // tipped about a level axis, then turned
-    b.props(W, P, { x: [x, y, P.chipDrop * (R / 31) + S.hb], q: [Math.cos(tilt / 2) * Math.cos(yaw / 2), Math.sin(tilt / 2) * Math.cos(ax), Math.sin(tilt / 2) * Math.sin(ax), Math.cos(tilt / 2) * Math.sin(yaw / 2)], R: null });
-    const spin = (0.5 + r()) * P.chipSpin, sa = r() * 6.2832;
+    b.props(W, P, { x: [x, y, CHIP.drop * (R / 31) + S.hb], q: [Math.cos(tilt / 2) * Math.cos(yaw / 2), Math.sin(tilt / 2) * Math.cos(ax), Math.sin(tilt / 2) * Math.sin(ax), Math.cos(tilt / 2) * Math.sin(yaw / 2)], R: null });
+    const spin = (0.5 + r()) * CHIP.spin, sa = r() * 6.2832;
     b.w.set([Math.cos(sa) * spin, Math.sin(sa) * spin, (r() - 0.5) * 6]);
     b.v.set([(r() - 0.5) * 40, (r() - 0.5) * 40, 0]);
     bodies.push(b);
@@ -254,7 +265,7 @@ export function createChips(P: ChipTunables, world: () => World) {
   }
 
   // ---------- eating ----------
-  // Voxels within P.chipBand of the desk are eaten where the slime is; a voxel that gives way changes the body's mass,
+  // Voxels within CHIP.band of the desk are eaten where the slime is; a voxel that gives way changes the body's mass,
   // centre and support, so it tips and settles lower. A body that comes apart becomes two (the crumbs are just eaten up).
   // The voxels are eaten every frame, so the edge creeps; remaking a body (props, split) is the costly part, so one body a
   // frame is remade, the one waiting longest, and a body at most every 0.05 s.
@@ -264,7 +275,7 @@ export function createChips(P: ChipTunables, world: () => World) {
     for (const b of bodies) {
       if (!b.m) continue;
       const R = b.R, c = b.c, base = b.x[2] - (R[6] * c[0] + R[7] * c[1] + R[8] * c[2]);
-      const rate = P.chipEat * b.chip.hurry * dt, band = P.chipBand + b.rs;
+      const rate = P.chipEat * b.chip.hurry * dt, band = CHIP.band + b.rs;
       let changed = false;
       for (let ci = 0; ci < CN * CN; ci++) {
         const crumb = b.crumb[ci];
@@ -272,13 +283,13 @@ export function createChips(P: ChipTunables, world: () => World) {
           const k = ci * CL + l, d = b.d[k];
           if (d <= 0) continue;
           let dd = 0;
-          if (crumb) dd = dt / Math.max(0.05, P.chipCrumbS);
+          if (crumb) dd = dt / Math.max(0.05, CHIP.crumbS);
           else {
             const z = base + R[6] * b.px[k] + R[7] * b.py[k] + R[8] * b.pz[k];
             if (z > band || !b.landed) continue;
             const lx = b.px[k] - c[0], ly = b.py[k] - c[1], lz = b.pz[k] - c[2];
             const sl = Math.max(b.slime(b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz, b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz), b.chip.hurry > 1 ? 0.6 : 0);
-            dd = rate * sl * (1 - 0.5 * clamp01((z - b.rs) / Math.max(P.chipBand, 1e-3))); // the voxels lowest down go first
+            dd = rate * sl * (1 - 0.5 * clamp01((z - b.rs) / Math.max(CHIP.band, 1e-3))); // the voxels lowest down go first
             if (dd > 0) b.stain[ci] = Math.min(1, b.stain[ci] + dd * 2);
           }
           if (dd <= 0) continue;
@@ -294,7 +305,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       cut.gone = false; cut.cutT = clock;
       split(cut, out);
       cut.props(W, P);
-      if (cut.m && cut.solidCols < P.chipCrumbs) { cut.crumb.fill(1); cut.freeze(W); } // the last bit is just eaten up where it lies
+      if (cut.m && cut.solidCols < CHIP.crumbs) { cut.crumb.fill(1); cut.freeze(W); } // the last bit is just eaten up where it lies
     }
     bodies.push(...out);
     for (const b of bodies.filter((b) => !b.d.some((v) => v > 0.004))) remove(b);
@@ -319,7 +330,7 @@ export function createChips(P: ChipTunables, world: () => World) {
     const keep = sizes.indexOf(Math.max(...sizes));
     for (let id = 0; id < sizes.length; id++) {
       if (id === keep) continue;
-      const big = sizes[id] >= P.chipCrumbs && bodies.length + out.length < NCH;
+      const big = sizes[id] >= CHIP.crumbs && bodies.length + out.length < NCH;
       let nb: Body | null = null;
       if (big) { // a piece of its own: the same shape and pose, only its own voxels
         nb = Object.create(Body.prototype) as Body;
@@ -360,11 +371,11 @@ export function createChips(P: ChipTunables, world: () => World) {
     }
   }
 
-  // Contact, the cards' rule (desk.ts contact) on the part of it that has just come within chipBand of the desk: that patch
-  // lands with the motion it sheds there, (landWn x coming down + along) / landP. A rocking chip lands strip by strip as
+  // Contact, the cards' rule (desk.ts contact) on the part of it that has just come within CHIP.band of the desk: that patch
+  // lands with the motion it sheds there, (LAND.wn x coming down + along) / LAND.p. A rocking chip lands strip by strip as
   // its curve rolls down; a slide or a lift brings no new part down, so it pushes no slime.
   function touchdown(b: Body, dt: number) {
-    const R = b.R, c = b.c, band = P.chipBand + b.rs, was = b.at, at = b.at = b.atWas || new Float32Array(CN * CN * 3);
+    const R = b.R, c = b.c, band = CHIP.band + b.rs, was = b.at, at = b.at = b.atWas || new Float32Array(CN * CN * 3);
     let n = 0, sx = 0, sy = 0, vn = 0, vt = 0;
     b.atWas = was;
     for (let ci = 0, o = 0; ci < CN * CN; ci++, o += 3) { // each column's lowest voxel that holds, on the desk (desk px)
@@ -380,7 +391,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       if (!was || at[o + 2] > band || was[o + 2] <= band) continue; // only a part that has just come down
       n++; sx += at[o]; sy += at[o + 1]; vn += Math.max(0, was[o + 2] - at[o + 2]) / dt; vt += Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1]) / dt;
     }
-    if (n) b.land = [sx / n, sy / n, Math.sqrt(n / Math.PI) * b.cell, Math.min(1, (P.landWn * vn + vt) / n / P.landP)]; // center, radius (desk px), strength
+    if (n) b.land = [sx / n, sy / n, Math.sqrt(n / Math.PI) * b.cell, Math.min(1, (LAND.wn * vn + vt) / n / LAND.p)]; // center, radius (desk px), strength
   }
 
   // After the sim has advanced: a chip's first touch is its landing (contact); then eating.
