@@ -103,6 +103,7 @@ export interface World {
   add(o: BodyOptions): Body;
   remove(b: Body): void;
   advance(t: number): void;
+  eachContact(fn: (b: Body, p: Float64Array, n: Float64Array) => void): void;
   pose(b: Body, pos: Float64Array, rot: Float64Array): void;
   save(): Float64Array;
   load(s: Float64Array): void;
@@ -139,8 +140,8 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
     return b;
   };
   const wake = (b: Body) => { b.sleep = false; b.still = 0; };
-  // Gone: what rested on it wakes, and falls.
-  world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
+  // Gone: what rested on it wakes, and falls; the last step's contacts go (the ids they name have moved).
+  world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); nc = 0; for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
   // Velocities live side by side (the solver's hot loop reads them); each body's v and w are views into them.
   // Ids follow too, and so what each point touched last step (a gone body: -2, nothing's id).
   function reindex() {
@@ -168,6 +169,16 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
     const w = p[0] * s + (q[0] - p[0] * s) * a, x = p[1] * s + (q[1] - p[1] * s) * a, y = p[2] * s + (q[2] - p[2] * s) * a, z = p[3] * s + (q[3] - p[3] * s) * a;
     const l = Math.sqrt(w * w + x * x + y * y + z * z);
     qmat(w / l, x / l, y / l, z / l, rot);
+  };
+  // Each contact of the last step (for a debug view): its body, its point (where the step began) and its normal (world;
+  // scratch arrays).
+  const cp = new Float64Array(3), cn = new Float64Array(3);
+  world.eachContact = (fn) => {
+    for (let c = 0; c < nc; c++) {
+      const o = c * CF, b = bodies[ci[c * 4]];
+      for (let j = 0; j < 3; j++) { cp[j] = b.px[j] + cf[o + j]; cn[j] = cf[o + ROW + j]; }
+      fn(b, cp, cn);
+    }
   };
   const SV = 29;
   world.save = () => {

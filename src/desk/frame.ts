@@ -368,6 +368,7 @@ async function main() {
   prewarm(1 - desk.page, 1); // the other page grows in the background from the start
   requestAnimationFrame(frame);
   if (qs.has('tune')) desk.tweakPanel();
+  if (qs.has('colliders')) void import('./colliders.ts').then((m) => m.showColliders(chips)); // what the physics sees
   let timer = 0;
   addEventListener('resize', () => {
     clearTimeout(timer);
