@@ -32,8 +32,7 @@ function deviceTier(adapter: GPUAdapter) {
   if (cores >= 8 && mem >= 8) return { name: 'high', cap: 1 };
   return { name: 'mid', cap: 0.6 };
 }
-const autoOn = () => !!T.auto;
-const simRes = () => T.res * (autoOn() ? Q.resScale : 1);
+const simRes = () => T.res * Q.resScale;
 // Agents for a page at the reference density, and how many of them run now.
 const refAgents = (cssW: number, cssH: number) => Math.max(6000, Math.round((T.agents * cssW * cssH * (simRes() / 0.5) ** 2) / (REF_W * REF_H)));
 
@@ -104,7 +103,7 @@ function createSim(g: Gpu, page: number) {
   const EW = Math.ceil(W / 2), EH = Math.ceil(H / 2);
   const etex = [0, 1].map(() => tex(EW, EH, 'r32float', TU.TEXTURE | TU.STORAGE));
   const dep = device.createBuffer({ size: W * H * 16, usage: SB.STORAGE }); // rgb (hue-weighted) and density
-  const ref = refAgents(desk.view.w, cssH), n = Math.round(ref * (autoOn() ? Q.tier.cap : 1)); // allocated: the tier's cap
+  const ref = refAgents(desk.view.w, cssH), n = Math.round(ref * Q.tier.cap); // allocated: the tier's cap
   // Scatter the agents; each carries the hue of the nearest card on this page.
   const origin = page * desk.view.w, mine = sources.filter((x) => desk.view.phone || x.region === page);
   const init = new Float32Array(n * 4);
@@ -172,5 +171,5 @@ function createSim(g: Gpu, page: number) {
     diffuseBG: [0, 1].map((p) => bg(g.diffusePipe, [U0, { buffer: dep }, view_(trail[p]), view_(trail[1 - p])])),
   };
 }
-return { initGpu, createShared, createSim, autoOn, Q, simRes };
+return { initGpu, createShared, createSim, Q, simRes };
 }

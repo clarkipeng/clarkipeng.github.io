@@ -121,7 +121,7 @@ interface Parts {
   drawBack: TexturesPart['drawBack']; drawCard: TexturesPart['drawCard'];
   // gpu.ts
   initGpu: GpuPart['initGpu']; createShared: GpuPart['createShared']; createSim: GpuPart['createSim'];
-  autoOn: GpuPart['autoOn']; Q: GpuPart['Q']; simRes: GpuPart['simRes'];
+  Q: GpuPart['Q']; simRes: GpuPart['simRes'];
   // uniforms.ts
   writeUniforms: UniformsPart['writeUniforms']; easeFlip: UniformsPart['easeFlip']; CARD0: UniformsPart['CARD0'];
   CARD_VEC4: UniformsPart['CARD_VEC4']; U: UniformsPart['U']; invert3: UniformsPart['invert3'];

@@ -26,12 +26,12 @@ struct G {
   e: vec4f,   // cursor xy, cursor amount, E decay
   f: vec4f,   // E attraction, E speed-up, ink gain, ink gamma
   n: vec4f,   // ink absorbance rgb, sim px per device px
-  k: vec4f,   // name ink absorbance rgb, 1 in how many agents feel the edge food
+  k: vec4f,   // name ink absorbance rgb, unused
   v: vec4f,   // video card, video mix, crossfade to the next clip, device px per CSS px at the reference size (dev * k)
   x: vec4f,   // unused, ridge distance, ridge width, landing burst reach (sim px)
   y: vec4f,   // landing burst speed-up, burst decay, hover excitation, cursor excitation
   z: vec4f,   // ink softness (texels), ink grain, cards flying off the page you left (after this page's in ord), on-screen card count
-  w: vec4f,   // unused, second ring at (x ridge distance), unused, ink opacity
+  w: vec4f,   // unused, unused, unused, ink opacity
   u: vec4f,   // shadow softness, shadow strength, release window (s), tiles per row (TILE device px each)
   st: vec4f,  // unused, unused, unused, page clock (s)
   bg: vec4f,  // page background, linear rgb
@@ -210,21 +210,20 @@ fn outward(c: Card, p: vec2f) -> f32 {
   n *= select(vec2f(-1.0), vec2f(1.0), l >= vec2f(0.0));
   return atan2(cs.y * n.x + cs.x * n.y, cs.x * n.x - cs.y * n.y);
 }
-// Food card k leaves at p: two bands just outside its edge, the second farther out. Distances in sim px.
-fn food(k: u32, p: vec2f) -> f32 { let d = cardSd(k, p); return max(ridge(d, g.x.y), ridge(d, g.x.y * g.w.y)); }
+// Food card k leaves at p: two bands just outside its edge, the second RING2 times as far out. Distances in sim px.
+const RING2 = 2.25;
+fn food(k: u32, p: vec2f) -> f32 { let d = cardSd(k, p); return max(ridge(d, g.x.y), ridge(d, g.x.y * RING2)); }
 // Trail, excitation, and food near each card, so veins gather around the cards. Food only tops the trail up to a vein's
 // strength, so the outlines never starve the open network.
 fn cardAt(j: u32) -> u32 { return u32(g.ord[j / 4u][j % 4u]); } // j-th on-screen card
-fn sense(p: vec2f, edgy: bool) -> f32 {
+fn sense(p: vec2f) -> f32 {
   var v = textureLoad(trail, vec2i(wrap(p)), 0).a;
-  if (edgy) {
-    let reach = g.x.y * max(g.w.y, 1.0) + 3.0 * g.x.z;
-    for (var j = 0u; j < u32(g.z.w); j++) {
-      let k = cardAt(j);
-      if (g.cards[k].off.w > 0.5) { continue; } // a card off the desk (mid-flip) leaves the slime alone
-      if (distance(p, g.cards[k].flat.xy) > g.cards[k].bound.x + reach) { continue; }
-      v = max(v, g.d.y * food(k, p));
-    }
+  let reach = g.x.y * RING2 + 3.0 * g.x.z;
+  for (var j = 0u; j < u32(g.z.w); j++) {
+    let k = cardAt(j);
+    if (g.cards[k].off.w > 0.5) { continue; } // a card off the desk (mid-flip) leaves the slime alone
+    if (distance(p, g.cards[k].flat.xy) > g.cards[k].bound.x + reach) { continue; }
+    v = max(v, g.d.y * food(k, p));
   }
   for (var i = 0u; i < u32(g.ch.x); i++) { // chips are food: veins grow toward them and under them
     let c = g.chipf[i]; let r = (p - c.xy) / c.z; let d2 = dot(r, r);
@@ -301,10 +300,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   puff *= g.y.y;
   let e = eAt(pos);
   let sd = g.c.x; let sa = g.c.y; let turn = g.c.z * (1.0 - min(puff, 1.0));
-  let edgy = i % u32(g.k.w) == 0u;
-  let f = sense(pos + dir(ang) * sd, edgy);
-  let l = sense(pos + dir(ang - sa) * sd, edgy);
-  let r = sense(pos + dir(ang + sa) * sd, edgy);
+  let f = sense(pos + dir(ang) * sd);
+  let l = sense(pos + dir(ang - sa) * sd);
+  let r = sense(pos + dir(ang + sa) * sd);
   // B's rule: always lean toward the stronger side sensor, which curls the network into rounder cells.
   if (f < l && f < r) { ang += (rnd() - 0.5) * 2.0 * turn; }
   else if (l > r) { ang -= turn; }

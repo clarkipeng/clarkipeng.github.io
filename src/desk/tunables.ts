@@ -27,7 +27,6 @@ export const NAME_INK = [30, 34, 40];
 // Groups of [key, default, min, max, step, label]. A 0/1 default with step 1 is a checkbox.
 export const GROUPS = {
   Performance: [
-    ['auto', 1, 0, 1, 1, 'auto quality'],
     ['res', 1, 0.2, 1, 0.05, 'sim resolution (re-seeds)'],
     ['agents', 200000, 4000, 400000, 1000, 'agents (re-seeds)'],
   ],
@@ -47,8 +46,6 @@ export const GROUPS = {
     ['edge', 0.55, 0, 2, 0.01, 'strength'],
     ['ridge', 7, 0, 40, 0.5, 'distance px'],
     ['ridgeW', 3.5, 1, 24, 0.5, 'width px'],
-    ['ring2At', 2.25, 1.5, 6, 0.05, 'second ring at x distance'],
-    ['share', 1, 0.05, 1, 0.05, 'share of agents'],
   ],
   Cards: [
     ['shadowSoft', 1.1, 0.2, 3, 0.05, 'shadow softness'],
@@ -147,7 +144,7 @@ export const EASES = {
 };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
-export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
+export const RESEED = ['agents', 'res']; // the only settings that rebuild the sim
 // Per-page styles: each page has its own paper and ink, tuned under Style in the panel (URL keys main.gain,
 // research.tint, ...): light paper, one muted ink that darkens like dye.
 export const PAGE_NAMES = ['main', 'research'];

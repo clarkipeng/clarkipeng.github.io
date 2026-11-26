@@ -6,7 +6,7 @@ import { RESEED, GROUPS, type ParamRow, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYL
 
 export function mountTweak() {
 const desk = currentDesk();
-const { T, reseed, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, autoOn, activeAgents,
+const { T, reseed, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, activeAgents,
   addEventListener, body } = desk;
 // ---------- tweak panel (press t) ----------
 
@@ -126,7 +126,7 @@ function tweakPanel() {
     if (panel.hidden) return;
     const iv = [...stats.intervals].slice(-60).sort((a, b) => a - b), med = iv[iv.length >> 1] || 0;
     perf.textContent = `${med ? (1000 / med).toFixed(0) : '-'} fps · frame ${med.toFixed(1)} ms${Q.gpuMs ? ` · GPU ${Q.gpuMs.toFixed(1)} ms` : ''}\n` +
-      (desk.sim ? `${autoOn() ? `auto: ${Q.tier.name} tier, ` : ''}${(activeAgents(desk.sim) / 1000).toFixed(0)}k agents, sim ${desk.sim.W}x${desk.sim.H}` : '');
+      (desk.sim ? `auto: ${Q.tier.name} tier, ${(activeAgents(desk.sim) / 1000).toFixed(0)}k agents, sim ${desk.sim.W}x${desk.sim.H}` : '');
   }, 500);
   addEventListener('keydown', (e) => {
     if (e.key === 't' && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(String(document.activeElement?.tagName))) panel.hidden = !panel.hidden;

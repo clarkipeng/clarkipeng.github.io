@@ -8,7 +8,7 @@ import { createChips, NCH } from './chips.ts';
 export function mountFrame() {
 const desk = currentDesk();
 const { T, throwWorld, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, reduced, drawStill, addEventListener,
-  flights, deskX, deskY, cornerBox, deckRect, autoOn, Q, renderEntries, noteMesh, NOTE_U, qs, simRes, writeUniforms,
+  flights, deskX, deskY, cornerBox, deckRect, Q, renderEntries, noteMesh, NOTE_U, qs, simRes, writeUniforms,
   createSim, WARM_STEPS, trans, stepDecks, stepFlights, syncInert, syncHover, stepCards, stepTurn, stepThrows,
   stepDoor, stepMedia, cursor, clipLinks, stepWarm, placeDom, body, hud, layout, createShared, buildAtlas,
   regionFromUrl, clipLists, regionLabel, initGpu, door, restD, arriveDeck, INTRO_DELAY, drawFrom, pileUp,
@@ -79,7 +79,7 @@ addEventListener('click', (e) => {
   for (const r of [!desk.view.phone && cornerBox(x0), deckRect(desk.page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;
   dropChip(x, y);
 });
-const activeAgents = (sm: Sim) => Math.max(2000, Math.round(sm.n * (autoOn() ? Q.shown : 1))); // eased toward Q.level
+const activeAgents = (sm: Sim) => Math.max(2000, Math.round(sm.n * Q.shown)); // eased toward Q.level
 
 // ---------- frame ----------
 
@@ -124,7 +124,7 @@ function qualityCheck(dt: number) {
   // veins keep their weight through the change instead of dimming and recovering.
   Q.shown += (Q.level - Q.shown) * Math.min(1, dt * 3);
   Q.depMul = Math.max(1, desk.sim!.ref / activeAgents(desk.sim!));
-  if (!autoOn() || turn.on) return; // a page turn holds the frozen frame a resolution change would need
+  if (turn.on) return; // a page turn holds the frozen frame a resolution change would need
   const t = clock.t;
   Q.vsync = Math.max(4, Math.min(...stats.intervals.filter((x) => x > 4), 16.7)); // the display's frame period
   if (t > Q.nextCheck && t > Q.checkUntil) { Q.checkUntil = t + 1.5; Q.nextCheck = t + 15; }
@@ -186,7 +186,7 @@ function frame(now: number) {
   acc += dt;
   let steps = 0;
   if (window.__j?.freeze) acc = 0; // test hook: hold the sim still while the render keeps drawing
-  const measure = autoOn() && clock.t <= Q.checkUntil;
+  const measure = clock.t <= Q.checkUntil;
   const ts = measure && desk.gpu!.ts && !desk.gpu!.ts.busy ? desk.gpu!.ts : null;
   if (measure && !desk.gpu!.ts && last) Q.samples.push(dt * 1000); // no GPU timestamps: judge by the frame interval
   while (acc >= STEP && steps < 2) {

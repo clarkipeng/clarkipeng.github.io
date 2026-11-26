@@ -2,7 +2,6 @@
 // the page style's keys, tok.* for the color tokens (TOK), and card.* for each card's ink.
 export const HELP: Record<string, string> = {
   // Performance
-  auto: 'Drops agents, then sim resolution, when frames run over budget, and adds them back when there is room.',
   res: 'Slime grid cells per CSS pixel. Higher is finer veins and more GPU work. Changing it restarts the slime.',
   agents: 'How many slime agents at 1440x900; scales with screen area and resolution. Changing it restarts the slime.',
   // Agents
@@ -20,8 +19,6 @@ export const HELP: Record<string, string> = {
   edge: 'How much food the cards put out, so how strongly veins hug them.',
   ridge: 'How far outside the card edge the food band sits.',
   ridgeW: 'How wide each food band is.',
-  ring2At: 'Where the second, farther band sits, as a multiple of the first band\'s distance.',
-  share: 'The share of agents that can sense card food. Lower lets the open network ignore the cards more.',
   // Cards
   shadowSoft: 'How blurred card shadows are.',
   shadow: 'How dark card shadows are.',
