@@ -228,7 +228,7 @@ function stepPaper(s: Card, dt: number) {
   if (!c || c.rest) return;
   const k = s.k || 1, was = sheet(c, k);
   stepChain(c, dt, { g: T.gravity, drag: NOTE.drag, bend: NOTE.bend, lift: NOTE.lift });
-  const l = touchdown(sheet(c, k), was, (c.armed ??= new Uint8Array(c.n)), 1, T.landH, dt, desk.mass(s), Math.sqrt((s.w * s.h) / Math.PI));
+  const l = touchdown(sheet(c, k), was, (c.armed ??= new Uint8Array(c.n)), 1, T.landH, dt, Math.sqrt((s.w * s.h) / Math.PI));
   if (l) { // the patch, in the frame its card is drawn in (uniforms.ts: past half way, the sheet over its strip)
     const yh = STRIP * k - s.h / 2, lo = Math.min(yh + c.x[2 * c.n] * k, -s.h / 2), [m, h] = s.flip > 0.5 ? [(lo + yh) / 2, (yh - lo) / 2] : [0, s.h / 2];
     land(s, l[3], [0, (yh + l[2] - m) / h, 1, (l[0] * c.l * k) / 2 / h]);
@@ -254,7 +254,7 @@ function sheet(c: Chain, k: number) {
 // One rule for everything that comes down on the page. Above the contact band (lifted, dealt, turning over) an item keeps
 // the most speed it has had along the page, coming down, and turning (at its radius of gyration). A hand, the keys, or a
 // box holding it, or a wall that stops it, takes that motion. Back at rest on the page it lands with the momentum it shed
-// there: push(its mass x (landWn x coming down + along + turning)). Sliding on the page, it never left: no landing.
+// there: push(landWn x coming down + along + turning). Sliding on the page, it never left: no landing.
 // Any item calls it every frame with its height over the page (px), whether it has come to rest, and the patch of it
 // that just came into contact (center, half size, as fractions of its half size); a patch that keeps growing (a sheet
 // rolling down) lands piece by piece, each with the motion shed since the last.
@@ -271,7 +271,7 @@ function contact(s: Card, dt: number, h: number, rest: boolean, patch = FULL) {
     m.n = Math.max(m.n, (p[2] - h) / dt);
     m.a = Math.max(m.a, (Math.hypot(s.w, s.h) / Math.sqrt(12)) * Math.hypot(((s.rot - p[3]) * Math.PI) / 180, (s.face - p[4]) * Math.PI) / dt);
   }
-  if (rest) { s.pk = null; land(s, push(desk.mass(s) * (LAND.wn * m.n + m.t + m.a)), patch); }
+  if (rest) { s.pk = null; land(s, push(LAND.wn * m.n + m.t + m.a), patch); }
 }
 // Landing: the next sim step sends the agents under and just around the patch out through its edge with a burst of
 // speed (scaled by strength), the ink there gets a pulse of excitation, and agents held for it (a page whose cards fly

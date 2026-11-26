@@ -396,7 +396,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       at[o + 2] = b.x[2] + Math.min(z0, z1);
       at[o] = b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz; at[o + 1] = b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz;
     }
-    const l = was && touchdown(at, was, (b.armed ??= new Uint8Array(CN * CN)), P.chipBand, P.landH, dt, (CHIP_MASS * b.m) / b.mass0, Math.sqrt(b.solidCols / Math.PI) * b.cell);
+    const l = was && touchdown(at, was, (b.armed ??= new Uint8Array(CN * CN)), P.chipBand, P.landH, dt, Math.sqrt(b.solidCols / Math.PI) * b.cell);
     if (l) b.land = [l[1], l[2], Math.sqrt(l[0] / Math.PI) * b.cell, l[3]]; // center, radius (desk px), strength
   }
 

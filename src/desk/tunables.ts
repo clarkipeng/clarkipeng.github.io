@@ -21,19 +21,19 @@ export const IMPRINT_S = 1; // a lifted card's imprint fades over this long (s)
 // Each page's folded corner, the way to the other page: its size, its label's size, and how far it lifts on hover (px).
 export const CORNER = { size: 70, label: 19, lift: 10 };
 // A card coming down onto the desk (see Landing below): its burst reaches `r` px and decays by `decay` a step; the agents
-// held under it stream out over `release` s. A landing pushes by the momentum it sheds: its mass (the card box's is 1)
-// x (`wn` x its speed coming down + its other motion), a full burst at `p`, seen as its square root (as loudness grows,
-// so a chip a twentieth of the box's weight still shows); it counts only after it rose above the panel's landH px.
-export const push = (momentum: number) => Math.min(1, Math.sqrt(momentum / LAND.p));
+// held under it stream out over `release` s. A landing pushes by the speed it sheds (`wn` x its speed coming down + its
+// other motion), a full burst at `p`, seen as its square root (as loudness grows). Cards, chips and the note are all
+// paper, so the slime under any of them feels the same weight per area: a chip pushes as hard as a card, over its
+// smaller patch. It counts only after it rose above the panel's landH px.
+export const push = (v: number) => Math.min(1, Math.sqrt(v / LAND.p));
 export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 320, wn: 0.36 };
 // Touchdown, one rule for every item that comes down part by part (a chip rocking, the note's sheet rolling down). Its
 // samples (x, y, height: px, now and the step before; a missing part is at height Infinity) arm once they rise above
 // `rise` (the panel's landH) and land on first coming within `band` of the desk, so a part settling as it is eaten never lands again.
 // Slime under the newly covered area is squeezed out at the speed the contact front sweeps across the item (the change
 // in sqrt of the share down x the item's radius `size`, px), plus the motion the parts shed (wn x coming down + along).
-// It pushes by the item's mass `m` x that speed: the slime under a part feels the item's weight per area there, as if
-// all of it landed so. Returns how many, their middle, and that push.
-export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, armed: Uint8Array, band: number, rise: number, dt: number, m: number, size: number) {
+// Returns how many, their middle, and the push.
+export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, armed: Uint8Array, band: number, rise: number, dt: number, size: number) {
   let n = 0, all = 0, down = 0, sx = 0, sy = 0, v = 0;
   for (let o = 0, i = 0; o < at.length; o += 3, i++) {
     const z = at[o + 2];
@@ -48,7 +48,7 @@ export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, armed: 
   }
   if (!n) return null;
   const front = (size * (Math.sqrt(down / all) - Math.sqrt((down - n) / all))) / dt;
-  return [n, sx / n, sy / n, push(m * (v / n + front))];
+  return [n, sx / n, sy / n, push(v / n + front)];
 }
 // A flipped or dealt card lands at its home angle plus a gaussian spread of `jitter` deg (std dev), never past `max` deg.
 export const ANGLE = { jitter: 1.5, max: 5 };
