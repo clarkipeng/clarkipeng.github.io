@@ -1,12 +1,12 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
 import { HELP } from './help.ts';
-import { CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
+import { CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
 
 
 export function mountTweak() {
 const desk = currentDesk();
-const { T, reseed, applyLook, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, autoOn, activeAgents,
+const { T, reseed, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, autoOn, activeAgents,
   addEventListener, body } = desk;
 // ---------- tweak panel (press t) ----------
 
@@ -30,11 +30,6 @@ function tweakPanel() {
   const set = (k: string, v: number | string) => {
     T[k] = v;
     if (k === 'cards') { Object.assign(T, CARD_PRESETS[v]); sync(); if (desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } }
-    if (k === 'look') {
-      const before = RESEED.map((r) => T[r]).join();
-      applyLook(v as string); sync(); // the look select's value
-      if (desk.gpu && before !== RESEED.map((r) => T[r]).join()) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
-    }
     // card sizes rebuild the desk too (and a corner label size, the card atlas)
     if ((RESEED.includes(k) || ['cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
@@ -65,7 +60,7 @@ function tweakPanel() {
       const r = Object.assign(document.createElement('label'), { title: HELP[k] ?? '' });
       r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
       if (out) r.append(out);
-      resetBtn(r, () => String(T[k]) === String(BASE[k]), () => { set(k, BASE[k]); sync(); });
+      resetBtn(r, () => String(T[k]) === String(DEFAULTS[k]), () => { set(k, DEFAULTS[k]); sync(); });
       group.append(r);
     }
     panel.append(group);
@@ -90,11 +85,11 @@ function tweakPanel() {
     styleInputs[k] = Object.assign(input, { out });
     r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
     if (out) r.append(out);
-    const def = () => STYLE_BASE[PAGE_NAMES[desk.page]][k];
+    const def = () => STYLE_DEFAULTS[PAGE_NAMES[desk.page]][k];
     resetBtn(r, () => String(curStyle()[k]) === String(def()), () => { curStyle()[k] = def(); sync(); });
     styleGroup.append(r);
   }
-  panel.insertBefore(styleGroup, panel.children[1]);
+  panel.prepend(styleGroup);
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
       if (el.type === 'checkbox') (el as HTMLInputElement).checked = !!T[k];
@@ -123,8 +118,8 @@ function tweakPanel() {
   const reset = Object.assign(document.createElement('button'), { textContent: 'reset' });
   reset.onclick = () => {
     const before = RESEED.map((k) => T[k]).join();
-    Object.assign(T, BASE);
-    for (const pg of PAGE_NAMES) Object.assign(STYLE[pg], STYLE_BASE[pg]);
+    Object.assign(T, DEFAULTS);
+    for (const pg of PAGE_NAMES) Object.assign(STYLE[pg], STYLE_DEFAULTS[pg]);
     colors.reset();
     sync();
     if (desk.gpu && before !== RESEED.map((k) => T[k]).join()) reseed();

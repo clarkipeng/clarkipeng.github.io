@@ -1,7 +1,6 @@
 // What each tweak-panel setting does, shown when you hover its row. Keys are the tunables' keys (tunables.ts, tally.ts),
 // the page style's keys, tok.* for the color tokens (TOK), and card.* for each card's ink.
 export const HELP: Record<string, string> = {
-  look: 'A preset for the agents and the ink. Picking one overwrites those settings.',
   // Performance
   auto: 'Drops agents, then sim resolution, when frames run over budget, and adds them back when there is room.',
   res: 'Slime grid cells per CSS pixel. Higher is finer veins and more GPU work. Changing it restarts the slime.',

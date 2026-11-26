@@ -28,10 +28,9 @@ export const NAME_INK = [30, 34, 40];
 // Groups of [key, default, min, max, step, label]. A string default makes a select (options in CHOICES) or, for ink, a
 // color picker; a 0/1 default with step 1 is a checkbox.
 export const GROUPS = {
-  Look: [['look', 'k8', 0, 0, 0, 'preset']],
   Performance: [
     ['auto', 1, 0, 1, 1, 'auto quality'],
-    ['res', 0.5, 0.2, 1, 0.05, 'sim resolution (re-seeds)'],
+    ['res', 1, 0.2, 1, 0.05, 'sim resolution (re-seeds)'],
     ['agents', 200000, 4000, 400000, 1000, 'agents (re-seeds)'],
   ],
   Agents: [
@@ -194,21 +193,13 @@ export const EASES = {
   sine: (u: number) => -(Math.cos(Math.PI * u) - 1) / 2,
   linear: (u: number) => u,
 };
-// Looks: presets for the agents and both pages' ink (the research page keeps its own project color). original: the first desk (b-desk.html: 26k agents on a 0.45x
-// grid (agents count at 0.5x, so 32.1k here), soft pale veins drawn at half opacity, big open cells); k8: Clark's K8 tuning (denser, finer olive veins).
-const LOOKS: Record<string, { T: Record<string, number>; main: Record<string, number | string> }> = {
-  original: { T: { res: 0.45, agents: 32100, speed: 147, turn: 0.35, sa: 0.5, sd: 26.7, decay: 0.9, deposit: 0.045, diffuse: 1, respawn: 0, edge: 0.14 },
-    main: { ink: 'b0b993', opacity: 1, gain: 1.1, gamma: 1.8, soft: 0.4, grain: 0.16, tint: 0 } },
-  k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
-    main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0 } },
-};
 // Card size presets: compact (Clark's pick, 2026-11-23, the default) shows cards at 0.75 with the title on the front
 // only, tighter backs, and thumbnails framed on their subject; as-is is the full-size card from before.
 export const CARD_PRESETS: Record<string, Record<string, number>> = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
   compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
-export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), look: Object.keys(LOOKS), turnEase: Object.keys(EASES) };
+export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), turnEase: Object.keys(EASES) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
@@ -231,15 +222,10 @@ type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: nu
   tint: number; hueMix: number } & Record<string, number | string>;
 export const STYLE_DEFAULTS: Record<string, Style> = {
   // main: Clark's K8 look (light olive veins, no project color until a card is opened)
-  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.8, grain: 0.16, tint: 0, hueMix: 0.3 },
+  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0, hueMix: 0.3 },
   // research: the same K8 paper, with each paper always emitting a soft wash of its own ink
   research: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0.8, hueMix: 0.8 },
 };
-// What the tweak panel resets to: the defaults with the default look laid over them (the research page keeps its tint).
-const LOOK = LOOKS[DEFAULTS.look];
-export const BASE = { ...DEFAULTS, ...LOOK.T };
-export const STYLE_BASE = Object.fromEntries(PAGE_NAMES.map((pg) => [pg,
-  { ...STYLE_DEFAULTS[pg], ...Object.fromEntries(Object.entries(LOOK.main).filter(([k]) => pg === 'main' || k !== 'tint')) }])) as Record<string, Style>;
 export const hexRGB = (h: string) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
 
 export const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));
@@ -268,13 +254,5 @@ const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [
   const v = qs.get(`${pg}.${k}`);
   return [k, v == null ? d : typeof d === 'string' ? v : parseFloat(v)];
 })) as Style]));
-// A look sets its agents and both pages' ink (research keeps its project color); values given in the URL win.
-function applyLook(name: string, fromUrl = false) {
-  for (const [k, v] of Object.entries(LOOKS[name].T)) if (!fromUrl || !qs.has(k)) T[k] = v;
-  for (const pg of PAGE_NAMES) for (const [k, v] of Object.entries(LOOKS[name].main)) {
-    if ((pg === 'main' || k !== 'tint') && (!fromUrl || !qs.has(`${pg}.${k}`))) STYLE[pg][k] = v;
-  }
-}
-applyLook(T.look, true);
-return { qs, HAND, font, T, reduced, STYLE, applyLook };
+return { qs, HAND, font, T, reduced, STYLE };
 }

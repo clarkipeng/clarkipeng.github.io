@@ -66,7 +66,7 @@ type TweakPart = ReturnType<typeof mountTweak>;
 interface Parts {
   // tunables.ts
   qs: TunablesPart['qs']; HAND: TunablesPart['HAND']; font: TunablesPart['font']; T: TunablesPart['T'];
-  reduced: TunablesPart['reduced']; STYLE: TunablesPart['STYLE']; applyLook: TunablesPart['applyLook'];
+  reduced: TunablesPart['reduced']; STYLE: TunablesPart['STYLE'];
   // wgsl.ts
   renderWGSL: WgslPart['renderWGSL']; AGENT_WGSL: WgslPart['AGENT_WGSL'];
   // layout.ts
