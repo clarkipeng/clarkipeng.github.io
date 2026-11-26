@@ -158,7 +158,7 @@ type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: nu
   tint: number; hueMix: number } & Record<string, number | string>;
 export const STYLE_DEFAULTS: Record<string, Style> = {
   // main: Clark's K8 look (light olive veins, no project color until a card is opened)
-  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0, hueMix: 0.3 },
+  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.76, gamma: 2.01, soft: 0, grain: 0.3, tint: 0, hueMix: 0.3 },
   // research: the same K8 paper, with each paper always emitting a soft wash of its own ink
   research: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0.8, hueMix: 0.8 },
 };
