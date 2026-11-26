@@ -1,6 +1,6 @@
 import { mediaUrl } from 'virtual:desk-media';
 import { currentDesk } from './state.ts';
-import { STEP, PAGE_NAMES, MOTION } from './tunables.ts';
+import { STEP, PAGE_NAMES, MOTION, dbg } from './tunables.ts';
 import type { Sim, Gpu } from './gpu.ts';
 import { createChips, NCH } from './chips.ts';
 
@@ -8,9 +8,9 @@ import { createChips, NCH } from './chips.ts';
 export function mountFrame() {
 const desk = currentDesk();
 const { T, throwWorld, outside, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, reduced, drawStill, addEventListener,
-  flights, deskX, deskY, cornerBox, deckRect, Q, renderEntries, noteMesh, NOTE_U, qs, simRes, writeUniforms,
+  flights, deskX, deskY, cornerBox, deckRect, Q, renderEntries, noteMesh, NOTE_U, simRes, writeUniforms,
   createSim, WARM_STEPS, trans, stepDecks, stepFlights, syncInert, syncHover, stepCards, stepTurn, stepThrows,
-  stepDoor, stepMedia, cursor, clipLinks, stepWarm, placeDom, body, hud, layout, createShared, buildAtlas,
+  stepDoor, stepMedia, cursor, clipLinks, stepWarm, placeDom, body, layout, createShared, buildAtlas,
   regionFromUrl, clipLists, regionLabel, initGpu, door, restD, arriveDeck, INTRO_DELAY, drawFrom, pileUp,
   playlistFor, idle, preloadClips, DRAW, prewarm } = desk;
 // ---------- chips ----------
@@ -73,7 +73,7 @@ function dropChip(x: number, y: number) {
 }
 addEventListener('click', (e) => {
   if (!desk.gpu || !desk.sim || turn.on || flights.on || e.button !== 0) return;
-  if ((e.target as Partial<Element>).closest?.('.src, .door, a, button, input, select, label, textarea, .tweak, .links')) return;
+  if ((e.target as Partial<Element>).closest?.('.src, .door, a, button, input, select, label, textarea, .adm, .links')) return;
   const x = deskX(e), y = deskY(e), x0 = chipX0();
   for (const r of [!desk.view.phone && cornerBox(x0), deckRect(desk.page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;
   dropChip(x, y);
@@ -138,10 +138,10 @@ function qualityCheck(dt: number) {
     Q.calm = 0; Q.cool = t + 2; Q.checkUntil = t + 2; // keep watching after a change
     if (Q.level > 0.36) Q.level = Math.max(0.35, Q.level * 0.7);
     else if (Q.resScale > 0.61) { Q.resScale *= 0.8; resizeSims(); }
-    if (qs.has('mlog')) console.log('[quality] down: level', Q.level.toFixed(2), 'res', simRes().toFixed(2), 'median', med.toFixed(1));
+    if (dbg.mlog) console.log('[quality] down: level', Q.level.toFixed(2), 'res', simRes().toFixed(2), 'median', med.toFixed(1));
   } else if (calm && Q.level < 1 && ++Q.calm >= 3) {
     Q.calm = 0; Q.cool = t + 4; Q.level = Math.min(1, Q.level / 0.7);
-    if (qs.has('mlog')) console.log('[quality] up: level', Q.level.toFixed(2));
+    if (dbg.mlog) console.log('[quality] up: level', Q.level.toFixed(2));
   }
 }
 // A lower sim resolution needs new sims: freeze the current frame and crossfade from it while the new sim warms up.
@@ -158,13 +158,9 @@ function resizeSims() {
 }
 
 let last = 0, acc = 0; desk.running = true;
-// Slow motion (?slow=4: a quarter speed): one scale on the desk's clock, so the turn, the physics, the chips, the flights
-// and the slime all slow together; fixed steps keep their size, fewer run per frame. With ?slow or ?colliders, s cycles
-// it through 1x, 4x and 16x slower.
-let slow = Math.max(1, +(qs.get('slow') || 1));
-if (qs.has('slow') || qs.has('colliders')) addEventListener('keydown', (e) => {
-  if (e.key === 's' && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(String(document.activeElement?.tagName))) slow = slow >= 16 ? 1 : slow * 4;
-});
+// The desk's clock (the admin panel's time row): rate slows the turn, the physics, the chips, the flights and the slime
+// together (fixed steps keep their size, fewer run per frame); paused holds it, but for the frames still to step.
+const time = { rate: 1, paused: false, steps: 0 };
 const stats: { intervals: number[]; throwMs?: number } = { intervals: [] };
 // The uniforms the last drawn frame showed; redraw: a texture it reads has changed since.
 const drawnU = new Float32Array(U.length);
@@ -174,8 +170,8 @@ const sameU = () => { const a = drawnU; for (let i = 0; i < U.length; i++) if (U
 function frame(now: number) {
   if (!desk.running || desk.dead) return;
   requestAnimationFrame(frame);
-  if (document.hidden) { last = now; return; }
-  const real = last ? Math.min(0.05, (now - last) / 1000) : STEP, dt = real / slow;
+  if (document.hidden || (time.paused && !time.steps)) { last = now; return; }
+  const real = last ? Math.min(0.05, (now - last) / 1000) : STEP, dt = time.paused ? (time.steps--, STEP) : real * time.rate;
   if (last) { stats.intervals.push(now - last); if (stats.intervals.length > 240) stats.intervals.shift(); }
   last = now;
   stepDecks(dt); // first: cards waiting on a deck follow it this frame
@@ -203,10 +199,10 @@ function frame(now: number) {
     encodeStep(enc, 'ead', steps === 1 ? ts : null);
     desk.gpu!.device.queue.submit([enc.finish()]);
     for (const s of sources) {
-      if (s.landK && qs.has('mlog')) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
+      if (s.landK && dbg.mlog) console.log('[land]', s.key, 'strength', s.landS.toFixed(2));
       s.landK = false; // a landing bursts the agents on exactly one step
     }
-    for (const b of chips.bodies) { if (b.land && qs.has('mlog')) console.log('[land]', 'chip' + b.id, 'strength', b.land[3].toFixed(2)); b.land = null; }
+    for (const b of chips.bodies) { if (b.land && dbg.mlog) console.log('[land]', 'chip' + b.id, 'strength', b.land[3].toFixed(2)); b.land = null; }
   }
   if (steps === 2) acc = Math.min(acc, STEP);
   if (desk.sim!.warm > 0) { // new sims after a resolution change: catch up a burst of steps, spread over the crossfade's frames
@@ -242,10 +238,6 @@ function frame(now: number) {
   qualityCheck(dt);
   for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.snap || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
-  if (hud && clock.frame % 15 === 0) {
-    const iv = [...stats.intervals].sort((a, b) => a - b);
-    hud.textContent = `${desk.sim!.W}x${desk.sim!.H}  ${(desk.sim!.n / 1e6).toFixed(2)}M agents\nframe ${iv[iv.length >> 1]?.toFixed(1)} ms (p95 ${iv[Math.floor(iv.length * 0.95)]?.toFixed(1)})`;
-  }
 }
 
 // GPU time per frame: n frames (one sim step + full render each) submitted back to back, then averaged.
@@ -297,7 +289,7 @@ async function rebuild(first: boolean) {
   if (!first || reduced) { clock.t = 4.5; desk.sim.t = 4.5; }
   for (const sm of desk.sims) if (sm !== desk.sim) sm.warm = WARM_STEPS;
 }
-const introOn = () => qs.get('intro') !== '0' && !reduced; // ?intro=0 skips the deal
+const introOn = () => !dbg.skipIntro && !reduced;
 
 // Rebuild the sim (new agent count or viewport) without reloading the page.
 async function reseed() {
@@ -374,8 +366,6 @@ async function main() {
   setTimeout(() => idle(preloadClips), (introOn() ? INTRO_DELAY + DRAW.fan + DRAW.dur + 8 * T.drawStagger : 0.3) * 1000); // after the intro
   prewarm(1 - desk.page, 1); // the other page grows in the background from the start
   requestAnimationFrame(frame);
-  if (qs.has('tune')) desk.tweakPanel();
-  if (qs.has('colliders')) void import('./colliders.ts').then((m) => m.showColliders(chips)); // what the physics sees
   let timer = 0;
   addEventListener('resize', () => {
     clearTimeout(timer);
@@ -387,6 +377,6 @@ async function main() {
 }
 
 const bootLog: Record<string, number> = {};
-return { encodeStep, encodeRender, chipRegion, chips, stats, activeAgents, chipUniforms, reseed, bootLog, bench,
+return { encodeStep, encodeRender, chipRegion, chips, stats, time, activeAgents, chipUniforms, reseed, bootLog, bench,
   dropChip, main };
 }

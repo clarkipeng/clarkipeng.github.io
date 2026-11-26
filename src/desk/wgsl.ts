@@ -1,5 +1,4 @@
-import { currentDesk } from './state.ts';
-import { MAX, PAPER, lin } from './tunables.ts';
+import { MAX, PAPER, lin, dbg } from './tunables.ts';
 import { NCH } from './chips.ts';
 
 // ---------- WGSL ----------
@@ -185,9 +184,7 @@ export const GRAIN_WGSL = COMMON + PAPER_FNS + /* wgsl */ `
 @fragment fn fs(@builtin(position) fp: vec4f) -> @location(0) vec4f { return vec4f(grain(fp.xy * g.n.w / g.a.w), 0.0, 1.0); }`;
 
 export function mountWgsl() {
-const desk = currentDesk();
-const { qs } = desk;
-const LOAD = Math.max(0, Math.round(Number(qs.get('load')) || 0)); // test hook: artificial GPU work per agent
+const LOAD = Math.max(0, Math.round(Number(dbg.load) || 0)); // the admin panel's GPU stress: artificial work per agent
 const AGENT_WGSL = COMMON + /* wgsl */ `
 @group(0) @binding(1) var<storage, read_write> agents: array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dep: array<atomic<u32>>;
@@ -511,7 +508,6 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
         let la = pow(clamp(ra, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
         let lb = pow(clamp(rb, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
         cc = mix(cc, mix(la, lb, clamp(g.v.z, 0.0, 1.0)), clamp(g.v.y, 0.0, 1.0));
-        ${qs.has('vdebug') ? 'if (any(ra < vec3f(0.0)) || any(rb < vec3f(0.0)) || any(ra > vec3f(1.0)) || any(rb > vec3f(1.0))) { return vec4f(1.0, 0.0, 1.0, 1.0); }' : ''}
       }
     }` : ''}
     let mu = (un - c.media.xy) / max(c.media.zw - c.media.xy, vec2f(1e-5));

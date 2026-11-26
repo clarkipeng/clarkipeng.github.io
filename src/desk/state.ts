@@ -17,7 +17,6 @@ import type { mountTextures } from './textures.ts';
 import type { Gpu, Shared, Sim, mountGpu } from './gpu.ts';
 import type { mountUniforms } from './uniforms.ts';
 import type { mountFrame } from './frame.ts';
-import type { mountTweak } from './tweak.ts';
 
 export interface State {
   root: HTMLElement;
@@ -40,7 +39,7 @@ export interface State {
   probeKey: string | null;
   gpu: Gpu | null;
   sim: Sim | null;
-  tweakSync: (() => void) | null;
+  adminSync: (() => void) | null; // the admin panel's rows show the current page's style (admin.ts)
   dealing: boolean;
   capturing: boolean;
   running: boolean;
@@ -61,11 +60,10 @@ type TexturesPart = ReturnType<typeof mountTextures>;
 type GpuPart = ReturnType<typeof mountGpu>;
 type UniformsPart = ReturnType<typeof mountUniforms>;
 type FramePart = ReturnType<typeof mountFrame>;
-type TweakPart = ReturnType<typeof mountTweak>;
 
 interface Parts {
   // tunables.ts
-  qs: TunablesPart['qs']; HAND: TunablesPart['HAND']; font: TunablesPart['font']; T: TunablesPart['T'];
+  HAND: TunablesPart['HAND']; font: TunablesPart['font']; T: TunablesPart['T'];
   reduced: TunablesPart['reduced']; STYLE: TunablesPart['STYLE'];
   // wgsl.ts
   renderWGSL: WgslPart['renderWGSL']; AGENT_WGSL: WgslPart['AGENT_WGSL'];
@@ -77,7 +75,7 @@ interface Parts {
   shown: LayoutPart['shown']; body: LayoutPart['body']; capped: LayoutPart['capped']; STRIP: LayoutPart['STRIP'];
   CAP_LH: LayoutPart['CAP_LH']; wrapLines: LayoutPart['wrapLines']; canvas: LayoutPart['canvas'];
   regionLabel: LayoutPart['regionLabel']; absorbance: LayoutPart['absorbance']; noteProfile: LayoutPart['noteProfile'];
-  noteMesh: LayoutPart['noteMesh']; hud: LayoutPart['hud']; layout: LayoutPart['layout'];
+  noteMesh: LayoutPart['noteMesh']; layout: LayoutPart['layout'];
   placeDoor: LayoutPart['placeDoor'];
   // turn.ts
   turn: TurnPart['turn']; clipLinks: TurnPart['clipLinks']; cam: TurnPart['cam'];
@@ -132,9 +130,7 @@ interface Parts {
   encodeStep: FramePart['encodeStep']; encodeRender: FramePart['encodeRender']; chipRegion: FramePart['chipRegion'];
   chips: FramePart['chips']; stats: FramePart['stats']; activeAgents: FramePart['activeAgents'];
   chipUniforms: FramePart['chipUniforms']; reseed: FramePart['reseed']; bootLog: FramePart['bootLog'];
-  bench: FramePart['bench']; dropChip: FramePart['dropChip']; main: FramePart['main'];
-  // tweak.ts
-  tweakPanel: TweakPart['tweakPanel'];
+  bench: FramePart['bench']; dropChip: FramePart['dropChip']; main: FramePart['main']; time: FramePart['time'];
 }
 
 // Each part's names are listed one by one, not intersected as whole parts, so TypeScript can type one without first

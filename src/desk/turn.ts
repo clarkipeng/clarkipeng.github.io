@@ -98,7 +98,7 @@ function show(region: number) {
   if (desk.sim) desk.sim.pre = false;
   cam.x = desk.view.phone ? 0 : region * desk.view.w; placePage(); setInert(region);
   if (!turn.on && desk.chipRegion() !== region) desk.chips.clear(); // the chips stay on the page you left (a turn throws them off it)
-  desk.tweakSync?.();
+  desk.adminSync?.();
 }
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
 // cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).

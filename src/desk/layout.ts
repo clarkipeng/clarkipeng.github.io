@@ -82,7 +82,7 @@ export interface View { w: number; h: number; phone: boolean; k: number; docH: n
 
 export function mountLayout() {
 const desk = currentDesk();
-const { qs, HAND, font, T } = desk;
+const { HAND, font, T } = desk;
 // ---------- page ----------
 
 const body = desk.root;
@@ -94,7 +94,6 @@ const linksEl = desk.root.querySelector<HTMLElement>('.links')!;
 const regionLabel = desk.root.querySelector<HTMLElement>('.region-label')!;
 const pageEl = desk.root.querySelector<HTMLElement>('#page')!;
 const doorEl = desk.root.querySelector<HTMLElement>('.door')!;
-const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
 // Each page's deck; cards without a data-slot (more than the hand-placed slots) start in it.
 {
@@ -402,5 +401,5 @@ function placeFold(s: Card) {
 const absorbance = (ink: number[]) => ink.map((c, i) => -Math.log(Math.max(lin(c), 1e-4) / lin(PAPER[i])));
 return { sources, doorEl, pageEl, linksEl, animateFlatDoor, placeDom, hinged, paperL, nameEl, taglineEl, BOX_T,
   measure, shown, body, capped, STRIP, CAP_LH, wrapLines, canvas, regionLabel, absorbance, noteProfile, noteMesh,
-  hud, layout, placeDoor };
+  layout, placeDoor };
 }

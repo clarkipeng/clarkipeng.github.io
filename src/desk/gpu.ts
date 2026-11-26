@@ -1,5 +1,5 @@
 import { currentDesk, type Desk } from './state.ts';
-import { REF_W, REF_H } from './tunables.ts';
+import { REF_W, REF_H, dbg } from './tunables.ts';
 import { GRAIN_WGSL, E_WGSL, DIFFUSE_WGSL, TILE_WGSL, TILE } from './wgsl.ts';
 import { createChipRenderer } from './chip-render.ts';
 import { createNote } from './note.ts';
@@ -20,8 +20,8 @@ type Quality = { tier: { name: string; cap: number }; level: number; shown: numb
 
 export function mountGpu() {
 const desk = currentDesk();
-const { reduced, T, qs, canvas, renderWGSL, AGENT_WGSL, sources, nameEl, cam, taglineEl, linksEl, regionLabel } = desk;
-desk.gpu = null; desk.sim = null; desk.tweakSync = null;
+const { reduced, T, canvas, renderWGSL, AGENT_WGSL, sources, nameEl, cam, taglineEl, linksEl, regionLabel } = desk;
+desk.gpu = null; desk.sim = null; desk.adminSync = null;
 desk.dealing = !reduced; // decks deal cards (no deals with reduced motion or without WebGPU)
 const Q: Quality = { tier: { name: 'high', cap: 1 }, level: 1, shown: 1, resScale: 1, depMul: 1, gpuMs: 0, samples: [], cool: 0, calm: 0, nextCheck: 0, checkUntil: 2.5 };
 function deviceTier(adapter: GPUAdapter) {
@@ -39,7 +39,7 @@ const refAgents = (cssW: number, cssH: number) => Math.max(6000, Math.round((T.a
 const SB = { STORAGE: 0x80, COPY_DST: 0x08, UNIFORM: 0x40 };
 
 async function initGpu() {
-  if (qs.has('nogpu') || !navigator.gpu) return null;
+  if (dbg.nogpu || !navigator.gpu) return null;
   try {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) return null;

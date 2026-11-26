@@ -28,75 +28,68 @@ export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 503, wn: 0.36, band
 // A flipped or dealt card lands at its home angle plus a gaussian spread of `jitter` deg (std dev), never past `max` deg.
 export const ANGLE = { jitter: 1.5, max: 5 };
 export const NAME_INK = [30, 34, 40];
+// ?debug is the one URL parameter the site reads. It opens the admin panel (admin.ts), and only then does the desk read
+// back what the panel saved, so the plain address is always the real site. dbg: the saved values by row key (tunables,
+// page.key styles, tok.* and card.* colors, and the debug rows), live: the panel writes it and the desk reads it.
+export const DEBUG = new URLSearchParams(location.search).has('debug');
+export const dbg: Record<string, number | string | boolean> = (() => {
+  try { return DEBUG ? JSON.parse(localStorage.getItem('desk.debug') || '{}') : {}; } catch { return {}; }
+})();
 
 // Every tunable, defaults matched to b-desk.html's CPU sim (scale 0.45, 26k agents, 1.1 sim px per step at 60 steps/s,
-// about 147 CSS px/s). Distances are CSS px, speed is CSS px per second. Each one is a URL parameter and a slider in the
-// tweak panel (press t), and all of them apply live; only the agent count re-seeds the sim.
-// Groups of [key, default, min, max, step, label].
+// about 147 CSS px/s). Distances are CSS px, speed is CSS px per second. Each one is a slider in the admin panel (?debug,
+// admin.ts), its hint in help.ts, and all of them apply live; only the agent count and resolution re-seed the sim.
+// Sections of [key, default, min, max, step, label].
 export const GROUPS = {
-  Performance: [
-    ['res', 1, 0.2, 1, 0.05, 'sim resolution (re-seeds)'],
-    ['agents', 200000, 4000, 400000, 1000, 'agents (re-seeds)'],
-  ],
-  Agents: [
-    ['speed', 93, 10, 400, 1, 'speed px/s'],
-    ['turn', 0.1, 0, 1.5, 0.01, 'turn'],
-    ['sa', 0.5, 0.05, 1.5, 0.01, 'sensor angle'],
-    ['sd', 26.6, 4, 80, 0.2, 'sensor distance px'],
-    ['decay', 0.9, 0.8, 0.995, 0.001, 'trail decay'],
-    ['deposit', 0.038, 0.005, 0.2, 0.001, 'deposit'],
-    ['diffuse', 0.79, 0, 1, 0.01, 'diffuse'],
-    ['respawn', 0.003, 0, 0.02, 0.0005, 'respawn / step'],
-    ['hoverE', 0.04, 0, 0.2, 0.002, 'hover excitation'],
-    ['cursorE', 0.1, 0, 0.2, 0.002, 'cursor excitation'],
-  ],
-  'Card outlines': [
-    ['edge', 0.55, 0, 2, 0.01, 'strength'],
-    ['ridge', 7, 0, 40, 0.5, 'distance px'],
-    ['ridgeW', 3.5, 1, 24, 0.5, 'width px'],
+  // One physical world: the card box, the cards a page throws, the chips and the sticky note fall under the same gravity
+  // and share one friction and one bounce.
+  Physics: [
+    ['gravity', 9000, 2000, 20000, 100, 'Gravity'],
+    ['friction', 0.6, 0, 1.5, 0.05, 'Friction'],
+    ['bounce', 0.25, 0, 0.9, 0.05, 'Bounce'],
+    ['shove', 1, 0, 2, 0.05, 'Shove'],
+    ['turnS', 1.3, 0.3, 2.5, 0.05, 'Page turn length'],
   ],
   Cards: [
-    ['shadow', 1.35, 0, 5, 0.05, 'shadow strength'],
-    ['lift', 60, 0, 60, 1, 'lift height px'],
-    ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
-    ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
-    ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
-    ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
+    ['cardScale', 0.75, 0.6, 1, 0.01, 'Size'],
+    ['shadow', 1.35, 0, 5, 0.05, 'Shadow'],
+    ['lift', 60, 0, 60, 1, 'Lift height'],
+    ['flipS', 0.7, 0.15, 1.5, 0.05, 'Flip length'],
+    ['drawStagger', 0.1, 0, 0.4, 0.01, 'Deal stagger'],
+    ['lidS', 0.25, 0.05, 1, 0.05, 'Box flap length'],
+    ['fadeIn', 0.4, 0.05, 2, 0.05, 'Clip fade in'],
+    ['fadeOut', 1, 0.1, 3, 0.05, 'Clip fade out'],
+    ...TALLY_PARAMS, // the pencil tally on each card box (tally.ts)
   ],
-  // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
-  // of speed, and releases any agents waiting for it (a page's network grows out of its cards when they fly in).
-  Landing: [
-    ['landBurst', 1.8, 0, 6, 0.05, 'burst strength (speed x)'],
-    ['drawStagger', 0.1, 0, 0.4, 0.01, 'draw stagger s (cards dealt off a deck)'],
-    ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
-  ],
-  Media: [
-    ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
-    ['fadeOut', 1, 0.1, 3, 0.05, 'fade out s'],
-  ],
-  // Notebook: the page turn.
-  Notebook: [
-    ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
-  ],
-  // World: one physical world. The card box, the cards a page throws, the chips and the sticky note fall under the same
-  // gravity; all but the note share one friction and one bounce.
-  World: [
-    ['gravity', 9000, 2000, 20000, 100, 'gravity px/s²'],
-    ['friction', 0.6, 0, 1.5, 0.05, 'friction'],
-    ['bounce', 0.25, 0, 0.9, 0.05, 'bounce'],
-  ],
-  // Box: the card box's flap.
-  Box: [
-    ['lidS', 0.25, 0.05, 1, 0.05, 'card box flap folds open or shut s'],
-  ],
-  Tally: TALLY_PARAMS, // the pencil tally on each card box (tally.ts)
   // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.ts).
   Chips: [
-    ['chipSize', 31, 15, 60, 0.5, 'radius px'],
-    ['chipCurl', 1.4, 0, 2, 0.05, 'curl'],
-    ['chipEat', 1.2, 0.05, 3, 0.01, 'eating speed'],
-    ['chipGold', 0.35, 0, 1, 0.01, 'pale to deep gold'],
-    ['chipShadow', 0.6, 0, 1.5, 0.01, 'shadow'],
+    ['chipSize', 31, 15, 60, 0.5, 'Size'],
+    ['chipCurl', 1.4, 0, 2, 0.05, 'Curl'],
+    ['chipEat', 1.2, 0.05, 3, 0.01, 'Eating speed'],
+    ['chipGold', 0.35, 0, 1, 0.01, 'Gold'],
+    ['chipShadow', 0.6, 0, 1.5, 0.01, 'Shadow'],
+  ],
+  // Slime: the agents, the food band just outside each card's edge, the burst a card landing on the desk sends out from
+  // its edge, and the ink an open card puts in.
+  Slime: [
+    ['res', 1, 0.2, 1, 0.05, 'Resolution'],
+    ['agents', 200000, 4000, 400000, 1000, 'Agents'],
+    ['speed', 93, 10, 400, 1, 'Speed'],
+    ['turn', 0.1, 0, 1.5, 0.01, 'Turning'],
+    ['sa', 0.5, 0.05, 1.5, 0.01, 'Sensor angle'],
+    ['sd', 26.6, 4, 80, 0.2, 'Sensor reach'],
+    ['decay', 0.9, 0.8, 0.995, 0.001, 'Trail fade'],
+    ['deposit', 0.038, 0.005, 0.2, 0.001, 'Trail strength'],
+    ['diffuse', 0.79, 0, 1, 0.01, 'Trail blur'],
+    ['respawn', 0.003, 0, 0.02, 0.0005, 'Respawn'],
+    ['hoverE', 0.04, 0, 0.2, 0.002, 'Hover stir'],
+    ['cursorE', 0.1, 0, 0.2, 0.002, 'Cursor stir'],
+    ['edge', 0.55, 0, 2, 0.01, 'Card pull'],
+    ['ridge', 7, 0, 40, 0.5, 'Pull distance'],
+    ['ridgeW', 3.5, 1, 24, 0.5, 'Pull width'],
+    ['landBurst', 1.8, 0, 6, 0.05, 'Landing burst'],
+    ['emitIn', 0.8, 0.1, 4, 0.1, 'Open card ink in'],
+    ['emitOut', 4, 0.5, 12, 0.25, 'Open card ink out'],
   ],
 } as const;
 // Every tunable's current value.
@@ -119,19 +112,19 @@ export const EASES = {
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res']; // the only settings that rebuild the sim
-// Per-page styles: each page has its own paper and ink, tuned under Style in the panel (URL keys main.gain,
+// Per-page styles: each page has its own paper and ink, tuned under Colors in the panel (saved as main.gain,
 // research.tint, ...): light paper, one muted ink that darkens like dye.
 export const PAGE_NAMES = ['main', 'research'];
 export const STYLE_PARAMS: [string, number | string, number, number, number, string][] = [
-  ['bg', 'f3f1ea', 0, 0, 0, 'background'],
-  ['ink', 'a5a970', 0, 0, 0, 'ink'],
-  ['opacity', 1, 0, 4, 0.05, 'ink opacity'],
-  ['gain', 1.1, 0.1, 4, 0.01, 'gain'],
-  ['gamma', 1.8, 0.4, 3, 0.01, 'gamma'],
-  ['soft', 0.7, 0, 2, 0.05, 'softness'],
-  ['grain', 0.1, 0, 0.6, 0.01, 'paper grain'],
-  ['tint', 0, 0, 1, 0.01, 'project color strength'],
-  ['hueMix', 0, 0, 1, 0.01, 'project hue (0 = olive, 1 = its ink)'], // tint: how much of its mild ink a closed card always emits (open: full ink); hueMix: how far that ink turns from the shared olive toward the card's own ink
+  ['bg', 'f3f1ea', 0, 0, 0, 'Paper'],
+  ['ink', 'a5a970', 0, 0, 0, 'Ink'],
+  ['opacity', 1, 0, 4, 0.05, 'Ink opacity'],
+  ['gain', 1.1, 0.1, 4, 0.01, 'Ink gain'],
+  ['gamma', 1.8, 0.4, 3, 0.01, 'Ink contrast'],
+  ['soft', 0.7, 0, 2, 0.05, 'Ink softness'],
+  ['grain', 0.1, 0, 0.6, 0.01, 'Paper grain'],
+  ['tint', 0, 0, 1, 0.01, 'Card tint'],
+  ['hueMix', 0, 0, 1, 0.01, 'Card hue'], // tint: how much of its mild ink a closed card always emits (open: full ink); hueMix: how far that ink turns from the shared olive toward the card's own ink
 ];
 // A page's style: its background and ink are strings, the rest numbers.
 type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number;
@@ -157,16 +150,8 @@ const desk = currentDesk();
 desk.TS = 1;
 const font = (weight: number, px = TOK.fs * desk.TS, family = 'Inter') => `${weight} ${px}px ${family}`;
 const HAND = font(500, TOK.fsHand, 'Caveat');
-const qs = new URLSearchParams(location.search);
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || qs.has('still');
-const T = { ...DEFAULTS } as Tunables;
-for (const k of Object.keys(DEFAULTS)) {
-  if (!qs.has(k)) continue;
-  T[k] = parseFloat(qs.get(k)!);
-}
-const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => {
-  const v = qs.get(`${pg}.${k}`);
-  return [k, v == null ? d : typeof d === 'string' ? v : parseFloat(v)];
-})) as Style]));
-return { qs, HAND, font, T, reduced, STYLE };
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || !!dbg.still;
+const T = Object.fromEntries(Object.entries(DEFAULTS).map(([k, d]) => [k, dbg[k] ?? d])) as Tunables;
+const STYLE = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => [k, dbg[`${pg}.${k}`] ?? d]))])) as Record<string, Style>;
+return { HAND, font, T, reduced, STYLE };
 }

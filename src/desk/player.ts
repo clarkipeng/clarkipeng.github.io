@@ -1,12 +1,12 @@
 import { clips, mediaUrl } from 'virtual:desk-media';
 import { currentDesk } from './state.ts';
-import { MOTION } from './tunables.ts';
+import { MOTION, dbg } from './tunables.ts';
 import type { Card, Clip, Video } from './layout.ts';
 
 
 export function mountPlayer() {
 const desk = currentDesk();
-const { qs, body, reduced, sources, T } = desk;
+const { body, reduced, sources, T } = desk;
 // ---------- media: crossfading playlists ----------
 
 // media/clips.json maps a card key to { poster, clips }; new clips drop in with no code change. Cards without an entry
@@ -24,7 +24,7 @@ function makeVideo(src: string, lazy = false) {
   v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = lazy ? 'none' : 'auto';
   v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
   v.src = src;
-  if (qs.has('mlog')) for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended', 'waiting', 'stalled', 'error']) {
+  if (dbg.mlog) for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended', 'waiting', 'stalled', 'error']) {
     v.addEventListener(ev, () => console.log('[media]', ev, v.currentSrc.split('/').pop(), v.currentTime.toFixed(2), 'rs', v.readyState));
   }
   Object.assign(v.style, { position: 'fixed', left: '0', top: '0', width: '2px', height: '2px', opacity: '0', pointerEvents: 'none' });
@@ -116,7 +116,7 @@ class Player {
     if (!this.fading && a.duration) {
       if (this.state === 'on' && (a.ended || a.currentTime >= a.duration - XFADE - 0.05)) {
         this.fading = true; this.fade = 0; playFromStart(b);
-        if (qs.has('mlog')) console.log('[media] crossfade', a.currentSrc.split('/').pop(), 'at', a.currentTime.toFixed(2), 'of', a.duration.toFixed(2), '->', b.currentSrc.split('/').pop(), 'from', b.currentTime.toFixed(2));
+        if (dbg.mlog) console.log('[media] crossfade', a.currentSrc.split('/').pop(), 'at', a.currentTime.toFixed(2), 'of', a.duration.toFixed(2), '->', b.currentSrc.split('/').pop(), 'from', b.currentTime.toFixed(2));
       } else if (this.state === 'out' && (a.ended || a.currentTime >= a.duration - 0.02)) this.outNow = true; // clip finished
     }
     if (this.fading && b.readyState >= 2 && !b.paused) this.fade += dt / XFADE;
@@ -130,7 +130,7 @@ class Player {
     this.mix = target > this.mix ? Math.min(target, this.mix + dt / T.fadeIn) : Math.max(target, this.mix - dt / (this.quick ? MOTION.quick : T.fadeOut));
     if (this.state === 'out' && this.outNow && this.mix === 0) {
       this.state = 'rest'; this.outNow = false; this.reset();
-      if (qs.has('mlog')) console.log('[media] rest');
+      if (dbg.mlog) console.log('[media] rest');
     }
   }
 }

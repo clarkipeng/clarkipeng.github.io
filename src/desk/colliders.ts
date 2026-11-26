@@ -1,7 +1,7 @@
-// ?colliders: what the physics sees, over the desk, read like a physics debugger. Each body: the outline of its collision
-// points (their convex hull) and the points themselves, as the eye that draws the body sees them, dimmed while it
-// sleeps. The turning page: its paper's height as a few contour lines. Contacts: a dot and a short tick along the
-// normal, fading over a few frames so slow motion (s) shows them. Loaded only with ?colliders, so it costs nothing otherwise.
+// The admin panel's Colliders: what the physics sees, over the desk, read like a physics debugger. Each body: the outline
+// of its collision points (their convex hull) and the points themselves, as the eye that draws the body sees them, dimmed
+// while it sleeps. The turning page: its paper's height as a few contour lines. Contacts: a dot and a short tick along
+// the normal, fading over a few frames so slow motion shows them. Loaded only when switched on; returns its stop.
 import { currentDesk } from './state.ts';
 import type { Body } from './physics.ts';
 import type { Chips } from './chips.ts';
@@ -16,7 +16,7 @@ type Eye = { x0: number; a: number; w: number }; // its page's left edge on the 
 
 export function showColliders(chips: Chips) {
   const desk = currentDesk(), cv = document.createElement('canvas'), g = cv.getContext('2d')!;
-  cv.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:9999';
+  cv.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:25';
   document.body.append(cv);
   const io = new Float64Array(7), C = new Float64Array(3), R = new Float64Array(9);
   const eyes = new Map<Body, Eye>(), hits: number[] = []; // hits: x, y, tick x, tick y, frame seen
@@ -50,8 +50,9 @@ export function showColliders(chips: Chips) {
       g.stroke();
     });
   };
+  let raf = 0;
   const frame = () => {
-    requestAnimationFrame(frame);
+    raf = requestAnimationFrame(frame);
     frameN++;
     const dpr = devicePixelRatio, P = desk.phys;
     if (cv.width !== innerWidth * dpr || cv.height !== innerHeight * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; }
@@ -94,5 +95,6 @@ export function showColliders(chips: Chips) {
       g.beginPath(); g.moveTo(hits[i], hits[i + 1]); g.lineTo(hits[i + 2], hits[i + 3]); g.stroke();
     }
   };
-  requestAnimationFrame(frame);
+  raf = requestAnimationFrame(frame);
+  return () => { cancelAnimationFrame(raf); cv.remove(); };
 }

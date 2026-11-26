@@ -28,10 +28,10 @@ export const TALLY = {
   fadeS: 1.8, // the smear fades over
 };
 
-// [key, default, min, max, step, label]: the ?tune rows.
+// [key, default, min, max, step, label]: its rows in the admin panel.
 export const TALLY_PARAMS = [
-  ['tallyWidth', 1.3, 0.5, 4, 0.05, 'line width px'],
-  ['tallyDark', 0.8, 0.2, 1, 0.01, 'graphite darkness'],
+  ['tallyWidth', 1.3, 0.5, 4, 0.05, 'Tally line width'],
+  ['tallyDark', 0.8, 0.2, 1, 0.01, 'Tally darkness'],
 ] as const;
 export type TallyTunables = Record<(typeof TALLY_PARAMS)[number][0], number>;
 
