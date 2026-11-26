@@ -130,7 +130,7 @@ interface Parts {
   NOTE_U: UniformsPart['NOTE_U']; trans: UniformsPart['trans']; VU_OFF: UniformsPart['VU_OFF'];
   // frame.ts
   encodeStep: FramePart['encodeStep']; encodeRender: FramePart['encodeRender']; chipRegion: FramePart['chipRegion'];
-  chips: FramePart['chips']; stats: FramePart['stats']; isJ: FramePart['isJ']; activeAgents: FramePart['activeAgents'];
+  chips: FramePart['chips']; stats: FramePart['stats']; activeAgents: FramePart['activeAgents'];
   chipUniforms: FramePart['chipUniforms']; reseed: FramePart['reseed']; bootLog: FramePart['bootLog'];
   bench: FramePart['bench']; dropChip: FramePart['dropChip']; main: FramePart['main'];
   // tweak.ts

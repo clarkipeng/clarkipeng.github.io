@@ -10,7 +10,7 @@ const desk = currentDesk();
 const { T, throwWorld, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, reduced, drawStill, addEventListener,
   flights, deskX, deskY, cornerBox, deckRect, autoOn, Q, renderEntries, noteMesh, NOTE_U, qs, simRes, writeUniforms,
   createSim, WARM_STEPS, trans, stepDecks, stepFlights, syncInert, syncHover, stepCards, stepTurn, stepThrows,
-  stepDoor, stepMedia, cursor, clipLinks, stepWarm, STYLE, placeDom, body, hud, layout, createShared, buildAtlas,
+  stepDoor, stepMedia, cursor, clipLinks, stepWarm, placeDom, body, hud, layout, createShared, buildAtlas,
   regionFromUrl, clipLists, regionLabel, initGpu, door, restD, arriveDeck, INTRO_DELAY, drawFrom, pileUp,
   playlistFor, idle, preloadClips, DRAW, prewarm } = desk;
 // ---------- chips ----------
@@ -232,7 +232,6 @@ function frame(now: number) {
   }
   if (steps) stepWarm(); // at the sim's pace, whatever the display's
   qualityCheck(dt);
-  if (isJ(desk.sim!)) desk.sim!.bloom = Math.min(1, desk.sim!.bloom + dt / STYLE[PAGE_NAMES[desk.sim!.page]].bloom); // olive -> the J desk's inks
   for (const s of sources) if (s.dragging || s.shove || s.kb || s.lift > 0.001 || s.squash || s.snap || s.flip % 1 || Math.abs(s.vx) + Math.abs(s.vy) > 0.5 || Math.abs(s.sway) > 1e-4) placeDom(s);
   if (clock.t > 4) body.classList.add('settled');
   if (hud && clock.frame % 15 === 0) {
@@ -265,7 +264,6 @@ async function bench(n = 120) {
 }
 
 desk.shared = null; desk.sims = [];
-const isJ = (sm: Sim) => !desk.view.phone && STYLE[PAGE_NAMES[sm.page]].mode === 'j'; // a page in the J desk's look
 const destroySim = (sm: Sim) => { for (const t of [...sm.trail, ...sm.etex, sm.mask]) t.destroy(); sm.dep.destroy(); sm.agents.destroy(); };
 async function rebuild(first: boolean) {
   layout();
@@ -380,6 +378,6 @@ async function main() {
 }
 
 const bootLog: Record<string, number> = {};
-return { encodeStep, encodeRender, chipRegion, chips, stats, isJ, activeAgents, chipUniforms, reseed, bootLog, bench,
+return { encodeStep, encodeRender, chipRegion, chips, stats, activeAgents, chipUniforms, reseed, bootLog, bench,
   dropChip, main };
 }

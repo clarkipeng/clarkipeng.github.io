@@ -159,7 +159,6 @@ export const HELP: Record<string, string> = {
   chipNibble: 'How ragged the eaten edges look.',
   chipStain: 'The slime stain left on the chip.',
   // Page style
-  mode: 'paper: ink soaks into paper. spectrum: glowing veins on a dark desk. j: the warm-paper desk where every card always tints the slime.',
   bg: 'The page background.',
   ink: 'The slime ink color.',
   opacity: 'Ink strength overall.',
@@ -167,13 +166,10 @@ export const HELP: Record<string, string> = {
   gamma: 'Ink contrast. Higher hides faint trails and keeps only strong veins.',
   soft: 'How blurred the ink is when drawn.',
   grain: 'The paper\'s own texture, and how unevenly it takes ink.',
-  glow: 'paper: extra darkness in the densest vein cores. spectrum: how bright the veins are.',
-  halo: 'paper: a soft wash of ink around veins. spectrum: a soft light around them.',
+  glow: 'Extra darkness in the densest vein cores.',
+  halo: 'A soft wash of ink around veins.',
   tint: 'How much of its color a closed card puts into the slime (an open card always puts in all of it).',
   hueMix: 'How far that color moves from the shared olive toward the card\'s open ink.',
-  stain: 'j: how much ink stains over the cards.',
-  bleed: 'j: how far ink bleeds into card borders.',
-  bloom: 'j: how long a card takes to bloom from olive into its own ink.',
   // Colors
   'tok.stock': 'The card box, and card faces without a film border.',
   'tok.stockWarm': 'The polaroid card, the strip on card backs, and the stamp.',
@@ -187,7 +183,6 @@ export const HELP: Record<string, string> = {
   'tok.ink': 'The faint veins drawn on the card box, and ruled lines on the sticky note.',
   'tok.inkDeep': 'Link text.',
   'tok.inkLine': 'Drawn lines: link underlines, the card box frame, and the stamp\'s base color.',
-  'card.hue': 'This card\'s own color. On paper it only tints the stamp on its back; in spectrum mode it colors its veins.',
+  'card.hue': 'This card\'s own color. It tints the stamp on its back.',
   'card.ink': 'The color this card puts into the slime while it is open.',
-  'card.jink': 'This card\'s ink in j mode, where every card always tints the slime.',
 };

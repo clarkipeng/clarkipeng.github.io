@@ -5,7 +5,7 @@ import { NCH } from './chips.ts';
 // ---------- WGSL ----------
 
 const COMMON = /* wgsl */ `
-struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, hue: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f, pat: vec4f };
+struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, misc: vec4f, uv: vec4f, media: vec4f, bound: vec4f, buv: vec4f, off: vec4f, ink: vec4f, imp: vec4f, shd: vec4f, obj: vec4f, pat: vec4f };
 // imp: where the card was just picked up (page sim px) and how strongly its imprint shows (fades over IMPRINT_S); w: how far its shadow has faded (a box flying off)
 // shd: the footprint its shadow falls from (center offset, half size; sim px, in the card's frame): the whole card, or a
 // card box's base on the desk | obj: x = its texture's alpha is part of its shape (the box and its lid), y = extra contact shadow,
@@ -16,8 +16,8 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, how long its horizontal axis looks (0 to 1)
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // pat: the patch that just came into contact, in the card's frame as fractions of its half size: center, half size
-// buv: back atlas rect | hue: the card's linear-light hue (spectrum style), w = off the desk (no outline food)
-// ink: the card's own ink as absorbance (paper style), w = how strongly it emits it now (open card: 1, fading after close)
+// buv: back atlas rect | off: w = off the desk (no outline food), xyz unused
+// ink: the card's own ink as absorbance, w = how strongly it emits it now (open card: 1, fading after close)
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -25,7 +25,7 @@ struct G {
   d: vec4f,   // respawn, edge food, sources, frame
   e: vec4f,   // cursor xy, cursor amount, E decay
   f: vec4f,   // E attraction, E speed-up, ink gain, ink gamma
-  n: vec4f,   // ink absorbance rgb (paper style), sim px per device px
+  n: vec4f,   // ink absorbance rgb, sim px per device px
   k: vec4f,   // name ink absorbance rgb, 1 in how many agents feel the edge food
   v: vec4f,   // video card, video mix, crossfade to the next clip, device px per CSS px at the reference size (dev * k)
   x: vec4f,   // edge mode, ridge distance, ridge width, landing burst reach (sim px)
@@ -33,10 +33,10 @@ struct G {
   z: vec4f,   // ink softness (texels), ink grain, cards flying off the page you left (after this page's in ord), on-screen card count
   w: vec4f,   // second ring on, second ring at (x ridge distance), corner emphasis, ink opacity
   u: vec4f,   // shadow softness, shadow strength, release window (s), tiles per row (TILE device px each)
-  st: vec4f,  // style (0 paper, 1 spectrum, 2 j), glow, halo, page clock (s)
+  st: vec4f,  // unused, glow, halo, page clock (s)
   bg: vec4f,  // page background, linear rgb
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
-  jq: vec4f,  // j style: ink stain over cards, ink bleed into card borders (sim px); hold (1: clear the ink, hold the agents), the note drawn as paper (-1: none)
+  jq: vec4f,  // unused, unused; hold (1: clear the ink, hold the agents), the note drawn as paper (-1: none)
   pr: vec4f,  // prints: desaturate, white balance to paper, black lift, duotone at rest
   pq: vec4f,  // prints: paper grain, matte edge (CSS px); the first agent this pass runs (a warm-up step's later part), unused
   cu: vec4f,  // page turn: the outgoing page's roll (direction from the corner xy, fold distance, roll radius; device px)
@@ -242,7 +242,7 @@ fn sense(p: vec2f, edgy: bool) -> f32 {
     let reach = g.x.y * max(g.w.y, 1.0) + 3.0 * g.x.z;
     for (var j = 0u; j < u32(g.z.w); j++) {
       let k = cardAt(j);
-      if (g.cards[k].hue.w > 0.5) { continue; } // a card off the desk (mid-flip) leaves the slime alone
+      if (g.cards[k].off.w > 0.5) { continue; } // a card off the desk (mid-flip) leaves the slime alone
       if (distance(p, g.cards[k].flat.xy) > g.cards[k].bound.x + reach) { continue; }
       let f = g.d.y * food(k, p);
       if (u32(g.x.x) == 2u) { v += f; } else { v = max(v, f); }
@@ -336,11 +336,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let q = vec2u(min(pos, g.a.xy - 1.0));
   let at = (q.y * u32(g.a.x) + q.x) * 4u;
   let amt = g.b.y * (1.0 + 2.0 * e) * (1.0 - 0.7 * min(puff, 1.0)) * 4096.0;
-  // rgb carries color: on paper the ink's absorbance (the shared olive, or the agent's card ink while that card is open),
-  // so overlapping inks darken like dye; in spectrum the card's hue as light, brighter while the card is open.
+  // rgb carries color: the ink's absorbance (the shared olive, or the agent's card ink while that card is open), so
+  // overlapping inks darken like dye.
   let ck = g.cards[u32(tag)];
-  var tint = mix(g.n.xyz, ck.ink.rgb, ck.ink.w);
-  if (g.st.x > 0.5 && g.st.x < 1.5) { tint = ck.hue.rgb * (1.0 + ck.ink.w); }
+  let tint = mix(g.n.xyz, ck.ink.rgb, ck.ink.w);
   atomicAdd(&dep[at], u32(tint.r * amt)); atomicAdd(&dep[at + 1u], u32(tint.g * amt)); atomicAdd(&dep[at + 2u], u32(tint.b * amt));
   atomicAdd(&dep[at + 3u], u32(amt));
   agents[i] = vec4f(pos, ang, tag * 8.0 + puff);
@@ -382,12 +381,6 @@ fn layChips(col: vec3f, c: vec4f) -> vec3f { return col * (1.0 - c.a) + c.rgb; }
 const PAPER = vec3f(${PAPER.map(lin).map((x) => x.toFixed(5)).join(', ')});
 
 ${PAPER_FNS}
-// J's ink transmittance: concentration saturates with density, the paper's tooth modulates it, inks add absorbance.
-fn inkJ(v: vec4f, tooth: f32, k: f32) -> vec3f {
-  if (v.a < 1e-4) { return vec3f(1.0); }
-  let conc = (1.0 - exp(-v.a * g.f.z)) * (0.78 + 0.44 * tooth) * k;
-  return exp(-(v.rgb / v.a) * conc);
-}
 // A card's image as a photo printed on the desk's paper (linear rgb): muted, its whites balanced to the paper, its blacks
 // lifted to a warm ink-dark, the paper's grain on top, and a soft matte edge. Duotone: at rest an olive-ink/paper print
 // (the page's ink), giving way to full color as color goes to 1.
@@ -490,12 +483,10 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
   return c;
 }
 
-// One card over col at p (sim px): its soft shadow, then the card. gr, t4, conc, localInk, fadeIn: the paper and ink under it.
-fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, localInk: f32, fadeIn: f32) -> vec3f {
+// One card over col at p (sim px): its soft shadow, then the card. gr, conc: the paper and ink under it.
+fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
   var col = col0;
   let q = g.n.w; let s = g.a.w;
-  let spectrum = g.st.x > 0.5 && g.st.x < 1.5;
-  let jmode = g.st.x > 1.5;
   let c = g.cards[k];
   let lift = c.geo.w;
   let ow = u32(c.obj.w * 0.25);
@@ -517,15 +508,6 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       }
       let sh = textureLoad(noteTex, t + vec2i(0, n.y), 0);
       col *= (1.0 - sh.x * (0.09 + 0.08 * conc) * g.u.y) * (1.0 - sh.y * g.u.y);
-    }
-  } else if (jmode && !face) {
-    // J: a contact shadow from local ink density (ink pools against the edge), plus a soft shadow while lifted.
-    if (d > -1.0) {
-      let dd = max(d, 0.0) / s;
-      let contact = (exp(-dd / 1.1) * (0.13 + 0.45 * localInk) + exp(-dd / (3.0 + 6.0 * localInk)) * (0.04 + 0.3 * localInk)) * (1.0 - min(lift * 2.5, 1.0));
-      var ls = 0.0;
-      if (lift > 0.001) { let b = (2.0 + 20.0 * lift) * s; ls = shadow(c, p, vec2f(0.35, 1.0) * c.misc.w * 1.3, b) * 0.24 * lift; }
-      col *= (1.0 - contact * (1.0 - c.imp.w)) * (1.0 - ls * (1.0 - c.imp.w));
     }
   } else if (!face) {
     // A paper card's soft drop shadow: a tight contact line plus a wide, faint ambient one that grows as it lifts.
@@ -583,14 +565,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
       let band = dot(sq, vec2f(0.55, 0.83)) + 0.3 + 0.5 * lift;
       cc += 0.015 * exp(-band * band * 6.0) * (1.0 - cc);
     }
-    cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face), abs(nm.z), mesh) * select(1.0, 0.9, spectrum); // a turning card catches less light; on the dark surface cards sit a touch dimmer
-    if (jmode) {
-      // J: ink runs under the card and shows through as a light stain, soaking in harder along the border's fibers;
-      // over captions it stays faint so the text reads. A lifted card is above the ink and comes away clean.
-      let band = 1.0 - smoothstep(0.0, g.jq.y * (0.35 + 1.3 * gr.y), max(-d, 0.0));
-      let onMedia = all(un >= c.media.xy) && all(un <= c.media.zw);
-      cc *= pow(inkJ(t4, gr.y, fadeIn), vec3f(mix(g.jq.x * select(0.35, 1.0, onMedia), 0.6, band) * (1.0 - lift)));
-    }
+    cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face), abs(nm.z), mesh); // a turning card catches less light
     col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5) * select(1.0, c.obj.y, face)); // a box's open end and cut corners are see-through; a face of the flying box fades by obj.y
   }
   return col;
@@ -604,8 +579,6 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   let ip = vec2i(pd);
   let gr = textureLoad(paper, ip, 0).rg;
   let vq = (fp.xy / g.pg.xy - 0.5) * vec2f(1.6, 1.2); // vignette follows the screen
-  let spectrum = g.st.x > 0.5 && g.st.x < 1.5;
-  let jmode = g.st.x > 1.5;
   let m = textureLoad(mask, ip, 0);
   let tp = 1.0 / g.a.xy; // a small tent filter keeps the veins soft, like B's upscaled canvas
   let o = g.z.x;
@@ -628,42 +601,21 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
     stamp = max(stamp, im.z * (1.0 - smoothstep(-20.0 * g.a.w, 6.0 * g.a.w, boxSd(l, ge.xy, ge.z))));
   }
   let fadeIn = smoothstep(0.6, 2.6, g.st.w) * (1.0 - 0.85 * m.b) * g.w.w * (1.0 + 0.6 * stamp);
-  var col: vec3f;
-  var conc = 0.0;
   let h = 4.0 * o + 2.0; // halo: a wider look at the same trail
   let halo4 = 0.25 * (textureSampleLevel(trail, samp, (p + vec2f(-h, -h)) * tp, 0.0) + textureSampleLevel(trail, samp, (p + vec2f(h, -h)) * tp, 0.0)
                     + textureSampleLevel(trail, samp, (p + vec2f(-h, h)) * tp, 0.0) + textureSampleLevel(trail, samp, (p + vec2f(h, h)) * tp, 0.0));
-  var localInk = 0.0;
-  if (jmode) {
-    // The J desk: warm paper, ink as dye (Beer-Lambert absorbance per channel), denser where the paper's tooth takes it.
-    col = g.bg.rgb * (1.0 + (gr.x - 0.5) * 0.07 + (gr.y - 0.5) * 0.05) * (1.0 - 0.05 * dot(vq, vq));
-    let T = inkJ(t4, gr.y, fadeIn);
-    col *= T;
-    localInk = 1.0 - (T.r + T.g + T.b) / 3.0;
-    col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
-    col = inked(col, DARK, m.g);
-    conc = localInk;
-  } else if (spectrum) {
-    // Dark surface, glowing veins: each vein carries its card's hue, added like light, with a soft halo around it.
-    let core = pow(clamp(a * g.f.z, 0.0, 1.0), g.f.w) * fadeIn;
-    let haloA = pow(clamp(halo4.a * g.f.z, 0.0, 1.0), 1.5) * g.st.z * fadeIn;
-    col = g.bg.rgb * (1.0 - 0.25 * dot(vq, vq)) + (t4.rgb / max(a, 1e-4) * core + halo4.rgb / max(halo4.a, 1e-4) * haloA) * g.st.y;
-    col = mix(col, vec3f(0.86), max(m.r, m.g)); // the name and tagline, if this page has them, in light ink
-    conc = core;
-  } else {
-    col = bare(gr, vq); // paper grain: the paper's own texture (K8's at 0.16), and how unevenly it takes ink
-    // Ink: opacity scales its strength (1 = the ink color at full density), glow darkens dense vein cores, halo bleeds a
-    // soft wash of ink around the veins. Each pixel's ink color comes from the trail, so card inks mix like dye.
-    let tooth = 1.0 - 0.5 * g.z.y + g.z.y * gr.y;
-    let d0 = clamp(a * g.f.z, 0.0, 1.0);
-    conc = pow(d0, g.f.w) * (1.0 + g.st.y * smoothstep(0.35, 0.95, d0)) * tooth * fadeIn;
-    let concH = pow(clamp(halo4.a * g.f.z, 0.0, 1.0), 1.4) * g.st.z * 0.45 * tooth * fadeIn;
-    let inkA = select(g.n.xyz, t4.rgb / max(a, 1e-4), a > 1e-3);
-    let inkH = select(g.n.xyz, halo4.rgb / max(halo4.a, 1e-4), halo4.a > 1e-3);
-    col *= exp(-inkA * conc - inkH * concH);
-    col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
-    col = inked(col, DARK, m.g); // the tagline
-  }
+  var col = bare(gr, vq); // paper grain: the paper's own texture (K8's at 0.16), and how unevenly it takes ink
+  // Ink: opacity scales its strength (1 = the ink color at full density), glow darkens dense vein cores, halo bleeds a
+  // soft wash of ink around the veins. Each pixel's ink color comes from the trail, so card inks mix like dye.
+  let tooth = 1.0 - 0.5 * g.z.y + g.z.y * gr.y;
+  let d0 = clamp(a * g.f.z, 0.0, 1.0);
+  let conc = pow(d0, g.f.w) * (1.0 + g.st.y * smoothstep(0.35, 0.95, d0)) * tooth * fadeIn;
+  let concH = pow(clamp(halo4.a * g.f.z, 0.0, 1.0), 1.4) * g.st.z * 0.45 * tooth * fadeIn;
+  let inkA = select(g.n.xyz, t4.rgb / max(a, 1e-4), a > 1e-3);
+  let inkH = select(g.n.xyz, halo4.rgb / max(halo4.a, 1e-4), halo4.a > 1e-3);
+  col *= exp(-inkA * conc - inkH * concH);
+  col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
+  col = inked(col, DARK, m.g); // the tagline
 
   // This page's cards first (g.z.w of them); the rest (g.z.z) are the page you left's card box, flying off over the turn.
   let nPage = u32(g.z.w);
@@ -675,7 +627,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
     let j = firstTrailingBit(cards); cards &= cards - 1u;
     let k = u32(g.ord[j / 4u][j % 4u]);
     if (!chipsLaid && g.cards[k].geo.w > 0.01) { col = layChips(col, chip); chipsLaid = true; } // chips lie on the desk, under any lifted card
-    col = layCard(col, k, p, gr, t4, conc, localInk, fadeIn);
+    col = layCard(col, k, p, gr, conc);
   }
   if (!chipsLaid) { col = layChips(col, chip); }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
@@ -688,7 +640,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, t4: vec4f, conc: f32, local
   var over = tm.x & ~pageBits; // the box you left, above both pages
   while (over != 0u) {
     let j = firstTrailingBit(over); over &= over - 1u;
-    col = layCard(col, u32(g.ord[j / 4u][j % 4u]), p, gr, t4, conc, localInk, fadeIn);
+    col = layCard(col, u32(g.ord[j / 4u][j % 4u]), p, gr, conc);
   }
   var outc = vec4f(pow(clamp(col, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), 1.0);
   if (g.pg.z > 0.0) { outc = mix(outc, textureLoad(frozen, ip, 0), g.pg.z); } // crossfade from the frame before a sim resolution change

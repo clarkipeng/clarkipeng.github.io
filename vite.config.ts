@@ -46,7 +46,7 @@ function saveColors({ tok, cards, pages }: Colors) {
     Object.entries(attrs).reduce((t, [a, v]) => t.replace(new RegExp(`data-${key(a)}="[0-9a-f]{6}"`), `data-${a}="${hex(v)}"`), tag)), s))
   edit('src/desk/tunables.ts', (s) => {
     for (const [k, v] of Object.entries(tok)) s = s.replace(new RegExp(`\\b${key(k)}: '#[0-9a-f]{6}'`), `${k}: '#${hex(v)}'`)
-    for (const [pg, st] of Object.entries(pages)) s = s.replace(new RegExp(`^(  ${key(pg)}: \\{ mode: .*)$`, 'm'), (line) =>
+    for (const [pg, st] of Object.entries(pages)) s = s.replace(new RegExp(`^(  ${key(pg)}: \\{ bg: .*)$`, 'm'), (line) =>
       Object.entries(st).reduce((l, [k, v]) => l.replace(new RegExp(`\\b${key(k)}: '[0-9a-f]{6}'`), `${k}: '${hex(v)}'`), line))
     return s
   })

@@ -230,16 +230,14 @@ export const CARD_PRESETS: Record<string, Record<string, number>> = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
   compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
-export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), mode: ['paper', 'spectrum', 'j'], print: Object.keys(PRINTS) };
+export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), backs: ['postcard', 'quiet', 'index', 'pen'], look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
-// Per-page styles: each page has its own surface and ink, tuned under Style in the panel (URL keys main.gain, research.mode,
-// ...). paper: light paper, one muted ink that darkens like dye. spectrum: a dark surface where each card's veins glow
-// in the card's own hue and add like light where they meet.
+// Per-page styles: each page has its own paper and ink, tuned under Style in the panel (URL keys main.gain,
+// research.tint, ...): light paper, one muted ink that darkens like dye.
 export const PAGE_NAMES = ['main', 'research'];
 export const STYLE_PARAMS: [string, number | string, number, number, number, string][] = [
-  ['mode', 'paper', 0, 0, 0, 'style'],
   ['bg', 'f3f1ea', 0, 0, 0, 'background'],
   ['ink', 'a5a970', 0, 0, 0, 'ink'],
   ['opacity', 1, 0, 4, 0.05, 'ink opacity'],
@@ -247,26 +245,19 @@ export const STYLE_PARAMS: [string, number | string, number, number, number, str
   ['gamma', 1.8, 0.4, 3, 0.01, 'gamma'],
   ['soft', 0.7, 0, 2, 0.05, 'softness'],
   ['grain', 0.1, 0, 0.6, 0.01, 'paper grain'],
-  ['glow', 1.5, 0, 4, 0.05, 'glow'],  // paper: darker dense vein cores; spectrum: vein brightness
-  ['halo', 0.6, 0, 2, 0.05, 'halo'],  // paper: a soft ink bleed around veins; spectrum: a soft light around veins
+  ['glow', 1.5, 0, 4, 0.05, 'glow'],  // darker dense vein cores
+  ['halo', 0.6, 0, 2, 0.05, 'halo'],  // a soft ink bleed around veins
   ['tint', 0, 0, 1, 0.01, 'project color strength'],
-  ['hueMix', 0, 0, 1, 0.01, 'project hue (0 = olive, 1 = own hue)'], // paper: tint is how much of its mild ink a closed card always emits (open: full ink); hueMix how far that ink turns from the shared olive toward the card's own hue
-  // j: the J desk's look (warm paper, each paper's own ink, a light stain over cards); agents and cards follow the shared
-  // settings above, like every page
-  ['stain', 0.1, 0, 1, 0.01, 'ink stain over cards'],
-  ['bleed', 7, 0, 24, 0.5, 'ink bleed into borders px'],
-  ['bloom', 1.5, 0.2, 5, 0.1, 'bloom into colors s'],
+  ['hueMix', 0, 0, 1, 0.01, 'project hue (0 = olive, 1 = own hue)'], // tint: how much of its mild ink a closed card always emits (open: full ink); hueMix: how far that ink turns from the shared olive toward the card's own ink
 ];
-export const J_KEYS = ['stain', 'bleed', 'bloom'];
-const J_DEFAULTS = { stain: 0.1, bleed: 7, bloom: 1.5 };
-// A page's style: its mode, background and ink are strings, the rest numbers.
-type Style = { mode: string; bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number; glow: number;
-  halo: number; tint: number; hueMix: number; stain: number; bleed: number; bloom: number } & Record<string, number | string>;
+// A page's style: its background and ink are strings, the rest numbers.
+type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number; glow: number;
+  halo: number; tint: number; hueMix: number } & Record<string, number | string>;
 export const STYLE_DEFAULTS: Record<string, Style> = {
   // main: Clark's K8 look (light olive veins, no glow or halo, no project color until a card is opened)
-  main: { mode: 'paper', bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.8, grain: 0.16, glow: 0, halo: 0, tint: 0, hueMix: 0.3, ...J_DEFAULTS },
-  // research: the same K8 paper, with each paper always emitting a soft wash of its own ink; spectrum and j are one mode switch away
-  research: { mode: 'paper', bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0.8, hueMix: 0.8, ...J_DEFAULTS },
+  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.8, grain: 0.16, glow: 0, halo: 0, tint: 0, hueMix: 0.3 },
+  // research: the same K8 paper, with each paper always emitting a soft wash of its own ink
+  research: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0.8, hueMix: 0.8 },
 };
 // What the tweak panel resets to: the defaults with the default look and print laid over them (the research page keeps its tint).
 const LOOK = LOOKS[DEFAULTS.look];
@@ -302,7 +293,6 @@ const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [
   const v = qs.get(`${pg}.${k}`);
   return [k, v == null ? d : typeof d === 'string' ? v : parseFloat(v)];
 })) as Style]));
-for (const pg of PAGE_NAMES) if (!CHOICES.mode.includes(STYLE[pg].mode)) STYLE[pg].mode = STYLE_DEFAULTS[pg].mode;
 // A look sets its agents and both pages' ink (research keeps its project color); values given in the URL win.
 function applyLook(name: string, fromUrl = false) {
   for (const [k, v] of Object.entries(LOOKS[name].T)) if (!fromUrl || !qs.has(k)) T[k] = v;

@@ -166,7 +166,7 @@ function createSim(g: Gpu, page: number) {
   const U0 = { buffer: g.uniform };
   const view_ = (t: GPUTexture) => t.createView();
   return {
-    page, origin, W, H, EW, EH, n, ref, dpr, bloom: 0, trail, etex, dep, agents, mask, parity: 0, t: 0, warm: 0,
+    page, origin, W, H, EW, EH, n, ref, dpr, trail, etex, dep, agents, mask, parity: 0, t: 0, warm: 0,
     eBG: [0, 1].map((p) => bg(g.ePipe, [U0, view_(etex[p]), view_(etex[1 - p])])),
     agentBG: [0, 1].map((p) => bg(g.agentPipe, [U0, { buffer: agents }, { buffer: dep }, view_(trail[p]), view_(etex[1 - p])])),
     diffuseBG: [0, 1].map((p) => bg(g.diffusePipe, [U0, { buffer: dep }, view_(trail[p]), view_(trail[1 - p])])),

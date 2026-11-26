@@ -1,7 +1,7 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
 import { HELP } from './help.ts';
-import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, J_KEYS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
+import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
 
 
 export function mountTweak() {
@@ -27,7 +27,6 @@ function tweakPanel() {
   const refresh = () => {
     resets.forEach((f) => f());
     for (const [k, ok] of Object.entries(RELEVANT)) inputs[k].parentElement!.hidden = !ok();
-    colors.refresh();
   };
   const resetBtn = (row: HTMLElement, isDefault: () => boolean, reset: () => void) => {
     const b = Object.assign(document.createElement('button'), { className: 'tweak-reset', type: 'button', textContent: '↺', title: 'reset to default' });
@@ -85,15 +84,11 @@ function tweakPanel() {
   const styleGroup = Object.assign(document.createElement('details'), { open: true });
   const styleTitle = document.createElement('summary');
   styleGroup.append(styleTitle);
-  const styleInputs: Record<string, TweakInput & { row: HTMLLabelElement }> = {};
+  const styleInputs: Record<string, TweakInput> = {};
   const curStyle = () => STYLE[PAGE_NAMES[desk.page]];
   for (const [k, , min, max, step, label] of STYLE_PARAMS) {
     let input: TweakInput, out: HTMLOutputElement | undefined;
-    if (CHOICES[k]) {
-      input = document.createElement('select');
-      for (const m of CHOICES[k]) input.append(new Option(m, m));
-      input.oninput = () => { curStyle()[k] = input.value; sync(); };
-    } else if (k === 'ink' || k === 'bg') {
+    if (k === 'ink' || k === 'bg') {
       input = Object.assign(document.createElement('input'), { type: 'color' });
       input.oninput = () => (curStyle()[k] = input.value.slice(1));
     } else {
@@ -102,7 +97,7 @@ function tweakPanel() {
       input.oninput = () => { curStyle()[k] = +input.value; out!.value = input.value; };
     }
     const r = Object.assign(document.createElement('label'), { title: HELP[k] ?? '' });
-    styleInputs[k] = Object.assign(input, { out, row: r });
+    styleInputs[k] = Object.assign(input, { out });
     r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
     if (out) r.append(out);
     const def = () => STYLE_BASE[PAGE_NAMES[desk.page]][k];
@@ -117,14 +112,7 @@ function tweakPanel() {
       if (el.out) el.out.value = String(T[k]);
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[desk.page]} page)`;
-    // Each mode shows only the controls that do something in it.
-    const SHOWN: Record<string, (k: string) => boolean> = {
-      paper: (k) => !J_KEYS.includes(k),
-      spectrum: (k) => !J_KEYS.includes(k) && !['ink', 'grain', 'tint', 'hueMix'].includes(k),
-      j: (k) => !['tint', 'hueMix', 'gamma', 'soft', 'grain', 'glow', 'halo'].includes(k),
-    };
     for (const [k, el] of Object.entries(styleInputs)) {
-      el.row.hidden = !SHOWN[curStyle().mode](k);
       const v = curStyle()[k];
       el.value = k === 'ink' || k === 'bg' ? '#' + v : String(v);
       if (el.out) el.out.value = String(v);

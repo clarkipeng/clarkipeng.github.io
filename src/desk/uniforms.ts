@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, EDGE_MODES, CHOICES } from './tunables.ts';
+import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, EDGE_MODES } from './tunables.ts';
 import type { Card } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 import { NCH } from './chips.ts';
@@ -71,7 +71,7 @@ function noteUniform(s: Card, x: number, y: number, th: number, z: number) {
   NOTE_U.set(noteProfile(s), 24);
   return [...t0, Math.hypot(ex, ey) + Math.abs(cy) + s.h];
 }
-function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, tint = 0, base: string | null = null, hueMix = 1) {
+function cardUniform(s: Card, dpr: number, o: number, originX = 0, tint = 0, base: string | null = null, hueMix = 1) {
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
   let [fz, fv] = flipPath(s);
   const lift = Math.max(s.lift, fz / T.lift, s.flyLift);
@@ -113,10 +113,9 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, 
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
     ...s.uv, ...s.mediaUV, s.carrier && s.carrier !== s ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
-    ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
-    // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
-    // emits a mild share of its ink (tint) and the full ink while open.
-    ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
+    ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), 0, 0, 0, s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
+    // Every inked card emits a mild share of its ink (tint) and the full ink while open.
+    ...(s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
     ...shd, 4 * flags + lv, ...(s.patch || FULL)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
@@ -146,10 +145,10 @@ const NAME_ABS = absorbance(NAME_INK);
 desk.capturing = false;
 const trans = { fade: 0 };
 function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
-  const s = sm, d = s.dpr, dev = desk.shared!.dev, st = STYLE[PAGE_NAMES[s.page]], jm = desk.isJ(s);
+  const s = sm, d = s.dpr, dev = desk.shared!.dev, st = STYLE[PAGE_NAMES[s.page]];
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = desk.view.phone ? 0 : s === desk.sim ? cam.x : s.origin, sy = desk.view.phone ? scrollY : 0; // a page warming in the background sees its own view
-  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, desk.view.phone ? s.origin : src.region * desk.view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
+  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, desk.view.phone ? s.origin : src.region * desk.view.w, st.tint, st.ink, st.hueMix); // each card from its own page's origin (the box flying off the page you left)
   // A flying box is drawn as a box (its faces in the slots after the cards'), with what rides in it in its own order.
   let slot = sources.length;
   const fly = (ids: number[]) => ids.flatMap((id) => {
@@ -185,10 +184,10 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     st.soft, st.grain, over.length, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
     T.shadowSoft, T.shadow, T.landRelease, desk.shared!.TX,
-    CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
+    0, st.glow, st.halo, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,
-    st.stain, st.bleed * d, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
+    0, 0, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
     T.pDesat, T.pWarm, T.pBlack, T.pDuo,
     T.pGrain, T.pMatte, 0, 0,
     ...(turn.on && !desk.capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),

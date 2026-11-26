@@ -4,7 +4,7 @@ import { HELP } from './help.ts';
 
 // The tweak panel's colors: a picker for every card's own colors and for the card text and stock, all live. On the dev
 // server, "save colors" writes them (and each page's background and ink) back into the source (vite.config.ts).
-const CARD_COLORS = [['hueHex', 'hue', 'own color'], ['inkHex', 'ink', 'ink when open'], ['jinkHex', 'jink', 'ink on the J desk']] as const;
+const CARD_COLORS = [['hueHex', 'hue', 'own color'], ['inkHex', 'ink', 'ink when open']] as const;
 const TOKENS = Object.keys(TOK).filter((k) => String(TOK[k as keyof typeof TOK]).startsWith('#') && k !== 'paper'); // the paper is each page's bg
 const cssVar = (k: string) => '--' + k.replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase()); // text2 -> --text-2
 
@@ -31,20 +31,17 @@ export function colorsGroup(desk: Desk, resetBtn: (row: HTMLElement, isDefault: 
     resetBtn(r, () => input.value === '#' + hex, reset);
     undo.push(reset);
     group.append(r);
-    return r;
   };
   const heading = (text: string) => group.append(Object.assign(document.createElement('h4'), { textContent: text }));
   const tok = TOK as unknown as Record<string, string>;
   heading('card text and stock');
   for (const k of TOKENS) row(k, tok[k].slice(1), 'tok.' + k, (v) => { tok[k] = '#' + v; document.documentElement.style.setProperty(cssVar(k), '#' + v); repaint(); });
-  const jinks: HTMLElement[] = []; // shown only while a page uses the j style, the only place jink shows
   for (const s of desk.sources) {
     if (!s.key || s.kind === 'deck' || s.lid) continue;
     heading(s.key);
     for (const [field, attr, label] of CARD_COLORS) {
       if (s[field] === undefined) continue;
-      const r = row(label, s[field]!, 'card.' + attr, (v) => { s[field] = v; if (field === 'hueHex') repaint(); }); // the hue also tints the card's stamp
-      if (field === 'jinkHex') jinks.push(r);
+      row(label, s[field]!, 'card.' + attr, (v) => { s[field] = v; if (field === 'hueHex') repaint(); }); // the hue also tints the card's stamp
     }
   }
   const save = import.meta.env.DEV ? Object.assign(document.createElement('button'), { textContent: 'save colors' }) : null;
@@ -58,6 +55,5 @@ export function colorsGroup(desk: Desk, resetBtn: (row: HTMLElement, isDefault: 
       setTimeout(() => (save.textContent = 'save colors'), 2000);
     };
   }
-  const refresh = () => { const j = PAGE_NAMES.some((pg) => desk.STYLE[pg].mode === 'j'); for (const r of jinks) r.hidden = !j; };
-  return { group, save, refresh, reset: () => undo.forEach((f) => f()) };
+  return { group, save, reset: () => undo.forEach((f) => f()) };
 }
