@@ -67,22 +67,24 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 // ---------- the box is thrown off ----------
 // A page that turns throws its card box off. The box is not printed on the page but rests on it: a rigid body
 // (physics.ts) on the turning paper (curl.ts, the same curl the page is drawn with). The flap's sagging edge slides under
-// the box, lifts and tips it, and the turn flings it off the frame; its lid and the cards in it ride along. A corner
-// turned by hand moves the paper under it the same way: let go before halfway and the box drops back onto the page,
-// settles, and eases home into its painting. Once off the frame it slides in again when its page next shows.
+// the box, lifts and tips it, and flicks it up and along the turn (toss), so it arcs and tumbles off the frame; its lid
+// and the cards in it ride along. A corner turned by hand moves the paper under it the same way: let go before halfway
+// and the box drops back onto the page, settles, and eases home into its painting. Once off the frame it slides in again
+// when its page next shows.
 // fadeZ: CSS px up by which its shadow has faded; out: s a box left at rest on screen after a turn takes to slide off; limit:
 // s at most in the air; hz: physics steps per s; rest: asleep once it stays within px for 0.4 s; sag: px the turning page's
-// edge sags under it; persp: s it takes to ease into its 3D view; home: s a fallen box takes to ease back to its spot
-const THROW = { fadeZ: 180, out: 0.6, limit: 6, hz: 480, rest: 0.5, sag: 40, persp: 0.25, home: 0.5 };
+// edge sags under it; persp: s it takes to ease into its 3D view; home: s a fallen box takes to ease back to its spot;
+// toss: the flick, of the flap's speed then, along the turn and up
+const THROW = { fadeZ: 180, out: 0.6, limit: 6, hz: 480, rest: 0.5, sag: 40, persp: 0.25, home: 0.5, toss: [0.2, 1] };
 const LID_WAIT = 0.3; // the flap waits this long before it shuts (s)
 const easeOutCubic = (u: number) => 1 - (1 - u) ** 3;
-const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7);
+const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7), F0 = new Float64Array(2), F1 = new Float64Array(2);
 desk.phys = null; // the world and the turning page every thrown box shares
 // Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
 function throwWorld() {
   if (desk.phys && (desk.phys.hz === THROW.hz || desk.phys.L || desk.phys.world.bodies.length)) return desk.phys;
   const world = createWorld({ hz: THROW.hz }), curl = createCurl({ state: (t, out) => (desk.phys!.L ? turnAt(desk.phys!.L, t, out) : out.fill(0)), rollR }); // no turn: flat
-  world.surface = curl;
+  world.surface = curl; world.stepped = toss;
   desk.phys = { world, curl, hz: THROW.hz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
   const k = desk.view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
   curl.page(0, desk.view.w, desk.view.h); world.g = T.gravity * k; world.rest = THROW.rest;
@@ -90,6 +92,17 @@ function throwWorld() {
   for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
   world.remove(b); desk.phys.L = null;
   return desk.phys;
+}
+// The flap flicks the box: the step the paper first moves it, it is tossed up and along the turn, as fast as the flap
+// (twice the fold) moves then.
+function toss() {
+  const L = desk.phys!.L, b = L?.body;
+  if (!b || L.tossed || b.sleep || b.v[0] ** 2 + b.v[1] ** 2 + b.v[2] ** 2 < 2500) return; // still at rest
+  const t = desk.phys!.world.time;
+  turnAt(L, t, F0); turnAt(L, t + 0.01, F1);
+  const v = (2 * Math.abs(F1[0] - F0[0])) / 0.01;
+  b.v[0] -= THROW.toss[0] * v * Math.cos(F0[1]); b.v[1] -= THROW.toss[0] * v * Math.sin(F0[1]); b.v[2] += THROW.toss[1] * v;
+  L.tossed = true;
 }
 // Where the turn is t s after it began (the physics' clock): out = the fold's distance, its direction. A turn by hand is
 // its frames (t, d, a), straight between them and on past the last; once let go (or a click's turn), its own curve.
@@ -118,7 +131,7 @@ function launch(d: Card | undefined) {
     body.sleep = true;
     L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 } as Launch; // the rest is set just below
   }
-  Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
+  Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null, tossed: false });
   P.L = L; world.time = 0; world.g = T.gravity * desk.view.k; world.rest = THROW.rest;
   curl.page(d.region * desk.view.w, desk.view.w, desk.view.h); curl.sag = THROW.sag * desk.view.k; curl.prepare(0);
   L.sv = world.save();
@@ -128,14 +141,14 @@ function launch(d: Card | undefined) {
 }
 function stepThrows(dt: number) { for (const d of sources) if (d.launch) stepThrow(d, dt); }
 function stepThrow(d: Card, dt: number) {
-  const L = d.launch!, { world } = desk.phys!, at = window.__j?.at; // test hook (as the turn's): hold the throw at one moment
+  const L = d.launch!, { world } = desk.phys!, at = window.__j?.at, drawn = L.hull; // test hook (as the turn's): hold the throw at one moment
   L.t = at ?? L.t + dt; L.wt = at ?? L.wt + dt;
   if (turn.on && turn.from === d.region) { // the paper under it, as the turn moves it
     if (turn.mode === 'drag') L.keys.push(L.t, turn.d, turn.a);
     else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES.glide : easeOutCubic };
     L.mode = turn.mode;
   } else L.end ??= L.mode === 'back' ? 'back' : 'done';
-  if (at != null && at < world.time - 1e-9) world.load(L.sv); // held earlier: the same throw again from its start
+  if (at != null && at < world.time - 1e-9) { world.load(L.sv); L.tossed = false; } // held earlier: the same throw again from its start
   if (L.home) L.home.t += dt;
   else if (L.out) L.out.t += dt;
   else {
@@ -146,7 +159,7 @@ function stepThrow(d: Card, dt: number) {
     if (L.end && (L.body.sleep || L.t > THROW.limit)) { if (L.end === 'back') L.home = { t: 0, q: [...L.body.q] }; else L.out = { t: 0 }; }
   }
   poseThrow(d);
-  if (L.home ? L.home.t >= THROW.home : offFrame(d)) endThrow(d, !L.home);
+  if (L.home ? L.home.t >= THROW.home : offFrame(d, drawn)) endThrow(d, !L.home);
 }
 const quatMat = ([w, x, y, z]: number[]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
 const nlerp = (p: number[], q: number[], u: number) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
@@ -173,11 +186,16 @@ function poseThrow(d: Card) {
   L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * desk.view.k)) };
 }
 const launchPose = (d: Card) => d.launch!.P;
-// Off the frame: everything it could draw (it, its lid, as its eye sees them) is past an edge of its page.
-function offFrame(d: Card) {
+// Off the frame: everything it could draw (it, its lid, as its eye sees them) is past an edge of its page; or what it
+// drew last frame (drawn: its outline) and its shadow are. Once out it is gone, so a box that falls back never shows again.
+function offFrame(d: Card, drawn: number[][] | null) {
   const P = d.launch!.P, lid = lidOf(d), { W, H, D } = boxDims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
   const r = (r0 * (1 + BOX3D.a) * F) / Math.max(F - r0, 1), x = P.C[0] - d.region * desk.view.w, y = P.C[1];
-  return x - r > desk.view.w || x + r < 0 || y + r < 0 || y - r > desk.view.h;
+  const out = (x0: number, y0: number, x1: number, y1: number) => x0 > desk.view.w || x1 < 0 || y1 < 0 || y0 > desk.view.h;
+  if (out(x - r, y - r, x + r, y + r)) return true;
+  if (!drawn) return false;
+  const xs = drawn.map((p) => p[0] - d.region * desk.view.w), ys = drawn.map((p) => p[1]), s = Math.hypot(P.foot![1], P.foot![2]) + THROW.fadeZ * desk.view.k;
+  return out(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)) && (P.fade >= 1 || out(x - s, y - s, x + s, y + s));
 }
 function endThrow(d: Card, arrive: boolean) {
   const L = d.launch!;

@@ -34,7 +34,7 @@ export interface ThrowPose { X: V3; Y: V3; w: number; C: V3; M: number[]; low: n
 // A card box thrown off by the page turn (launch): its body in the physics world, and the turn under it.
 export interface Launch {
   d: Card; body: PBody; x: number; y: number; wt: number; t: number;
-  seg: Seg | null; keys: number[]; kj: number; mode: string; end: string | null;
+  seg: Seg | null; keys: number[]; kj: number; mode: string; end: string | null; tossed: boolean;
   home: { t: number; q: number[] } | null; out: { t: number } | null; sv: Float64Array; P: ThrowPose; hull: number[][] | null;
 }
 // The card box's pencil tally (tallySetup).
