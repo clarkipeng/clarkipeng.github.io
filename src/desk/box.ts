@@ -153,7 +153,8 @@ function syncBodies() {
   const lying: Rect[] = [];
   for (const s of [...sources].sort((a, b) => a.z - b.z)) {
     const d = pageDeck(s.region), { W, H, D } = dims(s), [sx, y, r] = shown(s), a = (r * Math.PI) / 180 + s.sway, x = sx + (from - s.region) * pw;
-    const want = !!s.launch || (on && !!d && !!s.w && (s.region === from || (s.region === desk.page && !under(x, y, Math.hypot(W, H) / 2))) && onDesk(s));
+    // The other page's box joins once it has slid in (held while it slides, it is a wall the thrown box hits).
+    const want = !!s.launch || (on && !!d && !!s.w && (s.region === from || (s.region === desk.page && !(s.more && arriving(s)) && !under(x, y, Math.hypot(W, H) / 2))) && onDesk(s));
     if (s.body && (!want || (!s.launch && Math.abs(s.body.bound - Math.hypot(W, H, D) / 2) > 1e-6))) { world.remove(s.body); s.body = null; } // gone, or resized
     if (!want || s.launch) continue;
     if (!s.body) {
