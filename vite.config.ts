@@ -14,6 +14,15 @@ function deskMedia(): Plugin {
   return {
     name: 'desk-media',
     resolveId: (source) => (source === id ? '\0' + id : undefined),
+    // Dev: a changed file reloads the page with new addresses (addWatchFile would make vite import the public files).
+    configureServer(server) {
+      server.watcher.add(dirs)
+      server.watcher.on('all', (_, file) => {
+        if (!dirs.some((d) => relative(d, file)[0] !== '.')) return
+        const m = server.moduleGraph.getModuleById('\0' + id)
+        if (m) { server.moduleGraph.invalidateModule(m); server.ws.send({ type: 'full-reload' }) }
+      })
+    },
     load(resolved) {
       if (resolved !== '\0' + id) return
       const urls: Record<string, string> = {}
@@ -21,7 +30,6 @@ function deskMedia(): Plugin {
         for (const e of readdirSync(dir, { recursive: true, withFileTypes: true })) {
           if (!e.isFile()) continue
           const file = join(e.parentPath, e.name)
-          this.addWatchFile(file)
           const path = '/' + relative('public', file)
           urls[path] = `${path}?v=${createHash('md5').update(readFileSync(file)).digest('hex').slice(0, 10)}`
         }
@@ -53,6 +61,16 @@ function saveColors({ tok, cards, pages }: Colors) {
   edit('src/desk/desk.css', (s) => Object.entries(tok).reduce((s, [k, v]) =>
     s.replace(new RegExp(`--${key(k).replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase())}: #[0-9a-f]{6}`), (m) => m.slice(0, -6) + hex(v)), s))
 }
+// The admin panel's text edits, back into desk.html: each card's element whose markup was `from` now holds `to`.
+function saveText(edits: { key: string; from: string; to: string }[]) {
+  let s = readFileSync('src/desk/desk.html', 'utf8')
+  for (const { key, from, to } of edits) {
+    const at = s.indexOf(`data-key="${key}"`), end = s.indexOf('</li>', at), i = s.indexOf(`>${from}<`, at)
+    if (at < 0 || i < 0 || i > end) throw new Error(`not found in ${key}: ${from}`)
+    s = s.slice(0, i + 1) + to + s.slice(i + 1 + from.length)
+  }
+  writeFileSync('src/desk/desk.html', s)
+}
 function deskColors(): Plugin {
   return {
     name: 'desk-colors',
@@ -64,6 +82,14 @@ function deskColors(): Plugin {
         req.on('data', (c) => (body += c))
         req.on('end', () => {
           try { saveColors(JSON.parse(body)); res.end('ok') } catch (e) { res.statusCode = 400; res.end(String(e)) }
+        })
+      })
+      server.middlewares.use('/__desk-text', (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
+        let body = ''
+        req.on('data', (c) => (body += c))
+        req.on('end', () => {
+          try { saveText(JSON.parse(body)); res.end('ok') } catch (e) { res.statusCode = 400; res.end(String(e)) }
         })
       })
     },
