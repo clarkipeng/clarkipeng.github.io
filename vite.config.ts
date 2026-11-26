@@ -61,13 +61,13 @@ function saveColors({ tok, cards, pages }: Colors) {
   edit('src/desk/desk.css', (s) => Object.entries(tok).reduce((s, [k, v]) =>
     s.replace(new RegExp(`--${key(k).replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase())}: #[0-9a-f]{6}`), (m) => m.slice(0, -6) + hex(v)), s))
 }
-// The admin panel's text edits, back into desk.html: each card's element whose markup was `from` now holds `to`.
+// The admin panel's text edits, back into desk.html: in each card's <li>, the markup `from` becomes `to`.
 function saveText(edits: { key: string; from: string; to: string }[]) {
   let s = readFileSync('src/desk/desk.html', 'utf8')
   for (const { key, from, to } of edits) {
-    const at = s.indexOf(`data-key="${key}"`), end = s.indexOf('</li>', at), i = s.indexOf(`>${from}<`, at)
+    const at = s.indexOf(`data-key="${key}"`), end = s.indexOf('</li>', at), i = s.indexOf(from, at)
     if (at < 0 || i < 0 || i > end) throw new Error(`not found in ${key}: ${from}`)
-    s = s.slice(0, i + 1) + to + s.slice(i + 1 + from.length)
+    s = s.slice(0, i) + to + s.slice(i + from.length)
   }
   writeFileSync('src/desk/desk.html', s)
 }
