@@ -220,9 +220,9 @@ export const PRINTS: Record<string, Record<string, number>> = {
 // grid (agents count at 0.5x, so 32.1k here), soft pale veins drawn at half opacity, big open cells); k8: Clark's K8 tuning (denser, finer olive veins).
 const LOOKS: Record<string, { T: Record<string, number>; main: Record<string, number | string> }> = {
   original: { T: { res: 0.45, agents: 32100, speed: 147, turn: 0.35, sa: 0.5, sd: 26.7, decay: 0.9, deposit: 0.045, diffuse: 1, respawn: 0, edge: 0.14 },
-    main: { ink: 'b0b993', opacity: 1, gain: 1.1, gamma: 1.8, soft: 0.4, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
+    main: { ink: 'b0b993', opacity: 1, gain: 1.1, gamma: 1.8, soft: 0.4, grain: 0.16, tint: 0 } },
   k8: { T: { res: 1, agents: 200000, speed: 93, turn: 0.1, sa: 0.5, sd: 26.6, decay: 0.9, deposit: 0.038, diffuse: 0.79, respawn: 0.003, edge: 0.55 },
-    main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0 } },
+    main: { ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0 } },
 };
 // Card size presets: compact (Clark's pick, 2026-11-23, the default) shows cards at 0.75 with the title on the front
 // only, tighter backs, and thumbnails framed on their subject; as-is is the full-size card from before.
@@ -245,19 +245,17 @@ export const STYLE_PARAMS: [string, number | string, number, number, number, str
   ['gamma', 1.8, 0.4, 3, 0.01, 'gamma'],
   ['soft', 0.7, 0, 2, 0.05, 'softness'],
   ['grain', 0.1, 0, 0.6, 0.01, 'paper grain'],
-  ['glow', 1.5, 0, 4, 0.05, 'glow'],  // darker dense vein cores
-  ['halo', 0.6, 0, 2, 0.05, 'halo'],  // a soft ink bleed around veins
   ['tint', 0, 0, 1, 0.01, 'project color strength'],
   ['hueMix', 0, 0, 1, 0.01, 'project hue (0 = olive, 1 = own hue)'], // tint: how much of its mild ink a closed card always emits (open: full ink); hueMix: how far that ink turns from the shared olive toward the card's own ink
 ];
 // A page's style: its background and ink are strings, the rest numbers.
-type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number; glow: number;
-  halo: number; tint: number; hueMix: number } & Record<string, number | string>;
+type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number;
+  tint: number; hueMix: number } & Record<string, number | string>;
 export const STYLE_DEFAULTS: Record<string, Style> = {
-  // main: Clark's K8 look (light olive veins, no glow or halo, no project color until a card is opened)
-  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.8, grain: 0.16, glow: 0, halo: 0, tint: 0, hueMix: 0.3 },
+  // main: Clark's K8 look (light olive veins, no project color until a card is opened)
+  main: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.8, grain: 0.16, tint: 0, hueMix: 0.3 },
   // research: the same K8 paper, with each paper always emitting a soft wash of its own ink
-  research: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0.8, hueMix: 0.8 },
+  research: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0.8, hueMix: 0.8 },
 };
 // What the tweak panel resets to: the defaults with the default look and print laid over them (the research page keeps its tint).
 const LOOK = LOOKS[DEFAULTS.look];

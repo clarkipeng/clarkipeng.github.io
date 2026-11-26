@@ -184,7 +184,7 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     st.soft, st.grain, over.length, order.length,
     T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
     T.shadowSoft, T.shadow, T.landRelease, desk.shared!.TX,
-    0, st.glow, st.halo, s.t,
+    0, 0, 0, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,
     0, 0, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,

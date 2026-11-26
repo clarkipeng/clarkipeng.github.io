@@ -33,7 +33,7 @@ struct G {
   z: vec4f,   // ink softness (texels), ink grain, cards flying off the page you left (after this page's in ord), on-screen card count
   w: vec4f,   // second ring on, second ring at (x ridge distance), corner emphasis, ink opacity
   u: vec4f,   // shadow softness, shadow strength, release window (s), tiles per row (TILE device px each)
-  st: vec4f,  // unused, glow, halo, page clock (s)
+  st: vec4f,  // unused, unused, unused, page clock (s)
   bg: vec4f,  // page background, linear rgb
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
   jq: vec4f,  // unused, unused; hold (1: clear the ink, hold the agents), the note drawn as paper (-1: none)
@@ -601,19 +601,13 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
     stamp = max(stamp, im.z * (1.0 - smoothstep(-20.0 * g.a.w, 6.0 * g.a.w, boxSd(l, ge.xy, ge.z))));
   }
   let fadeIn = smoothstep(0.6, 2.6, g.st.w) * (1.0 - 0.85 * m.b) * g.w.w * (1.0 + 0.6 * stamp);
-  let h = 4.0 * o + 2.0; // halo: a wider look at the same trail
-  let halo4 = 0.25 * (textureSampleLevel(trail, samp, (p + vec2f(-h, -h)) * tp, 0.0) + textureSampleLevel(trail, samp, (p + vec2f(h, -h)) * tp, 0.0)
-                    + textureSampleLevel(trail, samp, (p + vec2f(-h, h)) * tp, 0.0) + textureSampleLevel(trail, samp, (p + vec2f(h, h)) * tp, 0.0));
   var col = bare(gr, vq); // paper grain: the paper's own texture (K8's at 0.16), and how unevenly it takes ink
-  // Ink: opacity scales its strength (1 = the ink color at full density), glow darkens dense vein cores, halo bleeds a
-  // soft wash of ink around the veins. Each pixel's ink color comes from the trail, so card inks mix like dye.
+  // Ink: opacity scales its strength (1 = the ink color at full density). Each pixel's ink color comes from the trail, so
+  // card inks mix like dye.
   let tooth = 1.0 - 0.5 * g.z.y + g.z.y * gr.y;
-  let d0 = clamp(a * g.f.z, 0.0, 1.0);
-  let conc = pow(d0, g.f.w) * (1.0 + g.st.y * smoothstep(0.35, 0.95, d0)) * tooth * fadeIn;
-  let concH = pow(clamp(halo4.a * g.f.z, 0.0, 1.0), 1.4) * g.st.z * 0.45 * tooth * fadeIn;
+  let conc = pow(clamp(a * g.f.z, 0.0, 1.0), g.f.w) * tooth * fadeIn;
   let inkA = select(g.n.xyz, t4.rgb / max(a, 1e-4), a > 1e-3);
-  let inkH = select(g.n.xyz, halo4.rgb / max(halo4.a, 1e-4), halo4.a > 1e-3);
-  col *= exp(-inkA * conc - inkH * concH);
+  col *= exp(-inkA * conc);
   col *= exp(-g.k.xyz * m.r * (0.93 + 0.14 * gr.y));
   col = inked(col, DARK, m.g); // the tagline
 

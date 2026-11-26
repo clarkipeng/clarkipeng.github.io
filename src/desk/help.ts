@@ -166,8 +166,6 @@ export const HELP: Record<string, string> = {
   gamma: 'Ink contrast. Higher hides faint trails and keeps only strong veins.',
   soft: 'How blurred the ink is when drawn.',
   grain: 'The paper\'s own texture, and how unevenly it takes ink.',
-  glow: 'Extra darkness in the densest vein cores.',
-  halo: 'A soft wash of ink around veins.',
   tint: 'How much of its color a closed card puts into the slime (an open card always puts in all of it).',
   hueMix: 'How far that color moves from the shared olive toward the card\'s open ink.',
   // Colors
