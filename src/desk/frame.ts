@@ -18,6 +18,8 @@ const { T, throwWorld, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, redu
 // same sim as the card box (physics.ts): a page turn throws them with it. A chip is gone once it is wholly off the screen
 // or eaten, never sooner.
 const chips = createChips(T, () => throwWorld().world);
+const TASTE = 1.5, FOOD = 1, FOOD_R = 2; // the slime under a chip counts x toward eating it; its pull on the slime, reaching x its radius
+const LIVE = 8, HURRY = 6; // the most chips at once; over that, the oldest is eaten x faster
 const chipRegion = () => chips.bodies[0]?.chip.region ?? desk.page;
 const chipX0 = () => (desk.view.phone ? 0 : chipRegion() * desk.view.w);
 let chipFeedAt = 0;
@@ -31,7 +33,7 @@ function chipUniforms(s: Sim) {
   U.set([bs.length, 1, tiles.length, own ? 0 : 1], CHIP_OFF);
   tiles.forEach((t, i) => U.set(t, CHIP_OFF + (1 + NCH * 2 + i) * 4));
   bs.forEach((b, i) => {
-    U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * T.chipFoodR * s.dpr, b.landed ? T.chipFood : 0], CHIP_OFF + 4 + i * 4);
+    U.set([(b.x[0] - s.origin) * s.dpr, b.x[1] * s.dpr, b.foot * FOOD_R * s.dpr, b.landed ? FOOD : 0], CHIP_OFF + 4 + i * 4);
     if (b.land) U.set([(b.land[0] - s.origin) * s.dpr, b.land[1] * s.dpr, b.land[2] * s.dpr, b.land[3]], CHIP_OFF + 4 + (NCH + i) * 4);
   });
 }
@@ -53,13 +55,13 @@ function stepChips(dt: number) {
   for (const b of chips.bodies.filter((b) => b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + desk.view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
   chips.step(dt, own);
   if (chips.bodies.some((b) => !b.sleep || b.dirty)) desk.redraw = true;
-  if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; desk.gpu!.chipR.feed(chips, desk.sim!.trail[desk.sim!.parity], { x0: desk.sim!.origin, dpr: desk.sim!.dpr, gain: T.chipTaste }); }
+  if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; desk.gpu!.chipR.feed(chips, desk.sim!.trail[desk.sim!.parity], { x0: desk.sim!.origin, dpr: desk.sim!.dpr, gain: TASTE }); }
 }
 // Over the cap the oldest chip is eaten faster; with every slot taken the oldest crumbles away, and the new one drops as
 // soon as its slot is free (with reduced motion, at once).
 function dropChip(x: number, y: number) {
   const live = [...new Set(chips.bodies.map((b) => b.chip))].sort((a, b) => a.born - b.born), calm = live.filter((c) => c.hurry === 1);
-  if (calm.length >= T.chipMax) calm[0].hurry = T.chipHurry;
+  if (calm.length >= LIVE) calm[0].hurry = HURRY;
   if (chips.bodies.length >= NCH) {
     const c = live.find((c) => !c.crumbles), its = chips.bodies.filter((b) => b.chip === c);
     if (reduced) its.forEach((b) => chips.remove(b)); // no motion: it is just gone
@@ -71,7 +73,7 @@ function dropChip(x: number, y: number) {
   return b;
 }
 addEventListener('click', (e) => {
-  if (!desk.gpu || !desk.sim || !T.chips || turn.on || flights.on || e.button !== 0) return;
+  if (!desk.gpu || !desk.sim || turn.on || flights.on || e.button !== 0) return;
   if ((e.target as Partial<Element>).closest?.('.src, .door, a, button, input, select, label, textarea, .tweak, .links')) return;
   const x = deskX(e), y = deskY(e), x0 = chipX0();
   for (const r of [!desk.view.phone && cornerBox(x0), deckRect(desk.page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;

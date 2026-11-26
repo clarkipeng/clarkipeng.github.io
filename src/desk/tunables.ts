@@ -1,5 +1,4 @@
 import { currentDesk } from './state.ts';
-import { NCH } from './chips.ts';
 import { TALLY_PARAMS } from './tally.ts';
 
 export const MAX = 32; // cards and decks the uniforms hold (room for overflow projects)
@@ -134,39 +133,11 @@ export const GROUPS = {
   Tally: TALLY_PARAMS, // the pencil tally on each card box (tally.ts)
   // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.ts).
   Chips: [
-    ['chips', 1, 0, 1, 1, 'click the desk to drop a chip'],
     ['chipSize', 31, 15, 60, 0.5, 'radius px'],
-    ['chipThick', 2, 0.8, 5, 0.1, 'thickness px'],
     ['chipCurl', 1.4, 0, 2, 0.05, 'curl'],
-    ['chipFold', 1, 0, 2, 0.05, 'curled-up edges'],
-    ['chipBend', 0.8, 0.05, 2, 0.01, 'how gradually the edges curl'],
-    ['chipDrop', 150, 0, 400, 1, 'drop height px'],
-    ['chipSpin', 10, 0, 30, 0.5, 'tumble rad/s'],
-    ['chipCam', 1200, 400, 4000, 10, 'camera height px (nearer looks larger)'],
-    ['chipDamp', 16, 0, 40, 0.5, 'rocking dies at x/s on the desk'],
     ['chipEat', 1.2, 0.05, 3, 0.01, 'eating speed'],
-    ['chipBand', 1, 0.2, 4, 0.05, 'eaten within px of the desk'],
-    ['chipTaste', 1.5, 0.2, 6, 0.05, 'slime under it counts x'],
-    ['chipFood', 1, 0, 2, 0.01, 'food strength'],
-    ['chipFoodR', 2, 0.3, 3, 0.05, 'food reach x radius'],
-    ['chipMax', 8, 1, NCH, 1, 'live chips'],
-    ['chipHurry', 6, 1, 20, 0.5, 'over the cap: the oldest is eaten x faster'],
-    ['chipCrumbs', 30, 0, 200, 1, 'a piece under this many columns is crumbs'],
-    ['chipCrumbS', 0.6, 0.05, 3, 0.05, 'crumbs eaten in s'],
     ['chipGold', 0.35, 0, 1, 0.01, 'pale to deep gold'],
-    ['chipCrisp', 0.8, 0, 1.5, 0.01, 'browned rim'],
-    ['chipSalt', 0.6, 0, 2, 0.01, 'salt'],
-    ['chipEdge', 1.5, 0, 3, 0.05, 'its thickness shows along the edge where it tilts'],
-    ['chipLight', 2.5, 0, 3, 0.05, 'light across the curl'],
-    ['chipFill', 0.6, 0, 1, 0.01, 'the darkest the side turned away gets'],
-    ['chipRelief', 0.3, 0, 1.5, 0.01, 'bright crests, dark troughs'],
-    ['chipGloss', 0.8, 0, 2, 0.01, 'broad highlight'],
     ['chipShadow', 0.6, 0, 1.5, 0.01, 'shadow'],
-    ['chipSoft', 0.5, 0, 2, 0.01, 'shadow softens per px of height'],
-    ['chipShadowH', 80, 20, 300, 1, 'shadow fades out by height px'],
-    ['chipContact', 1, 0, 2, 0.01, 'contact shadow'],
-    ['chipNibble', 0.6, 0, 1.5, 0.01, 'nibbled edges'],
-    ['chipStain', 0.4, 0, 1, 0.01, 'slime stain'],
   ],
 } as const;
 // Every tunable's current value.
