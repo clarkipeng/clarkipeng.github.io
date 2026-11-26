@@ -71,8 +71,11 @@ function dropChip(x: number, y: number) {
   if (reduced) drawStill(); // no frame loop: it is drawn where it came to rest
   return b;
 }
+// A press that starts on a card is never a chip drop, even when its release lands on bare desk (reduced motion: cards stay put).
+let onCard = false;
+addEventListener('pointerdown', (e) => (onCard = !!(e.target as Partial<Element>).closest?.('.src')));
 addEventListener('click', (e) => {
-  if (!desk.gpu || !desk.sim || turn.on || flights.on || e.button !== 0) return;
+  if (!desk.gpu || !desk.sim || turn.on || flights.on || e.button !== 0 || onCard) return;
   if ((e.target as Partial<Element>).closest?.('.src, .door, a, button, input, select, label, textarea, .adm, .links')) return;
   const x = deskX(e), y = deskY(e), x0 = chipX0();
   for (const r of [!desk.view.phone && cornerBox(x0), deckRect(desk.page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;
@@ -360,6 +363,9 @@ async function main() {
     encodeRender(enc, desk.gpu.ctx.getCurrentTexture().createView());
     desk.gpu.device.queue.submit([enc.finish()]);
     body.classList.add('settled');
+    // Phones scroll one long page under a fixed canvas: redraw the still as it scrolls, at most once a frame.
+    let queued = false;
+    if (desk.view.phone) addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; if (!desk.dead) drawStill(); }); } }, { passive: true });
     return;
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover

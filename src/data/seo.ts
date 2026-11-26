@@ -72,7 +72,7 @@ const structuredData = (path: string) => {
     person,
   ];
 
-  if (path === '/') graph.push({ '@type': 'ProfilePage', url: site, name: meta.title, dateModified: new Date().toISOString().slice(0, 10), mainEntity: { '@id': personId } });
+  if (path === '/') graph.push({ '@type': 'ProfilePage', url: site, name: meta.title, dateModified: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), mainEntity: { '@id': personId } });
   if (path === '/publications') graph.push(...scholarlyArticles);
 
   return { '@context': 'https://schema.org', '@graph': graph };

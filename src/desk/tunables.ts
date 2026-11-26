@@ -73,6 +73,7 @@ export const GROUPS = {
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'Flip length'],
     ['drawStagger', 0.1, 0, 0.4, 0.01, 'Deal stagger'],
     ['lidS', 0.25, 0.05, 1, 0.05, 'Box flap length'],
+    ['boxNear', 60, 0, 240, 5, 'Box opens within'],
     ['fadeIn', 0.4, 0.05, 2, 0.05, 'Clip fade in'],
     ['fadeOut', 1, 0.1, 3, 0.05, 'Clip fade out'],
     ...TALLY_PARAMS, // the pencil tally on each card box (tally.ts)

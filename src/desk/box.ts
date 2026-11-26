@@ -43,7 +43,7 @@ function placeDecks() {
 // edge, its lid closing, and peeks out a little further while you drag a card; it comes out for a card dragged near it.
 // Holding cards it stays out, its lid shut until the pointer comes near.
 // A card dropped on it, or every card on the page (double-click or Enter), goes in through its open end, on top.
-const BOX = { put: 0.3, enter: -10, keep: 28, near: 160, far: 220, peek: 20, hover: 48, unhover: 120 }; // s: a put-back's slide in; CSS px: over the box (in, out), near it (in, out), the peek while dragging, the pointer near it (in, out)
+const BOX = { put: 0.3, enter: -10, keep: 28, peek: 20, hover: 48, unhover: 120 }; // s: a put-back's slide in; CSS px: over the box (in, out), the peek while dragging, the pointer near it (in, out)
 const deckOut = (d: Card, want: string) => (want === 'out' ? 0 : d.w + 40 * desk.view.k); // x offset from its spot: in place, or off screen
 function slideDeck(d: Card, want: string, dur = MOTION.respond, ease: Ease = want === 'out' ? easeOutQuart : EASES.cubic) {
   const v = d.slide;

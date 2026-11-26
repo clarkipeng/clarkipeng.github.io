@@ -92,7 +92,7 @@ export const portfolioProjects = [
   },
   {
     title: 'Raytracer from Scratch',
-    description: 'A from-scratch renderer for experimenting with light, sound, and noisy physical scenes.',
+    description: 'My first renderer, written from scratch.',
     year: '2022',
     links: [
       { label: 'Repository', href: 'https://github.com/clarkipeng/RayTraceModel' },

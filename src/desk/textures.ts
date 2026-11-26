@@ -25,8 +25,9 @@ const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, wrapLines, hin
 
 // The part of an image (fractions) that covers a media area of aspect ma, zoomed by the card's framing [zoom, x, y].
 // x and y place the crop like CSS object-position, so stills, clips, and the DOM fallback frame the same way.
-function coverRect(ia: number, ma: number, [z, px, py]: number[]) {
-  const w = Math.min(1, ma / ia) / z, h = Math.min(1, ia / ma) / z;
+// contain: the whole image fits instead (the part reaches past its edges, which stay bare).
+function coverRect(ia: number, ma: number, [z, px, py]: number[], contain = false) {
+  const fit = contain ? Math.max : Math.min, w = fit(1, ma / ia) / z, h = fit(1, ia / ma) / z;
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
@@ -148,7 +149,8 @@ function drawCard(s0: Card, S0: number) {
     mediaPx = { x: Math.round(m.x * S), y: Math.round(m.y * S), w: Math.round(m.w * S), h: Math.round(m.h * S) };
     const src = s.img!; // a card with media has its picture
     const iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
-    const [fx, fy, fw, fh] = coverRect(iw / ih, mediaPx.w / mediaPx.h, s.frame);
+    const [fx, fy, fw, fh] = coverRect(iw / ih, mediaPx.w / mediaPx.h, s.frame, s.contain);
+    if (s.contain) { x.fillStyle = '#fff'; x.fillRect(mediaPx.x, mediaPx.y, mediaPx.w, mediaPx.h); } // the figure's own white, past its edges
     x.imageSmoothingQuality = 'high';
     x.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, mediaPx.x, mediaPx.y, mediaPx.w, mediaPx.h);
   }
