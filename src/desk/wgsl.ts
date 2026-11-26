@@ -28,10 +28,10 @@ struct G {
   n: vec4f,   // ink absorbance rgb, sim px per device px
   k: vec4f,   // name ink absorbance rgb, 1 in how many agents feel the edge food
   v: vec4f,   // video card, video mix, crossfade to the next clip, device px per CSS px at the reference size (dev * k)
-  x: vec4f,   // edge mode, ridge distance, ridge width, landing burst reach (sim px)
+  x: vec4f,   // unused, ridge distance, ridge width, landing burst reach (sim px)
   y: vec4f,   // landing burst speed-up, burst decay, hover excitation, cursor excitation
   z: vec4f,   // ink softness (texels), ink grain, cards flying off the page you left (after this page's in ord), on-screen card count
-  w: vec4f,   // second ring on, second ring at (x ridge distance), corner emphasis, ink opacity
+  w: vec4f,   // unused, second ring at (x ridge distance), unused, ink opacity
   u: vec4f,   // shadow softness, shadow strength, release window (s), tiles per row (TILE device px each)
   st: vec4f,  // unused, unused, unused, page clock (s)
   bg: vec4f,  // page background, linear rgb
@@ -211,41 +211,20 @@ fn outward(c: Card, p: vec2f) -> f32 {
   n *= select(vec2f(-1.0), vec2f(1.0), l >= vec2f(0.0));
   return atan2(cs.y * n.x + cs.x * n.y, cs.x * n.x - cs.y * n.y);
 }
-// Food card k leaves at p, by edge mode (see EDGE_MODES in JS). Distances in sim px.
-fn food(k: u32, p: vec2f) -> f32 {
-  let mode = u32(g.x.x);
-  let c = g.cards[k];
-  if (mode == 3u || mode == 4u) {
-    let l = toLocal(c, p) * c.misc.x;
-    let h = c.geo.xy * c.misc.x;
-    if (mode == 4u) { let q = l / (0.45 * min(h.x, h.y)); return exp(-dot(q, q)); }
-    let o = h + vec2f(g.x.y * 0.7); // just outside each corner
-    let q = (abs(l) - o) / (1.5 * g.x.z);
-    return exp(-dot(q, q));
-  }
-  let d = cardSd(k, p);
-  var f = ridge(d, g.x.y);
-  if (g.w.x > 0.5) { f = max(f, ridge(d, g.x.y * g.w.y)); }
-  if (g.w.z > 0.0) { // corner emphasis: extra food just outside the four corners
-    let l = toLocal(c, p) * c.misc.x;
-    let q = (abs(l) - c.geo.xy * c.misc.x - vec2f(g.x.y * 0.7)) / (4.0 * g.x.z);
-    f = max(f, g.w.z * exp(-dot(q, q)));
-  }
-  return f;
-}
-// Trail, excitation, and food near each card, so veins gather around the cards. In max mode food only tops the trail
-// up to a vein's strength, so the outlines never starve the open network; plus mode adds it on top.
+// Food card k leaves at p: two bands just outside its edge, the second farther out. Distances in sim px.
+fn food(k: u32, p: vec2f) -> f32 { let d = cardSd(k, p); return max(ridge(d, g.x.y), ridge(d, g.x.y * g.w.y)); }
+// Trail, excitation, and food near each card, so veins gather around the cards. Food only tops the trail up to a vein's
+// strength, so the outlines never starve the open network.
 fn cardAt(j: u32) -> u32 { return u32(g.ord[j / 4u][j % 4u]); } // j-th on-screen card
 fn sense(p: vec2f, edgy: bool) -> f32 {
   var v = textureLoad(trail, vec2i(wrap(p)), 0).a;
-  if (edgy && g.x.x > 0.5) {
+  if (edgy) {
     let reach = g.x.y * max(g.w.y, 1.0) + 3.0 * g.x.z;
     for (var j = 0u; j < u32(g.z.w); j++) {
       let k = cardAt(j);
       if (g.cards[k].off.w > 0.5) { continue; } // a card off the desk (mid-flip) leaves the slime alone
       if (distance(p, g.cards[k].flat.xy) > g.cards[k].bound.x + reach) { continue; }
-      let f = g.d.y * food(k, p);
-      if (u32(g.x.x) == 2u) { v += f; } else { v = max(v, f); }
+      v = max(v, g.d.y * food(k, p));
     }
   }
   for (var i = 0u; i < u32(g.ch.x); i++) { // chips are food: veins grow toward them and under them

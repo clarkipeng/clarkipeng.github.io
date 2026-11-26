@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, EDGE_MODES } from './tunables.ts';
+import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES } from './tunables.ts';
 import type { Card } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 import { NCH } from './chips.ts';
@@ -179,10 +179,10 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     (cursor.x - s.origin) * d, cursor.y * d, cursor.amt, 0.94, 0.6, 0.4, st.gain, st.gamma,
     ...absorbance(hexRGB(st.ink)), s.W / desk.shared!.CW, ...NAME_ABS, Math.max(1, Math.round(1 / T.share)),
     vs ? vs.id : -1, desk.videoMix, vs?.player!.fading ? clamp(vs.player!.fade) : 0, dev * desk.view.k,
-    EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
+    0, T.ridge * d, T.ridgeW * d, T.landR * d,
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
     st.soft, st.grain, over.length, order.length,
-    T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
+    0, T.ring2At, 0, st.opacity,
     T.shadowSoft, T.shadow, T.landRelease, desk.shared!.TX,
     0, 0, 0, s.t,
     ...hexRGB(st.bg).map(lin), 0,

@@ -18,13 +18,10 @@ export const HELP: Record<string, string> = {
   hoverE: 'How strongly a hovered card excites the slime around it (agents speed up and gather there).',
   cursorE: 'How strongly the cursor excites the slime under it.',
   // Card outlines
-  edgeMode: 'How cards feed the slime. max: a thin band of food just outside each edge, never stronger than a vein. plus: the same band added on top of the trail. corners: food at the four corners. center: food under the middle. ring2: two bands. none: cards feed nothing.',
   edge: 'How much food the cards put out, so how strongly veins hug them.',
-  ridge: 'How far outside the card edge the food band sits (corners mode: how far past each corner).',
-  ridgeW: 'How wide the food band is (corners mode: how big each corner spot is).',
-  ring2: 'Adds a second, farther food band around each card.',
-  ring2At: 'Where the second band sits, as a multiple of the first band\'s distance.',
-  corner: 'Extra food just outside each corner, so veins gather there.',
+  ridge: 'How far outside the card edge the food band sits.',
+  ridgeW: 'How wide each food band is.',
+  ring2At: 'Where the second, farther band sits, as a multiple of the first band\'s distance.',
   share: 'The share of agents that can sense card food. Lower lets the open network ignore the cards more.',
   // Cards
   shadowSoft: 'How blurred card shadows are.',

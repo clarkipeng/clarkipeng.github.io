@@ -47,13 +47,10 @@ export const GROUPS = {
     ['cursorE', 0.1, 0, 0.2, 0.002, 'cursor excitation'],
   ],
   'Card outlines': [
-    ['edgeMode', 'max', 0, 0, 0, 'mode'],
     ['edge', 0.55, 0, 2, 0.01, 'strength'],
     ['ridge', 7, 0, 40, 0.5, 'distance px'],
     ['ridgeW', 3.5, 1, 24, 0.5, 'width px'],
-    ['ring2', 1, 0, 1, 1, 'second ring (on in ring2)'],
     ['ring2At', 2.25, 1.5, 6, 0.05, 'second ring at x distance'],
-    ['corner', 0, 0, 4, 0.05, 'corner emphasis'],
     ['share', 1, 0.05, 1, 0.05, 'share of agents'],
   ],
   Cards: [
@@ -192,9 +189,6 @@ type Param = (typeof GROUPS)[keyof typeof GROUPS][number];
 // A panel row as the panel reads it: key, default, min, max, step, label.
 export type ParamRow = readonly [string, number | string, number, number, number, string];
 type Tunables = { [P in Param as P[0]]: P[1] extends string ? string : number } & Record<string, number | string>;
-// none: no food | max: a band of food that tops the trail up | plus: the band adds to the trail | corners: blobs at the
-// four corners | center: one blob under the card | ring2: max plus a second ridge farther out
-export const EDGE_MODES = ['none', 'max', 'plus', 'corners', 'center', 'ring2'];
 // glide: one page turn whose speed rises gently (as u^1.5) and settles long and soft (as (1 - u)^3): the integral of
 // that speed profile, tabulated. No linear stretch, no corner.
 const glide = (() => {
@@ -229,7 +223,7 @@ export const CARD_PRESETS: Record<string, Record<string, number>> = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
   compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
-export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), look: Object.keys(LOOKS), edgeMode: EDGE_MODES, turnEase: Object.keys(EASES), print: Object.keys(PRINTS) };
+export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), look: Object.keys(LOOKS), turnEase: Object.keys(EASES), print: Object.keys(PRINTS) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim

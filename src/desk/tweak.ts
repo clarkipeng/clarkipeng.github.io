@@ -18,16 +18,7 @@ function tweakPanel() {
   let reseedTimer = 0;
   // Every row ends in a small reset to its own default, shown only while the value differs from it.
   const resets: (() => void)[] = [];
-  // Card outline settings show only in the edge modes that use them.
-  const em = () => String(T.edgeMode), ringy = () => ['max', 'plus', 'ring2'].includes(em());
-  const RELEVANT: Record<string, () => boolean> = {
-    edge: () => em() !== 'none', share: () => em() !== 'none', ridge: () => ringy() || em() === 'corners', ridgeW: () => ringy() || em() === 'corners',
-    ring2: () => em() === 'max' || em() === 'plus', ring2At: () => em() === 'ring2' || (ringy() && !!T.ring2), corner: ringy,
-  };
-  const refresh = () => {
-    resets.forEach((f) => f());
-    for (const [k, ok] of Object.entries(RELEVANT)) inputs[k].parentElement!.hidden = !ok();
-  };
+  const refresh = () => resets.forEach((f) => f());
   const resetBtn = (row: HTMLElement, isDefault: () => boolean, reset: () => void) => {
     const b = Object.assign(document.createElement('button'), { className: 'tweak-reset', type: 'button', textContent: '↺', title: 'reset to default' });
     b.onclick = (e) => { e.preventDefault(); reset(); refresh(); };
