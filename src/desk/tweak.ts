@@ -1,5 +1,6 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
+import { HELP } from './help.ts';
 import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, J_KEYS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
 
 
@@ -17,7 +18,17 @@ function tweakPanel() {
   let reseedTimer = 0;
   // Every row ends in a small reset to its own default, shown only while the value differs from it.
   const resets: (() => void)[] = [];
-  const refresh = () => resets.forEach((f) => f());
+  // Card outline settings show only in the edge modes that use them.
+  const em = () => String(T.edgeMode), ringy = () => ['max', 'plus', 'ring2'].includes(em());
+  const RELEVANT: Record<string, () => boolean> = {
+    edge: () => em() !== 'none', share: () => em() !== 'none', ridge: () => ringy() || em() === 'corners', ridgeW: () => ringy() || em() === 'corners',
+    ring2: () => em() === 'max' || em() === 'plus', ring2At: () => em() === 'ring2' || (ringy() && !!T.ring2), corner: ringy,
+  };
+  const refresh = () => {
+    resets.forEach((f) => f());
+    for (const [k, ok] of Object.entries(RELEVANT)) inputs[k].parentElement!.hidden = !ok();
+    colors.refresh();
+  };
   const resetBtn = (row: HTMLElement, isDefault: () => boolean, reset: () => void) => {
     const b = Object.assign(document.createElement('button'), { className: 'tweak-reset', type: 'button', textContent: '↺', title: 'reset to default' });
     b.onclick = (e) => { e.preventDefault(); reset(); refresh(); };
@@ -25,6 +36,7 @@ function tweakPanel() {
     row.append(b);
   };
   panel.addEventListener('input', refresh);
+  const colors = colorsGroup(desk, resetBtn); // appended last, under the other groups
   const set = (k: string, v: number | string) => {
     T[k] = v;
     if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
@@ -61,7 +73,7 @@ function tweakPanel() {
         input.oninput = () => { set(k, +input.value); out!.value = input.value; };
       }
       inputs[k] = Object.assign(input, { out });
-      const r = document.createElement('label');
+      const r = Object.assign(document.createElement('label'), { title: HELP[k] ?? '' });
       r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
       if (out) r.append(out);
       resetBtn(r, () => String(T[k]) === String(BASE[k]), () => { set(k, BASE[k]); sync(); });
@@ -89,7 +101,7 @@ function tweakPanel() {
       out = document.createElement('output');
       input.oninput = () => { curStyle()[k] = +input.value; out!.value = input.value; };
     }
-    const r = document.createElement('label');
+    const r = Object.assign(document.createElement('label'), { title: HELP[k] ?? '' });
     styleInputs[k] = Object.assign(input, { out, row: r });
     r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
     if (out) r.append(out);
@@ -141,7 +153,6 @@ function tweakPanel() {
   };
   const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
   replay.onclick = () => drawFrom(desk.page, { delay: INTRO_DELAY }); // starts over from bare paper
-  const colors = colorsGroup(desk, resetBtn);
   bar.append(copy, reset, replay, ...(colors.save ? [colors.save] : []));
   panel.append(colors.group, bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
