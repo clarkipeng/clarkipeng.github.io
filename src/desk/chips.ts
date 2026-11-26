@@ -10,6 +10,7 @@ const NX = [-1, 0, -1, 1, 1, 0, 1, -1], NY = [0, -1, -1, -1, 0, 1, 1, 1], NW = [
 const SOLID = 0.07; // a column holds (and is a contact point) while more than this share of its thickness is left
 const STEP = 1 / 3; // its shape is remade each time a column loses this share of its thickness (or gives way)
 const BITE = 0.375; // the share of its thickness a face loses per second at eating speed 1 on full slime
+const EAT_HZ = 15; // times a second the chips are eaten (and their eaten edge redrawn)
 
 import type { Body as PBody, World } from './physics.ts';
 import { LAND } from './tunables.ts';
@@ -125,7 +126,7 @@ export class Body {
   declare c: number[];
   declare landed: boolean;
   declare dirty: boolean;
-  declare cutT: number;
+  declare cutT: number; declare ate: number; // when it was last remade, and last eaten (s)
   declare feed: Feed | null;
   declare m: number;
   declare foot: number;
@@ -250,7 +251,7 @@ export function createChips(P: ChipTunables, world: () => World) {
   function drop(x: number, y: number, R: number, seed: number, { region = 0, born = 0, still = false }: { region?: number; born?: number; still?: boolean } = {}) {
     const r = rng(seed ^ 0x51ed), W = world();
     const S = makeShape(seed, R, CHIP.thick * (R / 31), P.chipCurl, CHIP.fold, CHIP.bend);
-    const b = new Body(S, { seed, region, born, hurry: 1 });
+    const b = new Body(S, { seed, region, born, hurry: 1 }); b.ate = clock;
     const tilt = (r() - 0.5) * 2 * 0.6, yaw = r() * 6.2832, ax = r() * 6.2832; // tipped about a level axis, then turned
     b.props(W, P, { x: [x, y, CHIP.drop * (R / 31) + S.hb], q: [Math.cos(tilt / 2) * Math.cos(yaw / 2), Math.sin(tilt / 2) * Math.cos(ax), Math.sin(tilt / 2) * Math.sin(ax), Math.cos(tilt / 2) * Math.sin(yaw / 2)], R: null });
     const spin = (0.5 + r()) * CHIP.spin, sa = r() * 6.2832;
@@ -268,13 +269,14 @@ export function createChips(P: ChipTunables, world: () => World) {
   // ---------- eating ----------
   // Faces within CHIP.band of the desk are eaten where the slime is; a column that wears down or gives way changes the
   // body's mass, centre and support, so it tips and settles lower. A body that comes apart becomes two (the crumbs are just
-  // eaten up). The columns are eaten every frame, so the edge creeps; remaking a body (props, split) is the costly part, so
-  // one body a frame is remade, the one waiting longest, and a body at most every 0.05 s.
+  // eaten up). Each body is eaten EAT_HZ times a second, in steps too small to see, so the edge creeps; the bodies take
+  // turns, so no frame eats them all. Remaking a body (props, split) is the costly part, so one body a frame is remade, the
+  // one waiting longest, and a body at most every 0.05 s.
   function eat(dt: number) {
     const out: Body[] = [], W = world();
-    let cut: Body | null = null;
-    for (const b of bodies) {
-      if (!b.m) continue;
+    const due = bodies.filter((b) => b.m && clock - b.ate >= 1 / EAT_HZ).sort((a, b) => a.ate - b.ate).slice(0, Math.ceil(bodies.length * dt * EAT_HZ));
+    for (const b of due) {
+      const dt = clock - b.ate; b.ate = clock;
       const R = b.R, c = b.c, base = b.x[2] - (R[6] * c[0] + R[7] * c[1] + R[8] * c[2]);
       const rate = P.chipEat * BITE * b.chip.hurry * dt, H = b.S.hf, t = b.S.t, { lo, hi, lo0, hi0 } = b;
       let changed = false;
@@ -301,8 +303,9 @@ export function createChips(P: ChipTunables, world: () => World) {
         changed = true;
       }
       if (changed) b.dirty = true;
-      if (b.gone && !b.frozen && clock - b.cutT >= 0.05 && !(cut && cut.cutT <= b.cutT)) cut = b;
     }
+    let cut: Body | null = null;
+    for (const b of bodies) if (b.gone && !b.frozen && clock - b.cutT >= 0.05 && !(cut && cut.cutT <= b.cutT)) cut = b;
     if (cut) {
       cut.gone = false; cut.cutT = clock;
       split(cut, out);
@@ -310,7 +313,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       if (cut.m && cut.solidCols < CHIP.crumbs) { cut.crumb.fill(1); cut.freeze(W); } // the last bit is just eaten up where it lies
     }
     bodies.push(...out);
-    for (const b of bodies.filter((b) => !b.hi.some((v, ci) => v - b.lo[ci] > 0.004))) remove(b);
+    for (const b of new Set([...due, ...(cut ? [cut] : [])])) if (!b.hi.some((v, ci) => v - b.lo[ci] > 0.004)) remove(b);
   }
   function split(b: Body, out: Body[]) {
     const comp = new Int16Array(CN * CN).fill(-1), sizes: number[] = [];
@@ -400,7 +403,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       touchdown(b, dt);
     }
     clock += dt;
-    if (eatOn) eat(dt);
+    if (eatOn) eat(dt); else for (const b of bodies) b.ate = clock; // off its page it is not eaten
   }
 
   // ---------- what the GPU draws ----------
