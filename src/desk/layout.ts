@@ -50,7 +50,7 @@ export interface Card {
   backEl: HTMLElement | null; backTitle: string | null | undefined; backParas: string[] | null;
   region: number; featured: boolean; hueHex: string; inkHex: string | undefined; emit: number; jinkHex: string | undefined; still: string | undefined;
   backLinks: HTMLAnchorElement[] | null; flip: number; flipTo: number; face: number; deck: Card | null;
-  frame: number[]; baseFrame: number[]; focus: number[] | null;
+  frame: number[]; baseFrame: number[]; focus: number[] | null; contain: boolean;
   slot: { x: number; y: number; w: number; r: number } | null; baseW: number; order: number; more: boolean; lid: boolean;
   overflow: boolean; aspect: number; shape: number;
   x: number; y: number; w: number; h: number; rot: number; home: number; vx: number; vy: number; lift: number; liftV: number;
@@ -122,6 +122,7 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
     // focus: the framing option's zoom and crop on the picture's subject, for the poster and the clips alike (so the
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
+    contain: d.fit === 'contain', // a paper figure shows whole, on a white mat, instead of filling its window
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: Number(d.order), more: el.classList.contains('more'), lid: el.classList.contains('lid'),
     overflow: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap
     videoSrc: d.video,
