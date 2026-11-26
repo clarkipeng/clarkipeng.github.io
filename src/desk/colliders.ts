@@ -1,7 +1,9 @@
 // The admin panel's Colliders: what the physics sees, over the desk, read like a physics debugger. Each body: the outline
 // of its collision points (their convex hull) and the points themselves, as the eye that draws the body sees them, dimmed
 // while it sleeps. The turning page: its paper's height as a few contour lines. Contacts: a dot and a short tick along
-// the normal, fading over a few frames so slow motion shows them. Loaded only when switched on; returns its stop.
+// the normal, fading over a few frames so slow motion shows them. Bottom left, the same in 3D: the paper the physics
+// stands things on (the page's top surface, as a mesh) and every body, from a camera that orbits the page as you drag in
+// it. Loaded only when switched on; returns its stop.
 import { currentDesk } from './state.ts';
 import type { Body } from './physics.ts';
 import type { Chips } from './chips.ts';
@@ -11,13 +13,18 @@ import type { Chips } from './chips.ts';
 const EYE = 1800, A = 0.4, CHIP_EYE = 1200;
 const GRID = 20, LEVELS = [0.5, 15, 40, 80]; // the paper: sample spacing; contour heights (CSS px)
 const FADE = 8; // frames a contact stays
+const MESH = 30; // the 3D view's mesh spacing (CSS px)
 const AWAKE = '22,150,95', ASLEEP = '120,120,120', HIT = '255,90,30', PAPER = '60,110,210';
 type Eye = { x0: number; a: number; w: number }; // its page's left edge on the desk; its lean; its perspective eased in (-1: a chip's)
 
 export function showColliders(chips: Chips) {
-  const desk = currentDesk(), cv = document.createElement('canvas'), g = cv.getContext('2d')!;
+  const desk = currentDesk(), cv = document.createElement('canvas'), gm = cv.getContext('2d')!, g = gm;
   cv.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:25';
-  document.body.append(cv);
+  const iv = document.createElement('canvas'), gi = iv.getContext('2d')!; // the 3D view
+  iv.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:25;background:rgba(255,255,255,0.96);border:1px solid rgba(0,0,0,0.2);cursor:grab;touch-action:none';
+  let yaw = -0.45, pitch = 1.05; // the camera, from straight down: turned about the page's middle, tipped back
+  iv.onpointermove = (e) => { if (e.buttons) { yaw += e.movementX * 0.01; pitch = Math.min(1.5, Math.max(0, pitch - e.movementY * 0.01)); } };
+  document.body.append(cv, iv);
   const io = new Float64Array(7), C = new Float64Array(3), R = new Float64Array(9);
   const eyes = new Map<Body, Eye>(), hits: number[] = []; // hits: x, y, tick x, tick y, frame seen
   let frameN = 0, seen = -1, zs = new Float64Array(0);
@@ -50,11 +57,30 @@ export function showColliders(chips: Chips) {
       g.stroke();
     });
   };
-  const outline = (pts: [number, number][], awake: boolean) => {
+  const outline = (pts: [number, number][], awake: boolean, g = gm) => {
     const h = desk.hull(pts.slice());
     g.strokeStyle = g.fillStyle = awake ? `rgba(${AWAKE},0.95)` : `rgba(${ASLEEP},0.8)`;
     g.beginPath(); h.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.stroke();
     for (const [x, y] of pts) g.fillRect(x - 1, y - 1, 2, 2);
+  };
+  // A world point in the 3D view: about the page's middle O, turned by yaw, tipped by pitch, in perspective.
+  const O = new Float64Array(3), cam = (x: number, y: number, z: number): [number, number] => {
+    const rx = x - O[0], ry = y - O[1], ax = Math.cos(yaw) * rx - Math.sin(yaw) * ry, ay = Math.sin(yaw) * rx + Math.cos(yaw) * ry;
+    const by = Math.cos(pitch) * ay - Math.sin(pitch) * z, bz = Math.sin(pitch) * ay + Math.cos(pitch) * z, F = 3 * desk.view.w, s = (0.8 * iv.width) / desk.view.w / devicePixelRatio;
+    const q = F / (F - bz);
+    return [iv.width / devicePixelRatio / 2 + s * q * ax, iv.height / devicePixelRatio / 2 + s * q * by];
+  };
+  // The page's top surface (flat at rest), rows then columns.
+  const mesh = (x0: number, curl: { at(o: Float64Array): void } | null) => {
+    const { w, h } = desk.view, nx = Math.ceil(w / MESH), ny = Math.ceil(h / MESH);
+    gi.strokeStyle = `rgba(${PAPER},0.6)`; gi.beginPath();
+    for (const rows of [true, false]) for (let a = 0; a <= (rows ? ny : nx); a++) for (let b = 0; b <= (rows ? nx : ny); b++) {
+      const x = x0 + Math.min(w, (rows ? b : a) * MESH), y = Math.min(h, (rows ? a : b) * MESH);
+      io[0] = x; io[1] = y; if (curl) curl.at(io); else io[0] = 0;
+      const [px, py] = cam(x, y, io[0]);
+      if (b) gi.lineTo(px, py); else gi.moveTo(px, py);
+    }
+    gi.stroke();
   };
   let raf = 0;
   const frame = () => {
@@ -64,21 +90,27 @@ export function showColliders(chips: Chips) {
     if (cv.width !== innerWidth * dpr || cv.height !== innerHeight * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; }
     g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, innerWidth, innerHeight);
     g.lineWidth = 1;
+    const iw = Math.round(Math.min(520, innerWidth * 0.4)), ih = Math.round(iw * 0.7);
+    if (iv.width !== iw * dpr) { iv.width = iw * dpr; iv.height = ih * dpr; iv.style.width = iw + 'px'; iv.style.height = ih + 'px'; }
+    gi.setTransform(dpr, 0, 0, dpr, 0, 0); gi.clearRect(0, 0, iw, ih); gi.lineWidth = 1;
     if (!P) return;
     const { world, curl, L } = P;
     if (L) paper(L.region * desk.view.w, curl);
     const W = desk.view.phone ? 0 : desk.view.w, x0 = (L ? L.region : desk.page) * W, rest = { x0, a: 0, w: 1 }; // the bodies' frame (box.ts syncBodies)
+    O[0] = x0 + desk.view.w / 2; O[1] = desk.view.h / 2;
+    mesh(x0, L ? curl : null);
     eyes.clear();
     for (const s of desk.sources) if (s.body && s.more) eyes.set(s.body, { x0, a: A, w: s.launch ? s.launch.P.w : 0 }); // at rest the box is its painting
     for (const c of chips.bodies) eyes.set(c.p, { x0: c.chip.region * W, a: 0, w: -1 });
     for (const b of world.bodies) {
       world.pose(b, C, R);
-      const e = eyes.get(b) ?? rest, pts: [number, number][] = [];
+      const e = eyes.get(b) ?? rest, pts: [number, number][] = [], p3: [number, number][] = [];
       for (let i = 0; i < b.n; i++) {
         const lx = b.points[i * 3], ly = b.points[i * 3 + 1], lz = b.points[i * 3 + 2];
-        pts.push(view(e, C[0] + R[0] * lx + R[1] * ly + R[2] * lz, C[1] + R[3] * lx + R[4] * ly + R[5] * lz, C[2] + R[6] * lx + R[7] * ly + R[8] * lz));
+        const x = C[0] + R[0] * lx + R[1] * ly + R[2] * lz, y = C[1] + R[3] * lx + R[4] * ly + R[5] * lz, z = C[2] + R[6] * lx + R[7] * ly + R[8] * lz;
+        pts.push(view(e, x, y, z)); p3.push(cam(x, y, z));
       }
-      outline(pts, !b.sleep);
+      outline(pts, !b.sleep); outline(p3, !b.sleep, gi);
     }
     // The note has no body: its sheet is a chain across its width (note.ts), seen by the eye that draws it (note.ts tile).
     for (const s of desk.sources) {
@@ -112,5 +144,5 @@ export function showColliders(chips: Chips) {
     }
   };
   raf = requestAnimationFrame(frame);
-  return () => { cancelAnimationFrame(raf); cv.remove(); };
+  return () => { cancelAnimationFrame(raf); cv.remove(); iv.remove(); };
 }
