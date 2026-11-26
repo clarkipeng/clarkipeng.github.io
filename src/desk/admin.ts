@@ -2,6 +2,7 @@ import type { Desk } from './state.ts';
 import { GROUPS, RESEED, PAGE_NAMES, STYLE_PARAMS, STYLE_DEFAULTS, dbg, type ParamRow } from './tunables.ts';
 import { HELP } from './help.ts';
 import { colorRows } from './colors.ts';
+import { textRows } from './text.ts';
 
 // The admin panel (?debug): one floating card of collapsible sections, every row made from one schema: the debug views,
 // every tunable, the page's style and the colors. Values save to localStorage (dbg, read back at load only under ?debug);
@@ -12,6 +13,7 @@ type Act = { text: string; hint?: string; run: (b: HTMLButtonElement) => void; o
 export type Row = {
   key: string; label: string; hint?: string;
   def?: Val; get?: () => Val; set?: (v: Val) => void; // a value: true/false is a switch, a hex string a swatch, a number a slider
+  text?: boolean; // or a string to edit in a box
   range?: readonly [number, number, number]; // the slider's min, max, step
   opts?: readonly (readonly [string, number])[]; // or a segmented control over these
   acts?: Act[]; // buttons after it (or alone)
@@ -65,6 +67,7 @@ export function mountAdmin(desk: Desk) {
     ]],
     ...(['Physics', 'Cards', 'Chips', 'Slime'] as const).map((name): [string, Row[]] => [name, params(GROUPS[name])]),
     ['Colors', [...style, ...colorRows(desk)]],
+    ['Text', textRows(desk)],
   ];
   const all = sections.flatMap(([, rows]) => rows);
 
@@ -92,6 +95,13 @@ export function mountAdmin(desk: Desk) {
       sw.onchange = () => put(r, sw.checked);
       refresh.push(() => (sw.checked = !!r.get!()));
       return [sw];
+    }
+    if (r.text) {
+      const ta = h('textarea', 'adm-text', { rows: 1, spellcheck: true });
+      ta.oninput = () => put(r, ta.value);
+      refresh.push(() => { if (document.activeElement !== ta) ta.value = String(r.get!()); });
+      row.classList.add('adm-textrow');
+      return [ta];
     }
     if (typeof v0 === 'string') {
       const sw = h('input', 'adm-swatch', { type: 'color' });
@@ -269,6 +279,11 @@ const CSS = `
 .adm-seg button[aria-pressed=true]{background:#fff;color:#1d1d1b;box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .adm .adm-act{min-width:22px;height:21px;padding:0 7px;border-radius:6px;color:#3d3c38;background:rgba(29,29,27,.05)}
 .adm .adm-act[aria-pressed=true]{background:#5c5f4a;color:#fff}
+.adm-textrow{grid-template-columns:1fr 10px;padding:2px 0}
+.adm-textrow .adm-l{grid-column:1/-1}
+.adm-textrow .adm-c{display:block}
+.adm-text{display:block;width:100%;box-sizing:border-box;field-sizing:content;min-height:25px;resize:none;padding:4px 7px;border:1px solid rgba(29,29,27,.1);border-radius:6px;background:rgba(255,255,255,.65);font:inherit;color:inherit;outline:none;user-select:text;-webkit-user-select:text}
+.adm-text:focus{border-color:#a5a970;background:#fff}
 .adm-foot{display:flex;gap:6px;padding:8px 10px 9px 13px;border-top:1px solid rgba(29,29,27,.07)}
 .adm-btn{padding:4px 10px!important;border:1px solid rgba(29,29,27,.12)!important;border-radius:7px;background:rgba(255,255,255,.6)!important}
 .adm-btn:hover{background:#fff!important}
