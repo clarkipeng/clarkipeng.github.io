@@ -33,11 +33,6 @@ export const HELP: Record<string, string> = {
   // Media
   fadeIn: 'How long a hovered card\'s clip takes to fade in.',
   fadeOut: 'How long it takes to fade back to the still.',
-  finishFirst: 'Lets the current clip play to its end before fading out.',
-  xfade: 'The crossfade from one clip to the next while you keep hovering.',
-  hold: 'Cuts each clip after this many seconds. 0 plays whole clips.',
-  hoverDelay: 'How long you hover before a clip starts.',
-  focusS: 'How fast a card\'s hover effect fades in. It fades out a bit faster.',
   // Notebook
   turnS: 'How long a page turn takes.',
   // World

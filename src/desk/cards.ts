@@ -39,7 +39,7 @@ function setHover(s: Card, on: boolean) {
   if (desk.view.phone || s.hoverOn === on || (on && (s.flipTo || s.flying || s.kind === 'deck'))) return; // a deck does not lift: its pile or its box and lid stay together
   s.hoverOn = on;
   if (on && s.playlist && !s.player) desk.makePlayer(s);
-  if (on) { desk.hovered = s; s.hoverSince = performance.now(); } else if (desk.hovered === s) desk.hovered = null;
+  if (on) desk.hovered = s; else if (desk.hovered === s) desk.hovered = null;
 }
 
 for (const s of sources) {
@@ -128,7 +128,7 @@ function flip(s: Card) {
 }
 
 // Hover's clock: a card responds to hover, and lets go a little faster.
-const hoverTau = (rising: boolean) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION.exit);
+const hoverTau = (rising: boolean) => (MOTION.respond / 3) * (rising ? 1 : MOTION.exit);
 // Springs: lift rises while dragging, tilt leans toward velocity (max ~8 deg), released cards glide and settle.
 function stepCards(dt: number) {
   const maxTilt = (TILT * Math.PI) / 180;

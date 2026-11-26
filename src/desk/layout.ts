@@ -64,7 +64,7 @@ export interface Card {
   // the desk
   fly?: Flight | null; shove?: Shove | null; kb?: { tx: number; ty: number } | null; keyHeld?: boolean; keyTimer?: number;
   ch?: Chain | null; imp?: { x: number; y: number; t: number } | null; over?: boolean; snap?: number; squash: number; squashV: number;
-  said?: number; suppressClick?: boolean; edgePen?: boolean; rotFrom: number; rotTo: number; hoverSince: number;
+  said?: number; suppressClick?: boolean; edgePen?: boolean; rotFrom: number; rotTo: number;
   focused?: boolean; carrier?: Card | null; gone?: boolean; flyH?: number[]; plane?: { dc: V3; n: V3 }; flipA?: number;
   // media
   playlist: Clip[] | null; player?: InstanceType<Desk['Player']>;

@@ -73,11 +73,6 @@ export const GROUPS = {
   Media: [
     ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],
     ['fadeOut', 1, 0.1, 3, 0.05, 'fade out s'],
-    ['finishFirst', 1, 0, 1, 1, 'finish clip before fading out'],
-    ['xfade', 0.6, 0.1, 2, 0.05, 'crossfade s'],
-    ['hold', 0, 0, 10, 0.25, 'clip hold s (0 = whole clip)'],
-    ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
-    ['focusS', MOTION.respond, 0.05, 2, 0.05, 'hover fade s (release takes exit x this)'],
   ],
   // Notebook: the page turn.
   Notebook: [
