@@ -9,8 +9,9 @@
 //   bend (2): the same, bending in one arc that rises off the spine as it swings over.
 //   paper (3): the note's sheet (note.ts stepChain) pinned at the spine: a hand carries the corner from where it lay up
 //     over the spine (lift: how high, of the way to the spine) and lays it down on the other side; the rest is the sim.
-// Things on it rest on the topmost paper. A row's turned-over free edge sags to the paper under it, so it slides under
-// what lies ahead of it instead of meeting it as a wall (the physics only).
+// Things on it rest on the topmost paper. The curl's turned-over free edge sags to the paper under it, so it slides
+// under what lies ahead of it instead of meeting it as a wall (the physics only; the other models turn their free edge
+// over the spine, through the air, and a sagging one would sweep the desk at the hand's speed).
 //
 //   const sheet = createSheet({ state(t, out) { out[0] = d; out[1] = a; out[2] = d0; }, rollR, model: () => 0 });
 //   sheet.page(ox, w, h, k); // where the page is (world CSS px: its left edge, its size) and its scale
@@ -45,7 +46,7 @@ export function createSheet({ state, rollR, model, gravity = () => 0, lift = () 
   const N = NODES, X = new Float64Array(N), Z = new Float64Array(N), M = new Float64Array(N), TH = new Float64Array(N);
   const BX = new Float64Array(N), BZ = new Float64Array(N); // EPS later, the same paper
   const A = new Float64Array(3), B = new Float64Array(3), q = new Float64Array(3), was = new Float64Array(2 * N);
-  let ox = 0, W = 0, H = 0, L = SAG, S = 1, bdx = -1, bdy = 0, ch: Chain | null = null, simT = -1, simD0 = NaN;
+  let ox = 0, W = 0, H = 0, L = SAG, sagL = L, S = 1, bdx = -1, bdy = 0, ch: Chain | null = null, simT = -1, simD0 = NaN;
   const from = new Float64Array(2); // where the hand took the corner from (from the spine, up)
   const sh = { top: 0, speed: 0, still: true, X, Z, M, TH, dx: -1, dy: 0, reach: -1, low: 1e6, R: 0 } as unknown as Sheet;
   sh.page = (x, w, h, k) => { ox = x; W = w; H = h; L = SAG * k; };
@@ -102,7 +103,7 @@ export function createSheet({ state, rollR, model, gravity = () => 0, lift = () 
   sh.prepare = (t) => {
     state(t, A); state(t + EPS, B);
     const md = model(), d = A[0], a = A[1], d0 = A[2];
-    S = span(a); sh.dx = -Math.cos(a); sh.dy = -Math.sin(a); bdx = -Math.cos(B[1]); bdy = -Math.sin(B[1]);
+    S = span(a); sagL = md === 0 ? L : 0; sh.dx = -Math.cos(a); sh.dy = -Math.sin(a); bdx = -Math.cos(B[1]); bdy = -Math.sin(B[1]);
     sh.R = d > 0 ? rollR(d) : 0;
     if (d <= 0) { // no turn: flat
       for (let j = 0; j < N; j++) { M[j] = X[j] = BX[j] = (j / (N - 1)) * S; Z[j] = BZ[j] = TH[j] = 0; }
@@ -122,8 +123,8 @@ export function createSheet({ state, rollR, model, gravity = () => 0, lift = () 
     sh.speed = sp + (Math.abs(B[1] - a) / EPS) * (W + H);
     sh.still = sh.speed < 1;
   };
-  // A turned-over point's height, its row's free edge (the row's paper from m0) sagging to the paper under it.
-  const sag = (j: number, m0: number) => Z[j] * (1 - Math.min(1, Math.max(0, 1 - (M[j] - m0) / L)) * Math.max(0, -Math.cos(TH[j])));
+  // A turned-over point's height, the curl's free edge (the row's paper from m0) sagging to the paper under it.
+  const sag = (j: number, m0: number) => (sagL ? Z[j] * (1 - Math.min(1, Math.max(0, 1 - (M[j] - m0) / sagL)) * Math.max(0, -Math.cos(TH[j]))) : Z[j]);
   const lerp = (a: number, b: number, f: number) => a + (b - a) * f;
   // At world (out[0], out[1]): out = height, normal (3), and if vel, velocity (3): the topmost paper over it.
   sh.at = (out, vel) => {
