@@ -48,7 +48,7 @@ for (const s of sources) {
   if (s.more) { hit.addEventListener('focus', () => (s.focused = hit.matches(':focus-visible'))); hit.addEventListener('blur', () => (s.focused = false)); } // a tucked box comes out for the keyboard
   hit.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && !s.flying) { e.preventDefault(); if (s.more) desk.deckClick(s, e); else if (s.over) desk.putBack(s, desk.pageDeck(s.region)!); else flip(s); } // over its box, it goes in
-    else if (ARROWS[e.key] && T.keyMove && desk.gpu && !desk.view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
+    else if (ARROWS[e.key] && desk.gpu && !desk.view.phone && !s.flying && !s.dragging && s.kind !== 'deck') { e.preventDefault(); nudge(s, ARROWS[e.key], e.shiftKey); }
   });
   hit.addEventListener('pointerdown', (e) => {
     if (desk.view.phone || !desk.gpu || reduced || e.button !== 0 || s.flying || s.kind === 'deck') return; // decks stay at their edge // reduced motion: cards stay put (a click still flips)
@@ -57,7 +57,7 @@ for (const s of sources) {
     let lt = performance.now();
     const move = (m: PointerEvent) => {
       if (!press.moved && Math.hypot(deskX(m) - press.x, deskY(m) - press.y) < 4) return;
-      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.edgePen = false; if (T.imprint) s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++desk.topZ; s.el.classList.add('dragging'); }
+      if (!press.moved) { press.moved = true; s.dragging = true; s.released = false; s.shove = s.kb = null; s.edgePen = false; s.imp = { x: s.x, y: s.y, t: 0 }; s.z = ++desk.topZ; s.el.classList.add('dragging'); }
       const now = performance.now(), dt = Math.max(1, now - lt) / 1000;
       const nx = deskX(m) + press.ox, ny = deskY(m) + press.oy;
       const k = 1 - Math.exp(-dt / 0.05);
@@ -135,7 +135,7 @@ function stepCards(dt: number) {
       s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= f; s.vy *= f;
       const mx = s.w * 0.25, my = s.h * 0.25;
       const x0 = desk.view.phone ? 0 : s.region * desk.view.w; // cards stay on their own page
-      if (T.edgeSoft && s.released && !desk.view.phone) edgeSpring(s, x0, dt);
+      if (s.released && !desk.view.phone) edgeSpring(s, x0, dt);
       else {
         if (s.x < x0 + mx || s.x > x0 + desk.view.w - mx) { s.x = clamp(s.x, x0 + mx, x0 + desk.view.w - mx); s.vx *= -0.4; }
         if (s.y < my || s.y > desk.view.docH - my) { s.y = clamp(s.y, my, desk.view.docH - my); s.vy *= -0.4; }

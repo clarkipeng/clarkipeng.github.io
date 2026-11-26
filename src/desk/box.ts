@@ -70,18 +70,22 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 // the box, lifts and tips it, and the turn flings it off the frame; its lid and the cards in it ride along. A corner
 // turned by hand moves the paper under it the same way: let go before halfway and the box drops back onto the page,
 // settles, and eases home into its painting. Once off the frame it slides in again when its page next shows.
-const THROW = { fadeZ: 180, out: 0.6, limit: 6 }; // CSS px up by which its shadow has faded; s a box left at rest on screen after a turn takes to slide off; s at most in the air
+// fadeZ: CSS px up by which its shadow has faded; out: s a box left at rest on screen after a turn takes to slide off; limit:
+// s at most in the air; hz: physics steps per s; rest: asleep once it stays within px for 0.4 s; sag: px the turning page's
+// edge sags under it; persp: s it takes to ease into its 3D view; home: s a fallen box takes to ease back to its spot
+const THROW = { fadeZ: 180, out: 0.6, limit: 6, hz: 480, rest: 0.5, sag: 40, persp: 0.25, home: 0.5 };
+const LID_WAIT = 0.3; // the flap waits this long before it shuts (s)
 const easeOutCubic = (u: number) => 1 - (1 - u) ** 3;
 const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7);
 desk.phys = null; // the world and the turning page every thrown box shares
 // Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
 function throwWorld() {
-  if (desk.phys && (desk.phys.hz === T.throwHz || desk.phys.L || desk.phys.world.bodies.length)) return desk.phys;
-  const world = createWorld({ hz: T.throwHz }), curl = createCurl({ state: (t, out) => (desk.phys!.L ? turnAt(desk.phys!.L, t, out) : out.fill(0)), rollR }); // no turn: flat
+  if (desk.phys && (desk.phys.hz === THROW.hz || desk.phys.L || desk.phys.world.bodies.length)) return desk.phys;
+  const world = createWorld({ hz: THROW.hz }), curl = createCurl({ state: (t, out) => (desk.phys!.L ? turnAt(desk.phys!.L, t, out) : out.fill(0)), rollR }); // no turn: flat
   world.surface = curl;
-  desk.phys = { world, curl, hz: T.throwHz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
+  desk.phys = { world, curl, hz: THROW.hz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
   const k = desk.view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
-  curl.page(0, desk.view.w, desk.view.h); world.g = T.gravity * k; world.rest = T.throwRest;
+  curl.page(0, desk.view.w, desk.view.h); world.g = T.gravity * k; world.rest = THROW.rest;
   const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [desk.view.w, 0.36 * desk.view.h, 32.5 * k] });
   for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
   world.remove(b); desk.phys.L = null;
@@ -115,8 +119,8 @@ function launch(d: Card | undefined) {
     L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 } as Launch; // the rest is set just below
   }
   Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
-  P.L = L; world.time = 0; world.g = T.gravity * desk.view.k; world.rest = T.throwRest;
-  curl.page(d.region * desk.view.w, desk.view.w, desk.view.h); curl.sag = T.throwSag * desk.view.k; curl.prepare(0);
+  P.L = L; world.time = 0; world.g = T.gravity * desk.view.k; world.rest = THROW.rest;
+  curl.page(d.region * desk.view.w, desk.view.w, desk.view.h); curl.sag = THROW.sag * desk.view.k; curl.prepare(0);
   L.sv = world.save();
   const lid = lidOf(d);
   for (const s of sources) if (s === d || s === lid || s.deck === d) s.carrier = d;
@@ -142,7 +146,7 @@ function stepThrow(d: Card, dt: number) {
     if (L.end && (L.body.sleep || L.t > THROW.limit)) { if (L.end === 'back') L.home = { t: 0, q: [...L.body.q] }; else L.out = { t: 0 }; }
   }
   poseThrow(d);
-  if (L.home ? L.home.t >= T.throwHome : offFrame(d)) endThrow(d, !L.home);
+  if (L.home ? L.home.t >= THROW.home : offFrame(d)) endThrow(d, !L.home);
 }
 const quatMat = ([w, x, y, z]: number[]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
 const nlerp = (p: number[], q: number[], u: number) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
@@ -152,8 +156,8 @@ const nlerp = (p: number[], q: number[], u: number) => { const s = p[0] * q[0] +
 function poseThrow(d: Card) {
   const L = d.launch!, { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   desk.phys!.world.pose(L.body, POS, ROT); L.hull = null; // where it shows, once drawn
-  let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / T.throwPersp));
-  if (L.home) { const u = smooth(L.home.t / T.throwHome), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
+  let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / THROW.persp));
+  if (L.home) { const u = smooth(L.home.t / THROW.home), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
   else if (L.out) C[0] += 1.2 * desk.view.w * clamp(L.out.t / THROW.out) ** 3;
   const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
   // Its shadow: the box seen from straight above, as the smallest rectangle along one of its edges that holds it.
@@ -312,7 +316,7 @@ function stepBox(d: Card, dt: number) {
     if (s.fly?.deck === d && (s.fly.in || flights.t < s.fly.at + 0.3 * DRAW.dur)) busy = true;
     if (s.dragging && s.region === d.region) drag = true;
   }
-  if (busy || d.near || d.welcome || d.gatherAsk || d.drawAsk || d.focused || d.hover) d.outFor = T.lidWait; else d.outFor -= dt;
+  if (busy || d.near || d.welcome || d.gatherAsk || d.drawAsk || d.focused || d.hover) d.outFor = LID_WAIT; else d.outFor -= dt;
   const open = d.outFor > 0 || arriving(d), out = open || d.pile.length > 0, to = out ? 0 : tuckAt(d) - (drag ? BOX.peek * desk.view.k : 0);
   if (b.to !== to) slideBox(d, to, MOTION.respond, out || drag ? easeOutQuart : EASES.cubic);
   d.lidT = clamp(d.lidT + (open ? -dt : dt) / T.lidS);

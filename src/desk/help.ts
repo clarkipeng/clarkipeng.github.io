@@ -73,18 +73,8 @@ export const HELP: Record<string, string> = {
   gravity: 'Gravity on everything that falls: the card box a page turn throws off, chips, and the turning sticky note.',
   friction: 'Friction for the card box and chips.',
   bounce: 'How bouncy the card box and chips are.',
-  // Throw
-  throwSag: 'How much the turning page\'s edge sags under the box.',
-  throwHz: 'Physics steps per second. Higher is steadier and costs more.',
-  throwRest: 'The box counts as settled once it stays within this many px for 0.4 s.',
-  throwPersp: 'How long the box takes to ease into its 3D view when it is thrown.',
-  throwHome: 'How long a fallen box takes to ease back to its spot.',
-  // Desk
-  edgeSoft: 'Thrown cards bounce softly off the screen edges.',
-  keyMove: 'Arrow keys move the focused card.',
-  imprint: 'Picking up a card leaves a short-lived imprint in the slime where it lay.',
+  // Box
   lidS: 'How long the card box flap takes to fold open or shut.',
-  lidWait: 'How long the flap waits before it shuts.',
   // Tally
   tallyLen: 'The pencil tally on each card box: stroke length.',
   tallyGap: 'Space between strokes.',

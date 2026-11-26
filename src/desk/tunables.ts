@@ -114,21 +114,9 @@ export const GROUPS = {
     ['friction', 0.6, 0, 1.5, 0.05, 'friction'],
     ['bounce', 0.25, 0, 0.9, 0.05, 'bounce'],
   ],
-  // Throw: the card box as a rigid body the turning page throws off (physics.ts, curl.ts).
-  Throw: [
-    ['throwSag', 40, 0, 120, 1, 'curl coupling: flap edge sag px'],
-    ['throwHz', 480, 120, 960, 60, 'physics steps per s'],
-    ['throwRest', 0.5, 0.05, 2, 0.05, 'asleep once it stays within px for 0.4 s'],
-    ['throwPersp', 0.25, 0.05, 1, 0.05, 'box perspective ease s'],
-    ['throwHome', 0.5, 0.1, 2, 0.05, 'fallen box eases home s'],
-  ],
-  // Desk: what the desk does with cards you move.
-  Desk: [
-    ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
-    ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
-    ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
+  // Box: the card box's flap.
+  Box: [
     ['lidS', 0.25, 0.05, 1, 0.05, 'card box flap folds open or shut s'],
-    ['lidWait', 0.3, 0, 1.5, 0.05, 'flap waits before shutting s'],
   ],
   Tally: TALLY_PARAMS, // the pencil tally on each card box (tally.ts)
   // Chips: click the bare desk to drop a potato chip; the slime grows to it and eats it from below (chips.ts).
