@@ -5,7 +5,7 @@ import { HELP } from './help.ts';
 
 // The admin panel's colors: the card text and stock tokens and every card's ink, all live. On the dev server, "save
 // colors" writes them (and each page's paper and ink) back into the source (vite.config.ts).
-const TOKENS: Record<string, string> = { stock: 'Card stock', stockWarm: 'Polaroid back', film: 'Film', note: 'Sticky note',
+const TOKENS: Record<string, string> = { stock: 'Card stock', film: 'Film', note: 'Sticky note',
   noteStrip: 'Note strip', text: 'Titles', text2: 'Handwriting', body: 'Body text', muted: 'Captions', ink: 'Box veins',
   inkDeep: 'Links', inkLine: 'Drawn lines' }; // the paper is each page's bg
 const cssVar = (k: string) => '--' + k.replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase()); // text2 -> --text-2
