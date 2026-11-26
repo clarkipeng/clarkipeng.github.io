@@ -1,5 +1,5 @@
 // What each tweak-panel setting does, shown when you hover its row. Keys are the tunables' keys (tunables.ts, tally.ts),
-// the page style's keys, tok.* for the color tokens (TOK), and card.* for each card's own colors.
+// the page style's keys, tok.* for the color tokens (TOK), and card.* for each card's ink.
 export const HELP: Record<string, string> = {
   look: 'A preset for the agents and the ink. Picking one overwrites those settings.',
   // Performance
@@ -180,6 +180,5 @@ export const HELP: Record<string, string> = {
   'tok.ink': 'The faint veins drawn on the card box.',
   'tok.inkDeep': 'Link text.',
   'tok.inkLine': 'Drawn lines: link underlines and the card box frame.',
-  'card.hue': 'This card\'s own color. It tints the stamp on its back.',
   'card.ink': 'The color this card puts into the slime while it is open.',
 };

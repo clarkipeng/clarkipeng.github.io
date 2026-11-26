@@ -2,9 +2,9 @@ import type { Desk } from './state.ts';
 import { TOK, PAGE_NAMES } from './tunables.ts';
 import { HELP } from './help.ts';
 
-// The tweak panel's colors: a picker for every card's own colors and for the card text and stock, all live. On the dev
+// The tweak panel's colors: a picker for every card's ink and for the card text and stock, all live. On the dev
 // server, "save colors" writes them (and each page's background and ink) back into the source (vite.config.ts).
-const CARD_COLORS = [['hueHex', 'hue', 'own color'], ['inkHex', 'ink', 'ink when open']] as const;
+const CARD_COLORS = [['inkHex', 'ink', 'ink']] as const;
 const TOKENS = Object.keys(TOK).filter((k) => String(TOK[k as keyof typeof TOK]).startsWith('#') && k !== 'paper'); // the paper is each page's bg
 const cssVar = (k: string) => '--' + k.replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase()); // text2 -> --text-2
 
@@ -41,7 +41,7 @@ export function colorsGroup(desk: Desk, resetBtn: (row: HTMLElement, isDefault: 
     heading(s.key);
     for (const [field, attr, label] of CARD_COLORS) {
       if (s[field] === undefined) continue;
-      row(label, s[field]!, 'card.' + attr, (v) => { s[field] = v; if (field === 'hueHex') repaint(); }); // the hue also tints the card's stamp
+      row(label, s[field]!, 'card.' + attr, (v) => { s[field] = v; });
     }
   }
   const save = import.meta.env.DEV ? Object.assign(document.createElement('button'), { textContent: 'save colors' }) : null;

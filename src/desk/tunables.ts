@@ -245,7 +245,7 @@ export const STYLE_PARAMS: [string, number | string, number, number, number, str
   ['soft', 0.7, 0, 2, 0.05, 'softness'],
   ['grain', 0.1, 0, 0.6, 0.01, 'paper grain'],
   ['tint', 0, 0, 1, 0.01, 'project color strength'],
-  ['hueMix', 0, 0, 1, 0.01, 'project hue (0 = olive, 1 = own hue)'], // tint: how much of its mild ink a closed card always emits (open: full ink); hueMix: how far that ink turns from the shared olive toward the card's own ink
+  ['hueMix', 0, 0, 1, 0.01, 'project hue (0 = olive, 1 = its ink)'], // tint: how much of its mild ink a closed card always emits (open: full ink); hueMix: how far that ink turns from the shared olive toward the card's own ink
 ];
 // A page's style: its background and ink are strings, the rest numbers.
 type Style = { bg: string; ink: string; opacity: number; gain: number; gamma: number; soft: number; grain: number;

@@ -48,7 +48,7 @@ export type Video = HTMLVideoElement & { op?: Promise<unknown>; clipStart: numbe
 export interface Card {
   id: number; el: HTMLElement; hit: HTMLElement; img: HTMLImageElement | null; key: string; kind: string;
   backEl: HTMLElement | null; backTitle: string | null | undefined; backParas: string[] | null;
-  region: number; featured: boolean; hueHex: string; inkHex: string | undefined; emit: number; still: string | undefined;
+  region: number; featured: boolean; inkHex: string | undefined; emit: number; still: string | undefined;
   backLinks: HTMLAnchorElement[] | null; flip: number; flipTo: number; face: number; deck: Card | null;
   frame: number[]; baseFrame: number[]; focus: number[] | null;
   slot: { x: number; y: number; w: number; r: number } | null; baseW: number; order: number; more: boolean; lid: boolean;
@@ -114,7 +114,7 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
     id, el, hit: el.querySelector<HTMLElement>('.hit')!, img: el.querySelector('img'), key: d.key, kind,
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
     backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent!) : null, // an element's text is never null
-    region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'), hueHex: d.hue || '888888', // the card's own hue (its stamp's tint)
+    region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'),
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
     still: d.still, // an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0, face: 0, deck: null, // face: 0 front up, 1 back up (one value, set by a flip, a flight, or the box's preview); deck: the box it is in (or going into)
