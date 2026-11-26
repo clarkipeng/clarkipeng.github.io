@@ -70,8 +70,11 @@ function dropChip(x: number, y: number) {
   if (reduced) drawStill(); // no frame loop: it is drawn where it came to rest
   return b;
 }
+// A press that starts on a card is never a chip drop, even when its release lands on bare desk (reduced motion: cards stay put).
+let onCard = false;
+addEventListener('pointerdown', (e) => (onCard = !!(e.target as Partial<Element>).closest?.('.src')));
 addEventListener('click', (e) => {
-  if (!desk.gpu || !desk.sim || !T.chips || turn.on || flights.on || e.button !== 0) return;
+  if (!desk.gpu || !desk.sim || !T.chips || turn.on || flights.on || e.button !== 0 || onCard) return;
   if ((e.target as Partial<Element>).closest?.('.src, .door, a, button, input, select, label, textarea, .tweak, .links')) return;
   const x = deskX(e), y = deskY(e), x0 = chipX0();
   for (const r of [!desk.view.phone && cornerBox(x0), deckRect(desk.page)]) if (r && x >= r.l && x <= r.r && y >= r.t && y <= r.b) return;
