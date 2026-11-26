@@ -12,7 +12,7 @@
 // and router.state() go through the site's router, so it keeps the history and the page title.
 
 import { setDesk, type Desk } from './state.ts';
-import { mountTunables } from './tunables.ts';
+import { mountTunables, DEBUG } from './tunables.ts';
 import { mountWgsl } from './wgsl.ts';
 import { mountLayout } from './layout.ts';
 import { mountTurn } from './turn.ts';
@@ -25,7 +25,6 @@ import { mountTextures } from './textures.ts';
 import { mountGpu } from './gpu.ts';
 import { mountUniforms } from './uniforms.ts';
 import { mountFrame } from './frame.ts';
-import { mountTweak } from './tweak.ts';
 import { mountProbe } from './probe.ts';
 
 /** The site's router, as the desk uses it: push an address (with history state), and read the current state. */
@@ -40,8 +39,9 @@ const addEventListener = <K extends keyof WindowEventMap>(type: K, fn: (e: Windo
 const desk = { root, router, signal, addEventListener, dead: false } as Desk;
 setDesk(desk);
 for (const mount of [mountTunables, mountWgsl, mountLayout, mountTurn, mountCards, mountShove, mountFlights, mountBox, mountPlayer,
-  mountTextures, mountGpu, mountUniforms, mountFrame, mountTweak, mountProbe]) Object.assign(desk, mount());
+  mountTextures, mountGpu, mountUniforms, mountFrame, mountProbe]) Object.assign(desk, mount());
 desk.main();
+if (DEBUG) void import('./admin.ts').then((m) => desk.dead || m.mountAdmin(desk)); // ?debug: the admin panel
 // Leaving the page: stop the frame loop and timers' effects, drop listeners, stop and release every video, free the GPU.
 return () => {
   desk.dead = true; desk.running = false; ac.abort();

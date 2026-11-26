@@ -21,14 +21,16 @@ export interface Chain {
   p: Float64Array;
   dir: number;
   push: boolean;
-  slap: boolean;
   rest: boolean;
+  armed?: Uint8Array; // touchdown: which joints may land
+  hand?: Float64Array; // the free edge held there (y, z), if it is
 }
 export interface ChainParams {
   g: number;
   drag: number;
   bend: number;
   lift: number;
+  h?: number; // the sim's step (s), if not H
 }
 
 const WGSL = /* wgsl */ `
@@ -133,17 +135,16 @@ export function createNote(device: GPUDevice): Note {
 export function paperChain(n: number, L: number, flip: number): Chain { // lying flat (flip 0), or turned over onto the strip (1)
   const x = new Float64Array(2 * n + 2);
   for (let i = 0; i <= n; i++) x[2 * i] = ((flip ? -1 : 1) * i * L) / n;
-  return { n, l: L / n, x, p: x.slice(), dir: 0, push: false, slap: false, rest: true };
+  return { n, l: L / n, x, p: x.slice(), dir: 0, push: false, rest: true };
 }
 const H = 1 / 3000; // the sim's step (s): fine enough that the stiffest joints stay stable
 // P: g (px/s^2), drag (1/px: quadratic, across the face), bend (px: the length paper holds itself out straight against
-// gravity), lift (px/s^2: the finger on the free edge, per link). Returns the free edge's downward speed the step it first
-// touches the desk after the finger lets go (the slap), else 0; c.rest once it lies still on the desk.
-export function stepChain(c: Chain, dt: number, P: ChainParams): number {
-  const { n, l, x, p } = c, B = P.g * P.bend ** 3 / l ** 2, f = new Float64Array(2 * n + 2);
-  let slap = 0;
-  for (let t = 0; t < dt - 1e-9; t += H) {
-    const h = Math.min(H, dt - t);
+// gravity), lift (px/s^2: the finger on the free edge, per link). c.rest once it lies still on the desk. A hand
+// (c.hand) holds the free edge where it is instead.
+export function stepChain(c: Chain, dt: number, P: ChainParams) {
+  const { n, l, x, p, hand } = c, B = P.g * P.bend ** 3 / l ** 2, f = new Float64Array(2 * n + 2), step = P.h ?? H;
+  for (let t = 0; t < dt - 1e-9; t += step) {
+    const h = Math.min(step, dt - t);
     f.fill(0);
     for (let j = 1; j < n; j++) { // the joint at node j turns link j-1 into link j (the strip's edge is a free hinge)
       const ay = x[2 * j] - x[2 * j - 2], az = x[2 * j + 1] - x[2 * j - 1], by = x[2 * j + 2] - x[2 * j], bz = x[2 * j + 3] - x[2 * j + 1];
@@ -161,19 +162,15 @@ export function stepChain(c: Chain, dt: number, P: ChainParams): number {
       f[2 * n] -= (P.lift * n * c.dir * ez) / r; f[2 * n + 1] += (P.lift * n * c.dir * ey) / r; // across the chord, toward the other side
       if (c.dir * ey < -0.1 * r) c.push = false; // past upright: let go
     }
-    const vz = (x[2 * n + 1] - p[2 * n + 1]) / h;
     for (let i = 2; i < 2 * n + 2; i++) { const v = x[i] - p[i]; p[i] = x[i]; x[i] += v * (1 - 2 * h) + f[i] * h * h; }
+    if (hand) { x[2 * n] = hand[0]; x[2 * n + 1] = hand[1]; }
     for (let it = 0; it < 6; it++) for (let i = 0; i < n; i++) { // links keep their length, from the strip out
       const dy = x[2 * i + 2] - x[2 * i], dz = x[2 * i + 3] - x[2 * i + 1], d = Math.hypot(dy, dz) || 1, e = (d - l) / d;
-      const w = i ? 0.5 : 0; x[2 * i] += w * e * dy; x[2 * i + 1] += w * e * dz; x[2 * i + 2] -= (1 - w) * e * dy; x[2 * i + 3] -= (1 - w) * e * dz;
+      const w = !i ? 0 : hand && i === n - 1 ? 1 : 0.5; x[2 * i] += w * e * dy; x[2 * i + 1] += w * e * dz; x[2 * i + 2] -= (1 - w) * e * dy; x[2 * i + 3] -= (1 - w) * e * dz;
     }
-    for (let i = 1; i <= n; i++) if (x[2 * i + 1] < 0) { // the desk: no sinking in, no sliding along it
-      if (i === n && !c.push && c.slap) { slap = Math.max(slap, -vz); c.slap = false; }
-      x[2 * i + 1] = 0; p[2 * i + 1] = 0; p[2 * i] = x[2 * i];
-    }
+    for (let i = 1; i <= n; i++) if (x[2 * i + 1] < 0) { x[2 * i + 1] = 0; p[2 * i + 1] = 0; p[2 * i] = x[2 * i]; } // the desk: no sinking in, no sliding along it
   }
   let m = 0;
-  for (let i = 1; i <= n; i++) m = Math.max(m, x[2 * i + 1], Math.hypot(x[2 * i] - p[2 * i], x[2 * i + 1] - p[2 * i + 1]) / H);
+  for (let i = 1; i <= n; i++) m = Math.max(m, x[2 * i + 1], Math.hypot(x[2 * i] - p[2 * i], x[2 * i + 1] - p[2 * i + 1]) / step);
   c.rest = !c.push && m < 1; // within a px of the desk, slower than a px/s
-  return slap;
 }

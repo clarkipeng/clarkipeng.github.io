@@ -1,40 +1,33 @@
 import { currentDesk, type Desk } from './state.ts';
-import { TOK, hexRGB } from './tunables.ts';
+import { TOK, CORNER } from './tunables.ts';
 import type { Card, Rect, CardBox } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
+import { STAMP_SIZE, paintStamp, develop } from './stamp.ts';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 
 // ---------- card backs ----------
-// The back of a card, in one of four styles (?backs=, or the panel):
-//   postcard: a project card's back is a postcard's: the message on the left, a thin divider, and the links on ruled
-//             address lines on the right under a small slime-cell stamp in the project's tint.
-//             The polaroid and the note keep pen backs.
-//   quiet: type alone; links are ink text with a thin underline. The sticky note lists its links with small icons.
-//   index: an index card: a label strip, a header rule, and body lines on faint rules. The note is ruled and handwritten.
-//   pen:   quiet cards with a hand-drawn underline under each link; the note's links are handwritten in Caveat.
-// Every back uses one type scale and an 8px spacing grid, and its first baseline sits 32px below its top edge. Material
-// follows the front: paper cards stay paper, the polaroid's back is matte photo-paper stock, the note stays yellow.
-// Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
-interface BackStyle { underline: string; note: string; postcard?: boolean; ruled?: boolean }
+// The back of a card: type alone, with a hand-drawn underline under each link; the sticky note's links are handwritten in
+// Caveat. Every back uses one type scale and an 8px spacing grid, and its first baseline sits 32px below its top edge.
+// Material follows the front: paper cards stay paper, photo cards their film's stock, the note stays yellow. Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
 
-// A back's layout: its lines of copy, its links, and how tall it needs to be (need); a postcard's columns or a ruled back's rules.
+// A back's layout: its lines of copy, its links, and how tall it needs to be (need).
 type Link = ReturnType<Desk['linkAt']>;
 interface BackLine { t: string; f: { font: string; color: string }; y: number }
-type Postcard = { stacked?: undefined; divX: number; x0: number; x1: number; base0: number; n: number } | { stacked: true; x0: number; x1: number; base0: number; n: number };
-interface BackLayout { st: BackStyle; lines: BackLine[]; links: Link[]; w: number; h: number; need: number; strip?: string | null; ruleTop?: number | null; ruleEnd?: number; postcard?: Postcard }
+interface BackLayout { lines: BackLine[]; links: Link[]; w: number; h: number; need: number; stamp?: { x: number; y: number } | null }
 type Row = [HTMLAnchorElement, number, number][]; // a row of links: each with its x and text width
 
 export function mountTextures() {
 const desk = currentDesk();
-const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, T, measure, wrapLines, hinged, sources, decked, NAMES,
+const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, hinged, sources, decked, NAMES,
   tallySetup } = desk;
 // ---------- card textures ----------
 
 // The part of an image (fractions) that covers a media area of aspect ma, zoomed by the card's framing [zoom, x, y].
 // x and y place the crop like CSS object-position, so stills, clips, and the DOM fallback frame the same way.
-function coverRect(ia: number, ma: number, [z, px, py]: number[]) {
-  const w = Math.min(1, ma / ia) / z, h = Math.min(1, ia / ma) / z;
+// contain: the whole image fits instead (the part reaches past its edges, which stay bare).
+function coverRect(ia: number, ma: number, [z, px, py]: number[], contain = false) {
+  const fit = contain ? Math.max : Math.min, w = fit(1, ma / ia) / z, h = fit(1, ia / ma) / z;
   return [px * (1 - w), py * (1 - h), w, h];
 }
 
@@ -146,7 +139,7 @@ function paintLid(x: Ctx, s: Card, S: number, outside: boolean) {
 function drawCard(s0: Card, S0: number) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d')!;
-  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
+  x.fillStyle = STOCK(s.kind);
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, cw, STRIP * S); } // the sticky strip is a touch darker
@@ -156,13 +149,14 @@ function drawCard(s0: Card, S0: number) {
     mediaPx = { x: Math.round(m.x * S), y: Math.round(m.y * S), w: Math.round(m.w * S), h: Math.round(m.h * S) };
     const src = s.img!; // a card with media has its picture
     const iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
-    const [fx, fy, fw, fh] = coverRect(iw / ih, mediaPx.w / mediaPx.h, s.frame);
+    const [fx, fy, fw, fh] = coverRect(iw / ih, mediaPx.w / mediaPx.h, s.frame, s.contain);
+    if (s.contain) { x.fillStyle = '#fff'; x.fillRect(mediaPx.x, mediaPx.y, mediaPx.w, mediaPx.h); } // the figure's own white, past its edges
     x.imageSmoothingQuality = 'high';
     x.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, mediaPx.x, mediaPx.y, mediaPx.w, mediaPx.h);
   }
   x.scale(S, S);
   x.textBaseline = 'alphabetic';
-  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or the polaroid's line centered
+  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or its one line centered
     s.lines!.forEach((l, i) => {
       const last = i === s.lines!.length - 1;
       x.font = font(s.titled ? (last ? 400 : 600) : 500); x.fillStyle = s.titled ? (last ? TOK.muted : TOK.text) : TOK.body;
@@ -181,74 +175,55 @@ function drawCard(s0: Card, S0: number) {
   }
   return { canvas: c, mediaPx };
 }
-const BACK_STYLES: Record<string, BackStyle> = {
-  postcard: { underline: 'pen', note: 'pen', postcard: true },
-  quiet: { underline: 'line', note: 'icons' },
-  index: { underline: 'line', note: 'ruled', ruled: true },
-  pen: { underline: 'pen', note: 'pen' },
-};
-const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
-const STOCK: Record<string, string> = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
-const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * desk.TS; // tighter backs set the copy 1 px closer
+const STOCK = (kind: string) => ({ photo: TOK.film, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // both faces (read when drawn: the colors are tunable)
 const TYPE = { // read when drawn: the type follows TS
-  get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
-  get label() { return { font: font(400), lh: 16 * desk.TS, color: TOK.muted }; },
-  get body() { return { font: font(400), lh: lhBody(), color: TOK.body }; },
-  get link() { return { font: font(500), color: INK_DEEP }; },
-  get noteLink() { return { font: font(500), color: NOTE_INK }; },
-  noteHand: { font: HAND, color: NOTE_INK },
+  get body() { return { font: font(400), lh: 19 * desk.TS, color: TOK.body }; }, // the copy sits 1 px closer than the front's
+  get link() { return { font: font(500), color: TOK.inkDeep }; },
+  noteHand: { font: HAND, color: TOK.text2 },
 };
-// Back spacing in design px; T.backTight (an option) takes 4 px off the padding and the space between link rows.
+// Back spacing in design px.
 const BK = {
-  get pad() { return T.backTight ? 12 : 16; }, get first() { return BK.pad + 16 * desk.TS; }, get row() { return (T.backTight ? 22 : 24) * desk.TS; },
-  get gap() { return (T.backTight ? 12 : 16) * desk.TS; }, get bottom() { return BK.pad - 7 + 13 * desk.TS; }, strip: 32,
+  pad: 12, get first() { return BK.pad + 16 * desk.TS; }, get row() { return 22 * desk.TS; },
+  get gap() { return 12 * desk.TS; }, get bottom() { return BK.pad - 7 + 13 * desk.TS; },
 };
-// Small monochrome marks for the note's links (quiet), by link text; 24-unit boxes except GitHub (16).
-const ICONS: Record<string, [number, string]> = {
-  GitHub: [16, 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z'],
-  Scholar: [24, 'M5.242 13.769L0 9.5 12 0l12 9.5-5.242 4.269C17.548 11.249 14.978 9.5 12 9.5c-2.977 0-5.548 1.748-6.758 4.269zM12 10a7 7 0 1 0 0 14 7 7 0 0 0 0-14z'],
-  LinkedIn: [24, 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z'],
-  X: [24, 'M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z'],
-  Kaggle: [24, 'M18.825 23.859c-.022.092-.117.141-.281.141h-3.139c-.187 0-.351-.082-.492-.248l-5.178-6.589-1.448 1.374v5.111c0 .235-.117.352-.351.352H5.505c-.236 0-.354-.117-.354-.352V.353c0-.233.118-.353.354-.353h2.431c.234 0 .351.12.351.353v14.343l6.203-6.272c.165-.165.33-.246.495-.246h3.239c.144 0 .236.06.281.18.046.149.034.255-.036.315l-6.555 6.344 6.836 8.507c.095.104.117.208.075.339z'],
-  Resume: [24, 'M6 1.5h8.5L20 7v14a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 4.5 21V3A1.5 1.5 0 0 1 6 1.5zm7.5 1.8V8h4.7zM8 12v1.6h8V12zm0 4v1.6h8V16z'],
-};
-const backStyle = (s?: Card) => { const st = BACK_STYLES[T.backs] || BACK_STYLES.postcard; return st.postcard && s?.kind !== 'photo' ? BACK_STYLES.pen : st; };
-// The postcard back: where the divider sits (a share of the width), the gap either side of it, the stamp (w, h), and how
-// many ruled address lines it has (at least one per link).
-const PC = { split: 0.62, get gutter() { return T.backTight ? 10 : 14; }, get stamp() { return T.backTight ? [34, 40] : [40, 48]; }, get lines() { return T.backTight ? 1 : 3; } };
 
 // A link: its text at (x, base) and its hit area (a 24px row, 4px wider than the text on each side).
 const linkAt = (a: HTMLAnchorElement, x: number, base: number, tw: number, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
-// b: the size to lay out at (the card's own by default); nothing sets a title on it, so the title falls back to the front's lines.
-function backLayout(s: Card, b: CardBox & { title?: string } = s): BackLayout {
-  const st = backStyle(s), w = b.w, m = measure(), { pad, row } = BK;
-  if (st.postcard) return postcardLayout(s, b);
+// b: the size to lay out at (the card's own by default). loose: the note's list at the roomier spacing (16 px padding,
+// 24 px rows) the desk sizes the note by (layout.ts), so it stays as tall as when every back had that spacing.
+function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
+  const w = b.w, m = measure(), { pad, row } = BK;
   if (s.kind === 'note') {
     // A tidy list, one link per line, from the same first baseline as every other back.
-    const hand = st.note !== 'icons', f = hand ? TYPE.noteHand : TYPE.noteLink, x0 = pad + (hand ? 0 : 20);
-    m.font = f.font;
-    // Tighter backs set the list in two columns when one would not fit.
-    const n = s.backLinks!.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
-    const links = s.backLinks!.map((a, i) => linkAt(a, x0 + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), BK.first + (i % per) * row, m.measureText(a.textContent!).width));
-    return { st, lines: [], links, w, h: b.h, need: BK.first + (per - 1) * row + BK.bottom + STRIP }; // clear of the strip along its bottom
+    m.font = TYPE.noteHand.font;
+    const [first, r, bottom] = loose ? [16 + 16 * desk.TS, 24 * desk.TS, 9 + 13 * desk.TS] : [BK.first, row, BK.bottom];
+    // Two columns when one would not fit.
+    const n = s.backLinks!.length, two = !loose && first + (n - 1) * r + bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
+    const links = s.backLinks!.map((a, i) => linkAt(a, pad + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), first + (i % per) * r, m.measureText(a.textContent!).width));
+    return { lines: [], links, w, h: b.h, need: first + (per - 1) * r + bottom + STRIP }; // clear of the strip along its bottom
   }
+  // An inked card has its stamp in the top right when the copy still fits beside it.
+  const stamped = s.inkHex && s.img ? backText(s, b, STAMP_SIZE) : null;
+  return stamped && stamped.need <= b.h ? stamped : backText(s, b, null);
+}
+// A back's copy and links, wrapped beside a stamp of size [w, h] in the top right while the lines are level with it.
+function backText(s: Card, b: CardBox, stamp: [number, number] | null): BackLayout {
+  const w = b.w, m = measure(), { pad, row } = BK, st = stamp && { x: w - pad - stamp[0] + 2, y: pad - 4 }, below = st ? st.y + stamp![1] + 4 : 0;
   // No label line: it only repeated the front's caption (Clark: no redundancy).
-  const title = T.backTitle ? s.backTitle ?? (b.title || b.lines?.join(' ') || '') : '', label = ''; // the title can stay on the front only
-  const strip = st.ruled && label && s.kind !== 'polaroid'; // index: the label gets its own strip along the top
-  const lines: BackLine[] = [];
-  let y = BK.first + (strip ? BK.strip : 0) - TYPE.title.lh, gapNext = 0;
-  const add = (t: string, kind: 'title' | 'label' | 'body') => {
-    const f = TYPE[kind];
-    y += gapNext;
-    wrapLines(t, w - 2 * pad, f.font).forEach((l, i) => { y += i || kind !== 'label' ? f.lh : 18; lines.push({ t: l, f, y }); });
-  };
-  if (title) add(title, 'title');
-  if (label && !strip) add(label, 'label');
-  // Paragraphs: 8px apart; on ruled cards each one just starts on the next rule.
-  let ruleTop: number | null = null;
-  if (strip || (st.ruled && s.kind !== 'polaroid')) { ruleTop = y + 10; y = ruleTop + 15 - TYPE.body.lh; }
-  gapNext = ruleTop == null ? 8 : 0;
-  s.backParas!.forEach((t) => { add(t, 'body'); gapNext = ruleTop == null ? 8 : 0; });
+  // The paragraphs, 8px apart, the first 8px under the first baseline, narrower while level with the stamp. The title
+  // is on the front only.
+  const lines: BackLine[] = [], f = TYPE.body, narrow = st ? st.x - 8 - pad : 0;
+  let y = BK.first - f.lh;
+  m.font = f.font;
+  for (const t of s.backParas!) {
+    y += 8;
+    let line = '';
+    for (const word of t.split(' ')) {
+      const test = line ? line + ' ' + word : word;
+      if (line && m.measureText(test).width > (st && y + f.lh - 13 * desk.TS < below ? narrow : w - 2 * pad)) { y += f.lh; lines.push({ t: line, f, y }); line = word; } else line = test;
+    }
+    if (line) { y += f.lh; lines.push({ t: line, f, y }); }
+  }
   // Links: ink text in rows along the bottom, the last baseline 22px above the bottom edge (top, on a back with no text).
   m.font = TYPE.link.font;
   const rows: Row[] = [[]];
@@ -258,105 +233,15 @@ function backLayout(s: Card, b: CardBox & { title?: string } = s): BackLayout {
     if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; }
     rows.at(-1)!.push([a, x, tw]); x += tw + BK.gap;
   }
-  // Ruled: the links sit on rules too (at least one empty rule above them), and their rule darkens as the underline.
-  const pitch = ruleTop == null ? row : TYPE.body.lh, lift = ruleTop == null ? 32 : 2 * TYPE.body.lh;
-  const need = Math.ceil((lines.length ? y : 0) + lift + BK.bottom + (rows.length - 1) * pitch);
-  let base0 = b.h - BK.bottom - (rows.length - 1) * pitch;
-  if (ruleTop != null) base0 = ruleTop + 15 + Math.floor((base0 - ruleTop - 15) / pitch) * pitch;
-  const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * pitch, tw, pitch)));
-  return { st, lines, links, w, h: b.h, need, strip: strip ? label : null, ruleTop, ruleEnd: base0 + (rows.length - 1) * pitch + 5 };
-}
-
-// The message (title, then the back copy) from the same first baseline as every back, in the column left of the divider;
-// the links on the address lines, which sit at the bottom of the right column, the last 22px above the bottom edge.
-function postcardLayout(s: Card, b: CardBox & { title?: string }): BackLayout {
-  const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK;
-  m.font = TYPE.link.font; // the divider moves left if a link would not fit on its address line
-  const divX = Math.min(Math.round(w * PC.split), Math.floor(w - pad - PC.gutter - Math.max(...s.backLinks!.map((a) => m.measureText(a.textContent!).width)))), colW = divX - pad - PC.gutter, lines: BackLine[] = [];
-  let y = BK.first - TYPE.title.lh;
-  const add = (t: string, kind: 'title' | 'body', gap: number) => { y += gap; wrapLines(t, colW, TYPE[kind].font).forEach((l) => { y += TYPE[kind].lh; lines.push({ t: l, f: TYPE[kind], y }); }); };
-  const title = T.backTitle ? s.backTitle ?? b.title ?? '' : ''; // the title can stay on the front only
-  if (title) add(title, 'title', 0);
-  s.backParas!.forEach((t, i) => add(t, 'body', title || i ? 8 : 0));
-  m.font = TYPE.link.font;
-  const x0 = divX + PC.gutter, x1 = w - pad, n = Math.max(PC.lines, s.backLinks!.length), base0 = h - BK.bottom - (n - 1) * row;
-  const links = s.backLinks!.map((a, i) => linkAt(a, x0, base0 + i * row, m.measureText(a.textContent!).width));
-  const stampBottom = pad - 2 + PC.stamp[1], wide = links.some((k) => k.tx + k.tw > x1);
-  const need = wide ? Infinity : Math.max(Math.ceil(y + BK.bottom), stampBottom + 12 + 16 + (n - 1) * row + BK.bottom);
-  if (need <= h) return { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
-  return stackedPostcard(s, b) || { st, lines, links, w, h, need, postcard: { divX, x0, x1, base0, n } };
-}
-// A smaller card's postcard back when the columns will not hold its message: the message runs the full width (beside
-// the stamp at the top), and the links share one ruled line along the bottom (a second if they must).
-function stackedPostcard(s: Card, b: CardBox): BackLayout | null {
-  const st = backStyle(s), { w, h } = b, m = measure(), { pad, row } = BK, [sw, sh] = PC.stamp, stampBottom = pad - 2 + sh;
-  const lines: BackLine[] = []; let y = BK.first - TYPE.body.lh;
-  s.backParas!.forEach((t, i) => {
-    y += i ? 8 : 0; m.font = TYPE.body.font;
-    let line = '';
-    const width = () => (y + TYPE.body.lh - 13 * desk.TS < stampBottom + 4 ? w - 2 * pad - sw - 10 : w - 2 * pad); // beside the stamp, then full
-    for (const word of t.split(' ')) {
-      const test = line ? line + ' ' + word : word;
-      if (line && m.measureText(test).width > width()) { y += TYPE.body.lh; lines.push({ t: line, f: TYPE.body, y }); line = word; } else line = test;
-    }
-    if (line) { y += TYPE.body.lh; lines.push({ t: line, f: TYPE.body, y }); }
-  });
-  m.font = TYPE.link.font;
-  const rows: Row[] = [[]]; let x = pad;
-  for (const a of s.backLinks!) { const tw = m.measureText(a.textContent!).width; if (x + tw > w - pad && x > pad) { rows.push([]); x = pad; } rows.at(-1)!.push([a, x, tw]); x += tw + BK.gap; }
-  const base0 = h - BK.bottom - (rows.length - 1) * row;
+  const need = Math.ceil((lines.length ? y : 0) + 32 + BK.bottom + (rows.length - 1) * row);
+  const base0 = b.h - BK.bottom - (rows.length - 1) * row;
   const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * row, tw)));
-  const need = Math.ceil(y + row + (rows.length - 1) * row + BK.bottom);
-  return need <= h ? { st, lines, links, w, h, need, postcard: { stacked: true, base0, n: rows.length, x0: pad, x1: w - pad } } : null;
-}
-// OKLab blend of an sRGB hex toward another hex's hue at the first one's lightness and chroma (mix 0 to 1): the stamp's
-// olive ink with a cast of the project's color.
-function tintHex(baseHex: string, hueHex: string, mix: number) {
-  const [L, a0, b0] = desk.oklab(hexRGB(baseHex)), c = desk.oklab(hexRGB(hueHex)), C = Math.hypot(a0, b0), hh = Math.atan2(c[2], c[1]);
-  const [r, g, bl] = desk.fromOklab([L, a0 + mix * (C * Math.cos(hh) - a0), b0 + mix * (C * Math.sin(hh) - b0)]);
-  return `rgb(${r.toFixed(0)}, ${g.toFixed(0)}, ${bl.toFixed(0)})`;
-}
-// A small postage stamp: perforated paper, a fine frame, and a few slime cells (seeded by the card) in the tinted ink.
-function paintStamp(x: Ctx, x0: number, y0: number, sw: number, sh: number, ink: string, seed: number) {
-  x.fillStyle = TOK.stockWarm; x.fillRect(x0, y0, sw, sh);
-  x.fillStyle = TOK.stock; // the perforation: little bites along every edge
-  const bite = (cx: number, cy: number) => { x.beginPath(); x.arc(cx, cy, 1.5, 0, 2 * Math.PI); x.fill(); };
-  for (let i = 0, n = Math.round(sw / 4.5); i <= n; i++) { bite(x0 + (i * sw) / n, y0); bite(x0 + (i * sw) / n, y0 + sh); }
-  for (let i = 1, n = Math.round(sh / 4.5); i < n; i++) { bite(x0, y0 + (i * sh) / n); bite(x0 + sw, y0 + (i * sh) / n); }
-  const ix = x0 + 4.5, iy = y0 + 4.5, iw = sw - 9, ih = sh - 9, r = rng(seed * 2654435761 + 1);
-  x.save(); x.beginPath(); x.rect(ix, iy, iw, ih); x.clip();
-  x.fillStyle = ink; x.globalAlpha = 0.12; x.fillRect(ix, iy, iw, ih); x.globalAlpha = 1;
-  const pts = Array.from({ length: 9 }, (_, i) => [ix - 4 + ((i % 3) + 0.2 + 0.6 * r()) * ((iw + 8) / 3), iy - 4 + (Math.floor(i / 3) + 0.2 + 0.6 * r()) * ((ih + 8) / 3)]);
-  x.strokeStyle = ink; x.lineCap = 'round';
-  for (const [i, p] of pts.entries()) { // each cell's center to its nearest neighbors: veins between the cells
-    const near = pts.map((q, j) => [Math.hypot(q[0] - p[0], q[1] - p[1]), j]).filter(([, j]) => j > i).sort((a, c) => a[0] - c[0]).slice(0, 3);
-    for (const [d, j] of near) {
-      const q = pts[j], bend = (r() - 0.5) * 0.5 * d;
-      x.lineWidth = Math.max(0.7, 1.9 - d / 14);
-      x.beginPath(); x.moveTo(p[0], p[1]);
-      x.quadraticCurveTo((p[0] + q[0]) / 2 - ((q[1] - p[1]) / d) * bend, (p[1] + q[1]) / 2 + ((q[0] - p[0]) / d) * bend, q[0], q[1]); x.stroke();
-    }
-  }
-  x.restore();
-  x.strokeStyle = ink; x.lineWidth = 0.8; x.strokeRect(ix + 0.4, iy + 0.4, iw - 0.8, ih - 0.8);
-}
-function drawPostcard(x: Ctx, s: Card, L: BackLayout) {
-  const P = L.postcard!, { w, h } = L, { pad, row } = BK;
-  if (!P.stacked) { x.fillStyle = '#a5a9708c'; x.fillRect(P.divX, pad, 1, h - 2 * pad); } // the divider, a thin olive rule
-  const [sw, sh] = PC.stamp;
-  paintStamp(x, w - pad - sw + 2, pad - 2, sw, sh, tintHex(TOK.inkLine, s.hueHex, 0.45), s.id + 1);
-  x.fillStyle = '#a5a97059'; // the address lines
-  for (let i = 0; i < P.n; i++) x.fillRect(P.x0 - 2, P.base0 + i * row + 5, P.x1 - P.x0 + 2, 1);
-  for (const l of L.lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
-  for (const k of L.links) { // written on its line, which darkens under it as its underline
-    x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(k.a.textContent!, k.tx, k.base);
-    x.fillStyle = TOK.inkLine; x.fillRect(k.tx, k.base + 5, k.tw, 1);
-  }
+  return { lines, links, w, h: b.h, need: Math.max(need, Math.ceil(below + 20 + BK.bottom + (rows.length - 1) * row)), stamp: st }; // the links clear the stamp
 }
 
 // Deterministic noise, so the atlas looks the same on every build.
 function rng(seed: number) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
-// Matte stock: a faint, fine grain (photo-paper backs and the note).
+// Matte stock: a faint, fine grain (the note).
 function grain(x: Ctx, cw: number, ch: number, amt: number, seed: number) {
   const img = x.getImageData(0, 0, cw, ch), d = img.data, r = rng(seed);
   for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * amt; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
@@ -375,57 +260,42 @@ function penLine(x: Ctx, x0: number, x1: number, y: number, seed: number, width:
 }
 
 function drawBack(s0: Card, S0: number) {
-  const S = S0 * (s0.k || 1), s = design(s0), L = backLayout(s), { st, lines, links, w, h } = L, { pad } = BK; // design px
+  const S = S0 * (s0.k || 1), s = design(s0), { lines, links, w, h, stamp } = backLayout(s), { pad } = BK; // design px
   const cw = Math.ceil(s0.w * S0), chh = Math.ceil(s0.h * S0);
   const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true })!;
-  x.fillStyle = STOCK[s.kind]; x.fillRect(0, 0, cw, chh);
-  if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
+  x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, cw, chh);
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
+  let print = null;
+  if (stamp) { // its picture, framed as on its front
+    const src = s.img!, iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+    print = paintStamp(x, s.inkHex!, (p, pw, ph) => { const [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); }, stamp.x, stamp.y, S);
+  }
   x.textBaseline = 'alphabetic';
-  if (L.postcard) { drawPostcard(x, s, L); return { canvas: c, links, w, h }; }
-  // index: the label strip, the header rule, and faint rules under every line to the bottom of the card
-  if (L.strip) {
-    x.fillStyle = TOK.stockWarm; x.fillRect(0, 0, w, BK.strip);
-    x.fillStyle = '#1d1d1b14'; x.fillRect(0, BK.strip - 1, w, 1);
-    x.font = TYPE.label.font; x.fillStyle = TYPE.label.color; x.fillText(L.strip, pad, 21);
-  }
-  if (L.ruleTop != null) {
-    x.fillStyle = '#5c5f4a99'; x.fillRect(pad - 4, L.ruleTop, w - 2 * pad + 8, 1);
-    x.fillStyle = '#a5a97047';
-    for (let ry = L.ruleTop + TYPE.body.lh; ry <= L.ruleEnd!; ry += TYPE.body.lh) x.fillRect(pad - 4, ry, w - 2 * pad + 8, 1);
-  }
-  if (s.kind === 'note' && st.note === 'ruled') {
-    x.fillStyle = '#c9b95e66';
-    for (let ry = BK.first + 5; ry < h - 6; ry += BK.row) x.fillRect(0, ry, w, 1);
-  }
   for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
   links.forEach((k, i) => {
     const t = k.a.textContent!;
     if (s.kind === 'note') {
-      const hand = st.note !== 'icons';
-      x.font = hand ? TYPE.noteHand.font : TYPE.noteLink.font; x.fillStyle = NOTE_INK;
-      x.fillText(t, k.tx, k.base);
-      if (!hand && ICONS[t]) {
-        const [vb, d] = ICONS[t], sz = 12;
-        x.save(); x.translate(pad, k.base - 11); x.scale(sz / vb, sz / vb); x.fillStyle = NOTE_INK; x.fill(new Path2D(d)); x.restore();
-      }
-      if (st.note === 'pen') { x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, i + 1, 1.3); }
-      else if (st.note === 'icons') { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
+      x.font = TYPE.noteHand.font; x.fillStyle = TOK.text2; x.fillText(t, k.tx, k.base);
+      x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, i + 1, 1.3);
       return;
     }
     x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(t, k.tx, k.base);
-    if (st.underline === 'pen') { x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15); }
-    else if (L.ruleTop == null) { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
-    else { x.fillStyle = INK_DEEP; x.fillRect(k.tx, k.base + 5, k.tw, 1); } // the link's stretch of its rule
+    x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15);
   });
-  return { canvas: c, links, w, h };
+  return { canvas: c, links, w, h, print };
+}
+// The stamp's print, as far as it has developed, over its spot in the atlas.
+function developStamp(s: Card) {
+  const p = s.print!;
+  desk.gpu!.device.queue.writeTexture({ texture: desk.shared!.atlas!, origin: [p.x, p.y] }, develop(p, s.dev), { bytesPerRow: p.w * 4 }, [p.w, p.h]);
+  desk.redraw = true;
 }
 function drawLidOutside(s: Card, S: number) {
   const c = new OffscreenCanvas(Math.ceil(s.w * S), Math.ceil(s.h * S));
   paintLid(c.getContext('2d')!, design(s), S * (s.k || 1), true);
-  return { canvas: c, links: [], w: s.w, h: s.h };
+  return { canvas: c, links: [], w: s.w, h: s.h, print: null };
 }
 // A card at its design size (what it is drawn and laid out in; the desk shows it at its card scale).
 const design = (s: Card): Card => (s.k && s.k !== 1 ? { ...s, w: s.w / s.k, h: s.h / s.k } : s);
@@ -454,7 +324,7 @@ function renderEntries(g: Gpu, sm: Sim, extra: GPUBindGroupEntry[] = []) {
 function paintPlainBack(s: Card, S: number) {
   const cs = desk.view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d')!;
-  x.scale(S, S); x.fillStyle = STOCK[s.kind] || TOK.stock; x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
+  x.scale(S, S); x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, w, h); // the note's yellow
   if (hinged(s)) { x.translate(w, h); x.rotate(Math.PI); } // the note is seen turned over its top edge, not its side
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
@@ -470,7 +340,7 @@ async function buildAtlas(g: Gpu) {
   const backs = sources.filter((src) => src.backEl || src.lid).map((src) => ({ src, ...(src.lid ? drawLidOutside(src, S) : drawBack(src, S)) }));
   const plainFor = sources.filter(decked), plain = plainFor.map((s) => paintPlainBack(s, S)); // each card's plain deck back, at its own size
   // The corners' labels, in pen (transparent around the ink): one canvas size for both, the longer word's.
-  const lf = font(500, T.cornerLabel * desk.view.k * S, 'Caveat'), mc = measure();
+  const lf = font(500, CORNER.label * desk.view.k * S, 'Caveat'), mc = measure();
   mc.font = lf;
   const lw = Math.ceil(Math.max(...NAMES.map((t) => mc.measureText(t).width)) + 6 * S), lh = Math.ceil(24 * desk.view.k * S);
   const labels = NAMES.map((t) => {
@@ -499,8 +369,9 @@ async function buildAtlas(g: Gpu) {
     src.uv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     src.mediaUV = mediaPx ? [mediaPx.x / (src.w * S), mediaPx.y / (src.h * S), (mediaPx.x + mediaPx.w) / (src.w * S), (mediaPx.y + mediaPx.h) / (src.h * S)] : [0, 0, 0, 0];
   });
-  backs.forEach(({ src, canvas: c, links }, i) => {
+  backs.forEach(({ src, canvas: c, links, print }, i) => {
     const p = places[drawn.length + i];
+    src.print = print && { ...print, x: p.x + print.x, y: p.y + print.y };
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, links);
@@ -522,7 +393,8 @@ async function buildAtlas(g: Gpu) {
   });
   desk.shared!.labelUV = labelUV;
   desk.shared!.atlas = atlas;
+  for (const src of sources) if (src.print && src.dev < 1) developStamp(src); // as far as it has got
   for (const src of sources) if (src.more) tallySetup(src);
 }
-return { backLayout, paintDomBack, design, BOX_NAMES, linkAt, coverRect, renderEntries, buildAtlas, drawBack, drawCard };
+return { backLayout, paintDomBack, design, BOX_NAMES, linkAt, coverRect, renderEntries, buildAtlas, drawBack, drawCard, developStamp };
 }

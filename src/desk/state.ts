@@ -17,7 +17,6 @@ import type { mountTextures } from './textures.ts';
 import type { Gpu, Shared, Sim, mountGpu } from './gpu.ts';
 import type { mountUniforms } from './uniforms.ts';
 import type { mountFrame } from './frame.ts';
-import type { mountTweak } from './tweak.ts';
 
 export interface State {
   root: HTMLElement;
@@ -40,7 +39,7 @@ export interface State {
   probeKey: string | null;
   gpu: Gpu | null;
   sim: Sim | null;
-  tweakSync: (() => void) | null;
+  adminSync: (() => void) | null; // the admin panel's rows show the current page's style (admin.ts)
   dealing: boolean;
   capturing: boolean;
   running: boolean;
@@ -61,12 +60,11 @@ type TexturesPart = ReturnType<typeof mountTextures>;
 type GpuPart = ReturnType<typeof mountGpu>;
 type UniformsPart = ReturnType<typeof mountUniforms>;
 type FramePart = ReturnType<typeof mountFrame>;
-type TweakPart = ReturnType<typeof mountTweak>;
 
 interface Parts {
   // tunables.ts
-  qs: TunablesPart['qs']; HAND: TunablesPart['HAND']; font: TunablesPart['font']; T: TunablesPart['T'];
-  reduced: TunablesPart['reduced']; STYLE: TunablesPart['STYLE']; applyLook: TunablesPart['applyLook'];
+  HAND: TunablesPart['HAND']; font: TunablesPart['font']; T: TunablesPart['T'];
+  reduced: TunablesPart['reduced']; STYLE: TunablesPart['STYLE'];
   // wgsl.ts
   renderWGSL: WgslPart['renderWGSL']; AGENT_WGSL: WgslPart['AGENT_WGSL'];
   // layout.ts
@@ -77,12 +75,12 @@ interface Parts {
   shown: LayoutPart['shown']; body: LayoutPart['body']; capped: LayoutPart['capped']; STRIP: LayoutPart['STRIP'];
   CAP_LH: LayoutPart['CAP_LH']; wrapLines: LayoutPart['wrapLines']; canvas: LayoutPart['canvas'];
   regionLabel: LayoutPart['regionLabel']; absorbance: LayoutPart['absorbance']; noteProfile: LayoutPart['noteProfile'];
-  noteMesh: LayoutPart['noteMesh']; hud: LayoutPart['hud']; layout: LayoutPart['layout'];
+  noteMesh: LayoutPart['noteMesh']; layout: LayoutPart['layout'];
   placeDoor: LayoutPart['placeDoor'];
   // turn.ts
   turn: TurnPart['turn']; clipLinks: TurnPart['clipLinks']; cam: TurnPart['cam'];
   regionFromUrl: TurnPart['regionFromUrl']; placePage: TurnPart['placePage']; setInert: TurnPart['setInert'];
-  DOOR: TurnPart['DOOR']; door: TurnPart['door']; dirOf: TurnPart['dirOf']; stepDoor: TurnPart['stepDoor'];
+  DOOR: TurnPart['DOOR']; door: TurnPart['door']; dirOf: TurnPart['dirOf']; span: TurnPart['span']; stepDoor: TurnPart['stepDoor'];
   cursor: TurnPart['cursor']; next: TurnPart['next']; drawStill: TurnPart['drawStill']; holdPage: TurnPart['holdPage'];
   rollR: TurnPart['rollR']; restD: TurnPart['restD']; farD: TurnPart['farD']; hull: TurnPart['hull'];
   NAMES: TurnPart['NAMES']; WARM_STEPS: TurnPart['WARM_STEPS']; syncInert: TurnPart['syncInert'];
@@ -105,11 +103,11 @@ interface Parts {
   BOX_STEP: FlightsPart['BOX_STEP']; stepFlights: FlightsPart['stepFlights']; INTRO_DELAY: FlightsPart['INTRO_DELAY'];
   // box.ts
   placeDecks: BoxPart['placeDecks']; launch: BoxPart['launch']; arriveDeck: BoxPart['arriveDeck'];
-  throwWorld: BoxPart['throwWorld']; BOX: BoxPart['BOX']; resetBox: BoxPart['resetBox']; moveDeck: BoxPart['moveDeck'];
+  throwWorld: BoxPart['throwWorld']; outside: BoxPart['outside']; BOX: BoxPart['BOX']; resetBox: BoxPart['resetBox']; moveDeck: BoxPart['moveDeck'];
   BOX3D: BoxPart['BOX3D']; tallySetup: BoxPart['tallySetup']; LIGHT: BoxPart['LIGHT'];
   launchPose: BoxPart['launchPose']; carried: BoxPart['carried']; boxH: BoxPart['boxH']; cross: BoxPart['cross'];
   facing: BoxPart['facing']; FAR: BoxPart['FAR']; projR: BoxPart['projR']; flyingOrder: BoxPart['flyingOrder'];
-  FACE_SLOTS: BoxPart['FACE_SLOTS']; stepDecks: BoxPart['stepDecks']; stepThrows: BoxPart['stepThrows'];
+  FACE_SLOTS: BoxPart['FACE_SLOTS']; stepDecks: BoxPart['stepDecks']; stepThrows: BoxPart['stepThrows']; mass: BoxPart['mass'];
   // player.ts
   Player: PlayerPart['Player']; idle: PlayerPart['idle']; makePlayer: PlayerPart['makePlayer'];
   stepMedia: PlayerPart['stepMedia']; clipLists: PlayerPart['clipLists']; playlistFor: PlayerPart['playlistFor'];
@@ -118,23 +116,21 @@ interface Parts {
   backLayout: TexturesPart['backLayout']; paintDomBack: TexturesPart['paintDomBack']; design: TexturesPart['design'];
   BOX_NAMES: TexturesPart['BOX_NAMES']; linkAt: TexturesPart['linkAt']; coverRect: TexturesPart['coverRect'];
   renderEntries: TexturesPart['renderEntries']; buildAtlas: TexturesPart['buildAtlas'];
-  drawBack: TexturesPart['drawBack']; drawCard: TexturesPart['drawCard'];
+  drawBack: TexturesPart['drawBack']; drawCard: TexturesPart['drawCard']; developStamp: TexturesPart['developStamp'];
   // gpu.ts
   initGpu: GpuPart['initGpu']; createShared: GpuPart['createShared']; createSim: GpuPart['createSim'];
-  autoOn: GpuPart['autoOn']; Q: GpuPart['Q']; simRes: GpuPart['simRes'];
+  Q: GpuPart['Q']; simRes: GpuPart['simRes'];
   // uniforms.ts
   writeUniforms: UniformsPart['writeUniforms']; easeFlip: UniformsPart['easeFlip']; CARD0: UniformsPart['CARD0'];
   CARD_VEC4: UniformsPart['CARD_VEC4']; U: UniformsPart['U']; invert3: UniformsPart['invert3'];
-  flipPath: UniformsPart['flipPath']; oklab: UniformsPart['oklab']; fromOklab: UniformsPart['fromOklab'];
+  flipPath: UniformsPart['flipPath'];
   CHIP_OFF: UniformsPart['CHIP_OFF']; CHIP_VEC4: UniformsPart['CHIP_VEC4']; clock: UniformsPart['clock'];
   NOTE_U: UniformsPart['NOTE_U']; trans: UniformsPart['trans']; VU_OFF: UniformsPart['VU_OFF'];
   // frame.ts
   encodeStep: FramePart['encodeStep']; encodeRender: FramePart['encodeRender']; chipRegion: FramePart['chipRegion'];
-  chips: FramePart['chips']; stats: FramePart['stats']; isJ: FramePart['isJ']; activeAgents: FramePart['activeAgents'];
+  chips: FramePart['chips']; stats: FramePart['stats']; activeAgents: FramePart['activeAgents'];
   chipUniforms: FramePart['chipUniforms']; reseed: FramePart['reseed']; bootLog: FramePart['bootLog'];
-  bench: FramePart['bench']; dropChip: FramePart['dropChip']; main: FramePart['main'];
-  // tweak.ts
-  tweakPanel: TweakPart['tweakPanel'];
+  bench: FramePart['bench']; dropChip: FramePart['dropChip']; main: FramePart['main']; time: FramePart['time'];
 }
 
 // Each part's names are listed one by one, not intersected as whole parts, so TypeScript can type one without first

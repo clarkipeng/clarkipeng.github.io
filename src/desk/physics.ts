@@ -4,7 +4,7 @@
 // within a step is a contact), so nothing tunnels; sweep and prune between bodies; bodies at rest sleep and cost nothing.
 // No allocation per step. Units: CSS px and seconds; x right, y down the desk, z up toward you (gravity pulls -z).
 //
-//   const world = createWorld({ hz: 480, iters: 6 });
+//   const world = createWorld({ hz: 240, iters: 4 });
 //   const b = world.add({
 //     points,          // contact points x, y, z in the body's frame, about its centre of mass (a few dozen to ~100 is plenty)
 //     bound,           // radius about the centre of mass that holds every point
@@ -19,13 +19,17 @@
 //     render,          // optional (b) => void, after each advance it moved in: read world.pose(b, pos, rot)
 //   });
 //   world.surface = { top, speed, prepare(t), at(io, vel), moving(x, y, r) }: what everything rests on (the desk and the
-//     turning page, curl.ts). top: its highest point; speed: its fastest; prepare(t): set it to time t; at: io[0..1] x, y
-//     in; out, its height and normal (io[0..3]) there and, if vel, its velocity (io[4..6]); moving: whether it moves under
-//     a circle (a body asleep there wakes).
+//     turning page, sheet.ts). top: its highest point; speed: its fastest; prepare(t): set it to time t; at: io[0..1] x, y
+//     in; out, the height and normal (io[0..3]) of the highest paper there at most z up (a point rests on what is under
+//     it, not on paper passing over it) and, if vel, its velocity (io[4..6]); moving: whether it moves under a circle (a
+//     body asleep there wakes).
 //   Floats cross these calls in arrays, not as arguments or return values: V8 allocates for those (and for Math.hypot).
 //   world.g = 9000;    // gravity, px/s²
 //   world.advance(t);  // fixed steps up to time t (s); world.pose(b, pos, rot) is interpolated between the last two
+//   world.stepped = () => {}; // optional: after each step (to act at an exact moment of the sim, whatever the frame rate)
 //   world.remove(b); const s = world.save(); world.load(s); // a load replays exactly (deterministic)
+//   world.hold(b, pos, q); // held: the app moves it (a card at rest, dragged or dealt); the sim never does, and
+//   b.held = false;        //   others meet it as one asleep. Let go, it sleeps until something wakes it.
 
 const SEC = 8, MAXC = 4096; // directions contacts are thinned to, per body and partner; contacts per step
 // Per contact: ra (0), rb (3), overlap (6), wanted normal speed (7), impulses n, t1, t2 (8), push (11), surface
@@ -33,6 +37,7 @@ const SEC = 8, MAXC = 4096; // directions contacts are thinned to, per body and 
 // IB (rb x d), 1 / k.
 const CF = 66, ROW = 18, RW = 16;
 const V = 12; // per body velocity floats: v, w, and the overlap push's v, w
+const REST = 0.5, NAP = 0.4; // a body that stays within REST px of where it came to rest for NAP s sleeps
 
 // A body-frame point in io[0..2]; out, its outward normal (io[0..2]) and signed distance (io[3]). See the header.
 export type Sdf = (io: Float64Array) => void;
@@ -41,7 +46,7 @@ export interface Surface {
   top: number;
   speed: number;
   prepare(t: number): void;
-  at(io: Float64Array, vel: boolean): void;
+  at(io: Float64Array, vel: boolean, z?: number): void;
   moving(x: number, y: number, r: number): boolean;
 }
 export interface BodyOptions {
@@ -85,6 +90,7 @@ export interface Body {
   wstep: Int32Array;
   wside: Int8Array;
   sleep: boolean;
+  held: boolean;
   still: number;
   touch: boolean;
   moved: boolean;
@@ -93,14 +99,16 @@ export interface Body {
 }
 export interface World {
   g: number;
-  rest: number;
   surface: Surface | null;
   hz: number;
   bodies: Body[];
   time: number;
+  stepped?: (() => void) | null;
   add(o: BodyOptions): Body;
   remove(b: Body): void;
+  hold(b: Body, x: ArrayLike<number>, q: ArrayLike<number>): void;
   advance(t: number): void;
+  eachContact(fn: (b: Body, p: Float64Array, n: Float64Array) => void): void;
   pose(b: Body, pos: Float64Array, rot: Float64Array): void;
   save(): Float64Array;
   load(s: Float64Array): void;
@@ -112,13 +120,13 @@ export interface Shape {
   inertia: (m: number) => [number, number, number];
 }
 
-export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World {
+export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World {
   const h = 1 / hz, bodies: Body[] = [];
   let time = 0, alpha = 0, stepN = 0, order = new Int32Array(0), vel = new Float64Array(0);
   const cf = new Float64Array(MAXC * CF), ci = new Int32Array(MAXC * 4); // A, B (-1: the surface or a sleeping body), point, B's id
   let nc = 0;
   const pick = new Int32Array(SEC), pd = new Float64Array(SEC), pk = new Float64Array(SEC * 6), cd = new Float64Array(7), so = new Float64Array(7), sn = new Float64Array(4);
-  const world = { g: 9000, rest: 0.5, surface: null, hz, bodies } as World; // add, remove, ... and time are set below
+  const world = { g: 9000, surface: null, hz, bodies } as World; // add, remove, ... and time are set below
 
   world.add = (o) => {
     const n = o.points.length / 3, I = o.inertia;
@@ -129,16 +137,20 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
       x: Float64Array.from(o.x || [0, 0, 0]), q: Float64Array.from(o.q || [1, 0, 0, 0]), v: null!, w: null!, // set by reindex, below
       px: new Float64Array(3), pq: new Float64Array(4), ax: new Float64Array(3), aq: new Float64Array(4), // ax, aq: where it came to rest
       warm: new Float64Array(n * 3), wid: new Int32Array(n), wstep: new Int32Array(n).fill(-9), wside: new Int8Array(n),
-      sleep: false, still: 0, touch: false, moved: true, reach: 0, id: bodies.length,
+      sleep: false, held: false, still: 0, touch: false, moved: true, reach: 0, id: bodies.length,
     };
     b.px.set(b.x); b.pq.set(b.q); b.ax.set(b.x); b.aq.set(b.q); orient(b);
     bodies.push(b); reindex();
     b.v.set(o.v || [0, 0, 0]); b.w.set(o.w || [0, 0, 0]);
     return b;
   };
-  const wake = (b: Body) => { b.sleep = false; b.still = 0; };
-  // Gone: what rested on it wakes, and falls.
-  world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
+  const wake = (b: Body) => { if (!b.held) { b.sleep = false; b.still = 0; } };
+  world.hold = (b, x, q) => {
+    b.held = b.sleep = true; b.still = 0; b.v.fill(0); b.w.fill(0);
+    b.x.set(x); b.px.set(x); b.ax.set(x); b.q.set(q); b.pq.set(q); b.aq.set(q); orient(b);
+  };
+  // Gone: what rested on it wakes, and falls; the last step's contacts go (the ids they name have moved).
+  world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); nc = 0; for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
   // Velocities live side by side (the solver's hot loop reads them); each body's v and w are views into them.
   // Ids follow too, and so what each point touched last step (a gone body: -2, nothing's id).
   function reindex() {
@@ -154,7 +166,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
   world.advance = (t) => {
     for (const b of bodies) b.moved = !b.sleep;
     let k = 0;
-    while (time + h <= t + 1e-9 && k++ < 240) { step(); time += h; }
+    while (time + h <= t + 1e-9 && k++ < 240) { step(); time += h; world.stepped?.(); }
     if (time + h <= t) time = t - h * 0.999; // far behind (a hidden tab): the backlog is dropped, not caught up
     alpha = Math.min(1, Math.max(0, (t - time) / h));
     for (const b of bodies) if (b.moved && b.render) b.render(b);
@@ -167,15 +179,25 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
     const l = Math.sqrt(w * w + x * x + y * y + z * z);
     qmat(w / l, x / l, y / l, z / l, rot);
   };
+  // Each contact of the last step (for a debug view): its body, its point (where the step began) and its normal (world;
+  // scratch arrays).
+  const cp = new Float64Array(3), cn = new Float64Array(3);
+  world.eachContact = (fn) => {
+    for (let c = 0; c < nc; c++) {
+      const o = c * CF, b = bodies[ci[c * 4]];
+      for (let j = 0; j < 3; j++) { cp[j] = b.px[j] + cf[o + j]; cn[j] = cf[o + ROW + j]; }
+      fn(b, cp, cn);
+    }
+  };
   const SV = 29;
   world.save = () => {
     const s = new Float64Array(2 + bodies.length * SV); s[0] = time; s[1] = alpha;
-    bodies.forEach((b, i) => { const o = 2 + i * SV; s.set(b.x, o); s.set(b.v, o + 3); s.set(b.w, o + 6); s.set(b.q, o + 9); s.set(b.px, o + 13); s.set(b.pq, o + 16); s[o + 20] = b.sleep ? 1 : 0; s[o + 21] = b.still; s.set(b.ax, o + 22); s.set(b.aq, o + 25); });
+    bodies.forEach((b, i) => { const o = 2 + i * SV; s.set(b.x, o); s.set(b.v, o + 3); s.set(b.w, o + 6); s.set(b.q, o + 9); s.set(b.px, o + 13); s.set(b.pq, o + 16); s[o + 20] = b.sleep ? 1 + Number(b.held) : 0; s[o + 21] = b.still; s.set(b.ax, o + 22); s.set(b.aq, o + 25); });
     return s;
   };
   world.load = (s) => {
     time = s[0]; alpha = s[1]; stepN += 2; // warm starts from before are stale
-    bodies.forEach((b, i) => { const o = 2 + i * SV; b.x.set(s.subarray(o, o + 3)); b.v.set(s.subarray(o + 3, o + 6)); b.w.set(s.subarray(o + 6, o + 9)); b.q.set(s.subarray(o + 9, o + 13)); b.px.set(s.subarray(o + 13, o + 16)); b.pq.set(s.subarray(o + 16, o + 20)); b.sleep = s[o + 20] > 0; b.still = s[o + 21]; b.ax.set(s.subarray(o + 22, o + 25)); b.aq.set(s.subarray(o + 25, o + 29)); orient(b); });
+    bodies.forEach((b, i) => { const o = 2 + i * SV; b.x.set(s.subarray(o, o + 3)); b.v.set(s.subarray(o + 3, o + 6)); b.w.set(s.subarray(o + 6, o + 9)); b.q.set(s.subarray(o + 9, o + 13)); b.px.set(s.subarray(o + 13, o + 16)); b.pq.set(s.subarray(o + 16, o + 20)); b.sleep = s[o + 20] > 0; b.held = s[o + 20] > 1; b.still = s[o + 21]; b.ax.set(s.subarray(o + 22, o + 25)); b.aq.set(s.subarray(o + 25, o + 29)); orient(b); });
   };
 
   function step() {
@@ -184,7 +206,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
     S.prepare(time);
     for (const b of bodies) {
       b.px.set(b.x); b.pq.set(b.q);
-      if (b.sleep) { if (!S.moving(b.x[0], b.x[1], b.bound)) continue; wake(b); b.moved = true; } // the paper moves under it
+      if (b.sleep) { if (b.held || !S.moving(b.x[0], b.x[1], b.bound)) continue; wake(b); b.moved = true; } // the paper moves under it
       const o = b.id * V;
       vel[o + 2] -= world.g * h;
       vel.fill(0, o + 6, o + 12);
@@ -203,16 +225,16 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
       const a = q[0] - wx * q[1] - wy * q[2] - wz * q[3], x = q[1] + wx * q[0] + wy * q[3] - wz * q[2], y = q[2] - wx * q[3] + wy * q[0] + wz * q[1], z = q[3] + wx * q[2] - wy * q[1] + wz * q[0];
       const l = Math.sqrt(a * a + x * x + y * y + z * z); q[0] = a / l; q[1] = x / l; q[2] = y / l; q[3] = z / l;
       orient(b);
-      // Still while it touches something and stays within world.rest px (its rim's travel included) of where it came to
-      // rest: a pile's jitter never adds up to that.
+      // Still while it touches something and stays within REST px (its rim's travel included) of where it came to rest:
+      // a pile's jitter never adds up to that.
       const A = b.ax, Q = b.aq, dq = Math.abs(q[0] * Q[0] + q[1] * Q[1] + q[2] * Q[2] + q[3] * Q[3]);
       const off = Math.abs(b.x[0] - A[0]) + Math.abs(b.x[1] - A[1]) + Math.abs(b.x[2] - A[2]) + 2 * b.bound * Math.sqrt(Math.max(0, 2 * (1 - dq)));
-      if (b.touch && off < world.rest) b.still += h; else { b.still = 0; A.set(b.x); Q.set(q); }
+      if (b.touch && off < REST) b.still += h; else { b.still = 0; A.set(b.x); Q.set(q); }
     }
     // Asleep once it has been still a moment, and so has everything awake it touches (a pile sleeps together, so nothing
     // settles onto one asleep); then it costs nothing until something moves it.
-    for (let c = 0; c < nc; c++) { const a = bodies[ci[c * 4]], b = ci[c * 4 + 1]; if (b >= 0 && Math.min(a.still, bodies[b].still) <= 0.4) a.still = bodies[b].still = Math.min(a.still, bodies[b].still, 0.4); }
-    for (const b of bodies) if (!b.sleep && b.still > 0.4 && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, b.id * V, b.id * V + 6); }
+    for (let c = 0; c < nc; c++) { const a = bodies[ci[c * 4]], b = ci[c * 4 + 1]; if (b >= 0 && Math.min(a.still, bodies[b].still) <= NAP) a.still = bodies[b].still = Math.min(a.still, bodies[b].still, NAP); }
+    for (const b of bodies) if (!b.sleep && b.still > NAP && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, b.id * V, b.id * V + 6); }
   }
   function orient(b: Body) {
     const q = b.q; qmat(q[0], q[1], q[2], q[3], b.R);
@@ -237,7 +259,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
       const rz = R[6] * lx + R[7] * ly + R[8] * lz, pz = x[2] + rz;
       if (pz > top + fast) continue;
       const rx = R[0] * lx + R[1] * ly + R[2] * lz, ry = R[3] * lx + R[4] * ly + R[5] * lz;
-      so[0] = x[0] + rx; so[1] = x[1] + ry; S.at(so, false);
+      so[0] = x[0] + rx; so[1] = x[1] + ry; S.at(so, false, pz + fast);
       const nx = so[1], ny = so[2], nz = so[3], gap = (pz - so[0]) * nz;
       if (gap > fast) continue;
       const vn = (vx0 + wy * rz - wz * ry) * nx + (vy0 + wz * rx - wx * rz) * ny + (vz0 + wx * ry - wy * rx) * nz;
@@ -246,7 +268,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
     }
     for (let k = 0; k < SEC; k++) if (pick[k] >= 0) {
       const p = k * 6;
-      so[0] = x[0] + pk[p]; so[1] = x[1] + pk[p + 1]; S.at(so, true);
+      so[0] = x[0] + pk[p]; so[1] = x[1] + pk[p + 1]; S.at(so, true, x[2] + pk[p + 2] + fast);
       emit(b, null, k);
     }
   }
@@ -262,8 +284,10 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
   // each one's points against the other's shape. Each reaches as far as it moves in a step, so a fast one meets what it
   // is about to pass through, not just what it is already in (a chip is thinner than it falls in a step).
   function pairs() {
-    for (const b of bodies) { const o = b.id * V; b.reach = (Math.hypot(vel[o], vel[o + 1], vel[o + 2]) + b.bound * Math.hypot(vel[o + 3], vel[o + 4], vel[o + 5])) * h; }
-    const lo = (b: Body) => b.x[0] - b.bound - b.reach;
+    for (const b of bodies) {
+      const o = b.id * V, v0 = vel[o], v1 = vel[o + 1], v2 = vel[o + 2], w0 = vel[o + 3], w1 = vel[o + 4], w2 = vel[o + 5];
+      b.reach = (Math.sqrt(v0 * v0 + v1 * v1 + v2 * v2) + b.bound * Math.sqrt(w0 * w0 + w1 * w1 + w2 * w2)) * h;
+    }
     for (let i = 1; i < order.length; i++) {
       const o = order[i], l = lo(bodies[o]);
       let j = i - 1;
@@ -283,6 +307,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
       }
     }
   }
+  const lo = (b: Body) => b.x[0] - b.bound - b.reach; // where its sweep along x begins
   function pointsInto(A: Body, B: Body, m: number) {
     const RA = A.R, RB = B.R, P = A.points, r2 = (B.bound + 1 + m) ** 2;
     pick.fill(-1);
@@ -296,7 +321,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
       B.sdf!(sn); // pairs() only calls this when B has one
       const dist = sn[3];
       if (dist > 0.5 + m) continue;
-      if (A.sleep) { if (dist < -0.25) { wake(A); A.moved = true; return; } continue; } // pressed into: it wakes, and is pushed out from the next step
+      if (A.sleep) { if (dist < -0.25 && !A.held) { wake(A); A.moved = true; return; } continue; } // pressed into: it wakes, and is pushed out from the next step
       cd[0] = rx; cd[1] = ry; cd[2] = rz; cd[6] = -dist;
       cd[3] = RB[0] * sn[0] + RB[1] * sn[1] + RB[2] * sn[2]; cd[4] = RB[3] * sn[0] + RB[4] * sn[1] + RB[5] * sn[2]; cd[5] = RB[6] * sn[0] + RB[7] * sn[1] + RB[8] * sn[2];
       keep(i);
@@ -323,11 +348,12 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
     const fresh = A.wstep[i] === stepN - 1 && A.wid[i] === ci[nc * 4 + 3];
     for (let r = 0; r < 3; r++) cf[o + 8 + r] = fresh ? A.warm[i * 3 + r] : 0;
     cf[o + 11] = 0;
-    // The speed it wants along the normal: a bounce if it hits in this step, or no faster than closes the gap in this step.
+    // The speed it wants along the normal: a bounce if it hits in this step faster than two steps of gravity add (so what
+    // rests never bounces, at any step rate), or no faster than closes the gap in this step.
     ia = A.id * V; ib = live ? B.id * V : -1;
     closing(o);
     const vn = RV[0], e = B ? Math.max(A.bounce, B.bounce) : A.bounce;
-    cf[o + 7] = Math.max(vn < -30 && vn * h < pd[k] + 0.5 ? -e * vn : 0, pd[k] < 0 ? pd[k] / h : 0);
+    cf[o + 7] = Math.max(vn < -2 * world.g * h && vn * h < pd[k] + 0.5 ? -e * vn : 0, pd[k] < 0 ? pd[k] / h : 0);
     if (asleep && vn < -20 - world.g * h) wake(B); // knocked: it moves from the next step
     A.touch = true; if (B) B.touch = true;
     nc++;

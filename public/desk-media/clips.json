@@ -39,6 +39,7 @@
     "poster": "rl-poster.jpg",
     "cover": "rl-cover.jpg",
     "clips": [
+      "rl-learn.mp4",
       "rl-01.mp4",
       "rl-02.mp4",
       "rl-03.mp4"
@@ -57,8 +58,14 @@
     "cover": "sine-cover.jpg",
     "clips": [
       "sine-01.mp4",
-      "sine-02.mp4",
-      "sine-03.mp4"
+      "sine-02.mp4"
+    ]
+  },
+  "arena": {
+    "poster": "arena-poster.jpg",
+    "cover": "arena-cover.jpg",
+    "clips": [
+      "arena-01.mp4"
     ]
   }
 }

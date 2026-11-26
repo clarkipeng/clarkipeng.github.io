@@ -1,9 +1,10 @@
 import { currentDesk, type Desk } from './state.ts';
-import { POSTCARD, PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER } from './tunables.ts';
+import { PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER, CORNER } from './tunables.ts';
 import type { Patch } from './cards.ts';
 import { type Chain, NS } from './note.ts';
 import type { Body as PBody } from './physics.ts';
 import type { Mark, TallySurface } from './tally.ts';
+import type { Print } from './stamp.ts';
 
 // ---------- types ----------
 
@@ -31,11 +32,11 @@ export interface Slide extends Tween { want: string; wait: number; arrive?: numb
 export interface Seg { t0: number; d0: number; d1: number; dur: number; a: number; ease: Ease; mode?: string }
 // The thrown box this frame (poseThrow).
 export interface ThrowPose { X: V3; Y: V3; w: number; C: V3; M: number[]; low: number; foot: number[] | null; fade: number }
-// A card box thrown off by the page turn (launch): its body in the physics world, and the turn under it.
+// A card or its box thrown off by the page turn (launch): where it lay, the time since, its ease home or slide off, its
+// pose, and its outline as last drawn (page-local CSS px).
 export interface Launch {
-  d: Card; body: PBody; x: number; y: number; wt: number; t: number;
-  seg: Seg | null; keys: number[]; kj: number; mode: string; end: string | null;
-  home: { t: number; q: number[] } | null; out: { t: number } | null; sv: Float64Array; P: ThrowPose; hull: number[][] | null;
+  x: number; y: number; wt: number;
+  out: { t: number } | null; P: ThrowPose; hull: number[][] | null;
 }
 // The card box's pencil tally (tallySetup).
 interface Tally { t: number; free: number; gen: number; marks: Mark[]; shown: boolean; surf?: TallySurface; dirty?: boolean }
@@ -47,12 +48,12 @@ export type Video = HTMLVideoElement & { op?: Promise<unknown>; clipStart: numbe
 // placeDecks, buildAtlas and the like before anything reads them.
 export interface Card {
   id: number; el: HTMLElement; hit: HTMLElement; img: HTMLImageElement | null; key: string; kind: string;
-  backEl: HTMLElement | null; backTitle: string | null | undefined; backParas: string[] | null;
-  region: number; featured: boolean; hueHex: string; inkHex: string | undefined; emit: number; jinkHex: string | undefined; still: string | undefined;
+  backEl: HTMLElement | null; backParas: string[] | null;
+  region: number; featured: boolean; inkHex: string | undefined; emit: number; still: string | undefined;
   backLinks: HTMLAnchorElement[] | null; flip: number; flipTo: number; face: number; deck: Card | null;
-  frame: number[]; baseFrame: number[]; focus: number[] | null;
+  frame: number[]; baseFrame: number[]; focus: number[] | null; contain: boolean;
   slot: { x: number; y: number; w: number; r: number } | null; baseW: number; order: number; more: boolean; lid: boolean;
-  overflow: boolean; aspect: number; shape: number;
+  overflow: boolean; shape: number;
   x: number; y: number; w: number; h: number; rot: number; home: number; vx: number; vy: number; lift: number; liftV: number;
   tilt: number[]; tiltV: number[]; sway: number; swayV: number;
   hover: number; hoverOn: boolean; burst: number; z: number; dragging: boolean; released: boolean;
@@ -64,15 +65,16 @@ export interface Card {
   // the desk
   fly?: Flight | null; shove?: Shove | null; kb?: { tx: number; ty: number } | null; keyHeld?: boolean; keyTimer?: number;
   ch?: Chain | null; imp?: { x: number; y: number; t: number } | null; over?: boolean; snap?: number; squash: number; squashV: number;
-  said?: number; suppressClick?: boolean; edgePen?: boolean; rotFrom: number; rotTo: number; hoverSince: number;
+  said?: number; suppressClick?: boolean; edgePen?: boolean; rotFrom: number; rotTo: number;
   focused?: boolean; carrier?: Card | null; gone?: boolean; flyH?: number[]; plane?: { dc: V3; n: V3 }; flipA?: number;
   // media
   playlist: Clip[] | null; player?: InstanceType<Desk['Player']>;
   // the atlas (buildAtlas)
   atlasAt: { x: number; y: number }; uv: number[]; buv: number[]; puv: number[]; mediaUV: number[]; raster: OffscreenCanvas;
+  print?: Print | null; dev: number; // its stamp's print in the atlas, and how far it has developed (0 to 1)
   // a card box
   spot: number; slide: Slide; pile: Card[]; lidT: number; dirty: boolean; bx: Tween; room: { pw: number; ph: number };
-  launch?: Launch | null; tally?: Tally; faceUV: { front: number[]; [face: string]: number[] }; outFor: number; gatherAsk: boolean; drawAsk: { all: boolean } | null;
+  body?: PBody | null; launch?: Launch | null; tally?: Tally; faceUV: { front: number[]; [face: string]: number[] }; outFor: number; gatherAsk: boolean; drawAsk: { all: boolean } | null;
   welcome?: boolean; near?: boolean;
 }
 
@@ -82,7 +84,7 @@ export interface View { w: number; h: number; phone: boolean; k: number; docH: n
 
 export function mountLayout() {
 const desk = currentDesk();
-const { qs, HAND, font, T } = desk;
+const { HAND, font, T } = desk;
 // ---------- page ----------
 
 const body = desk.root;
@@ -94,7 +96,6 @@ const linksEl = desk.root.querySelector<HTMLElement>('.links')!;
 const regionLabel = desk.root.querySelector<HTMLElement>('.region-label')!;
 const pageEl = desk.root.querySelector<HTMLElement>('#page')!;
 const doorEl = desk.root.querySelector<HTMLElement>('.door')!;
-const hud = qs.has('hud') ? body.appendChild(Object.assign(document.createElement('div'), { className: 'hud' })) : null;
 
 // Each page's deck; cards without a data-slot (more than the hand-placed slots) start in it.
 {
@@ -109,27 +110,28 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
   const d = el.dataset;
   const [sx, sy, sw, sr] = (d.slot || `0,0,${d.w || 260},0`).split(',').map(Number); // no slot: an overflow card
   const backEl = el.querySelector<HTMLElement>('.back');
-  const kind = ['deck', 'note', 'polaroid', 'paper'].find((k) => el.classList.contains(k)) || 'photo';
+  const kind = ['deck', 'note', 'paper'].find((k) => el.classList.contains(k)) || 'photo';
   return {
     id, el, hit: el.querySelector<HTMLElement>('.hit')!, img: el.querySelector('img'), key: d.key, kind,
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
-    backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent!) : null, // an element's text is never null
-    region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'), hueHex: d.hue || '888888', // the card's own hue (spectrum style)
+    backEl, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent!) : null, // an element's text is never null
+    region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'),
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
-    jinkHex: d.jink, still: d.still, // the J desk's ink for this card; an explicit still (a paper figure) that clips.json does not replace
+    still: d.still, // an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0, face: 0, deck: null, // face: 0 front up, 1 back up (one value, set by a flip, a flight, or the box's preview); deck: the box it is in (or going into)
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
-    // focus: the framing option's zoom and crop on the picture's subject, for the poster and the clips alike (so the
+    // focus: the zoom and crop on the picture's subject, for the poster and the clips alike (so the
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
+    contain: d.fit === 'contain', // a paper figure shows whole, on a white mat, instead of filling its window
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: Number(d.order), more: el.classList.contains('more'), lid: el.classList.contains('lid'),
-    overflow: !d.slot && !el.classList.contains('deck'), aspect: kind === 'photo' ? POSTCARD : +(d.aspect || 1), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap
+    overflow: !d.slot && !el.classList.contains('deck'), shape: +(d.shape || 1.5), // width / height: every card keeps its own shape, its longest side at the shared cap
     videoSrc: d.video,
     x: 0, y: 0, w: 0, h: 0, rot: sr, home: sr, vx: 0, vy: 0, lift: 0, liftV: 0, tilt: [0, 0], tiltV: [0, 0], sway: 0, swayV: 0,
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
-    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0, relV: 0,
+    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0, relV: 0, dev: 0,
   } as Card; // the rest: see Card
 });
 desk.view = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, docH: innerHeight, dpr: 1 };
@@ -166,7 +168,7 @@ function noteProfile(s: Card) {
   return NOTE_P;
 }
 const boxSize = (s: Card): [number, number] => { const p = desk.pageDeck(s.region)!.room; return s.lid ? [BOX_T + Math.round(p.ph * 0.13), p.ph + 12 + BOX_T] : [p.pw + 14 + BOX_T, p.ph + 12 + BOX_T]; };
-function cardBox(s: Card, w: number, h = s.kind === 'polaroid' || s.kind === 'note' ? 0 : Math.round(w / POSTCARD)): CardBox {
+function cardBox(s: Card, w: number, h = 0): CardBox {
   if (s.kind === 'deck') return { w, h, media: null }; // the deck's spot (the box's size), or the box's lid
   if (s.kind === 'note') {
     const lines = wrapLines(s.hit.innerText.replace(/\n/g, ' \n '), w - 32, HAND);
@@ -176,29 +178,33 @@ function cardBox(s: Card, w: number, h = s.kind === 'polaroid' || s.kind === 'no
     const lines = wrapLines(s.hit.querySelector('b')!.textContent!, w - 39, '600 16px Inter'); // a paper card has its title and venue
     return { w, h: 16 + lines.length * 21.5 + 6 + 17 + 16, media: null, lines, sub: s.hit.querySelector('small')!.textContent! };
   }
-  const { side, top, bottom } = borders(s, w, Math.max(w, h || w / s.shape));
-  if (s.kind === 'polaroid' && !h) h = top + (w - 2 * side) / s.aspect + bottom; // phones: its picture at its own aspect
+  const { side, top, bottom } = borders(s, w, Math.max(w, h));
   const media = { x: side, y: top, w: w - 2 * side, h: h - top - bottom };
   const cap = capLines(s, w - 2 * side), baseline = media.y + media.h + (bottom - cap.lines.length * CAP_LH()) / 2 + CAP_LH() / 2 + 4.5 * desk.TS;
   return { w, h, media, ...cap, baseline };
 }
-// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or the polaroid's one line.
+// A photo card's caption lines at tw wide (design px): the title's, then the line under it; or its one line (.hand).
 const CAP_LH = () => 18 * desk.TS;
 function capLines(s: Card, tw: number): { lines: string[]; titled?: boolean } {
-  if (s.kind === 'polaroid') return { lines: [s.el.querySelector('.hand')!.textContent!] }; // a photo card has its caption
+  const hand = s.el.querySelector('.hand');
+  if (hand) return { lines: [hand.textContent!] };
   const title = s.el.querySelector('.cap b')!.textContent!, sub = s.el.querySelector('.cap span')!.textContent!;
   return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
 }
+// Photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a 107 mm
+// sheet), as fractions of the cards' shared longest side.
+const FILM = { side: 0.042, top: 0.052, bottom: 0.19 };
 // The film's borders for a photo card w wide with longest side L (design px); the strip fits its page's longest caption.
 function borders(s: Card, w: number, L: number) {
-  const side = Math.round(T.frameSide * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
+  const side = Math.round(FILM.side * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
     .map((o) => capLines(o, (o === s || desk.view.phone ? w : o.shape >= 1 ? L : L * o.shape) - 2 * side).lines.length);
-  return { side, top: Math.round(T.frameTop * L), bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(...rows) * CAP_LH() + 20)) };
+  return { side, top: Math.round(FILM.top * L), bottom: Math.ceil(Math.max(FILM.bottom * L, Math.max(...rows) * CAP_LH() + 20)) };
 }
-// Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
+// Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (CARD_MAX on the
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
 // the one card size.)
-const capped = (s: Card) => s.kind === 'photo' || s.kind === 'polaroid';
+const CARD_MAX = 280; // design px at 1440x900; scales with the desk
+const capped = (s: Card) => s.kind === 'photo';
 const cappedDims = (s: Card, cap: number): [number, number] => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
 // Each page's pile, upright: as wide as its widest card's short side and as tall as its longest long side (design px).
 function pileSizes() {
@@ -207,23 +213,11 @@ function pileSizes() {
     d.room = { pw: Math.max(1, ...cards.map((s) => Math.min(s.w, s.h) / k)), ph: Math.max(1, ...cards.map((s) => Math.max(s.w, s.h) / k)) };
   }
 }
-// The polaroid and the note keep their own shapes, one size for both faces: the front's own size when the back's copy
-// fits on it at the shared type scale; otherwise the polaroid becomes the smallest card (up to maxW wide) that fits it,
-// its image cropped (cover framing) to at most 25% wider or taller than its own aspect, and the note grows taller.
-function fitCard(s: Card, w0: number, maxW = Math.round(w0 * 1.5)) {
-  const box = cardBox(s, w0);
-  if (!s.backEl || desk.backLayout(s, box).need <= box.h) return box;
-  if (!s.media) return { ...box, h: desk.backLayout(s, box).need };
-  let best: CardBox | null = null;
-  for (let w = w0; w <= maxW; w += 2) {
-    const b = cardBox(s, w), chrome = b.h - b.media!.h, mw = b.media!.w; // a card with media has it at every width
-    const mh = Math.max(desk.backLayout(s, b).need - chrome, mw / (s.aspect * 1.25));
-    if (mh > (mw * 1.25) / s.aspect) continue; // the image would be cropped too narrow
-    if (!best || w * (chrome + mh) < best.w * best.h) best = { ...b, h: chrome + mh, media: { ...b.media!, h: mh } };
-  }
-  if (best) return best;
-  const b = cardBox(s, maxW), extra = desk.backLayout(s, b).need - b.h; // last resort: as wide as allowed, then taller
-  return extra > 0 ? { ...b, h: b.h + extra, media: { ...b.media!, h: b.media!.h + extra } } : b;
+// The note keeps its own shape, one size for both faces: the front's own size when the back's copy fits on it at the
+// shared type scale; otherwise it grows taller.
+function fitCard(s: Card, w: number, loose = false) {
+  const box = cardBox(s, w), need = s.backEl ? desk.backLayout(s, box, loose).need : 0;
+  return need <= box.h ? box : { ...box, h: need };
 }
 let measureCtx: OffscreenCanvasRenderingContext2D | null = null;
 const measure = () => (measureCtx ||= new OffscreenCanvas(8, 8).getContext('2d')!);
@@ -241,7 +235,7 @@ function wrapLines(text: string, maxW: number, font: string) {
 
 function layout() {
   desk.endFlights(); // a new layout puts every card in its place
-  for (const s of sources) s.frame = T.framing && s.focus ? s.focus : s.baseFrame;
+  for (const s of sources) s.frame = s.focus ?? s.baseFrame;
   const vw = document.documentElement.clientWidth, vh = innerHeight;
   const phone = vw < PHONE;
   body.classList.toggle('phone', phone);
@@ -254,16 +248,13 @@ function layout() {
     // Sizes are set at full scale (design px); a smaller card scale shows every card that much smaller, the same in a
     // deck and on the desk, and keeps the layout's composition (slots are fractions of the desk).
     const c = clamp(T.cardScale, 0.6, 1);
-    // The sizes are the full-scale ones with the backs as they are by default (title on, usual spacing), so the scale is
-    // always relative to the same card; the back options only change what fits on it.
-    const opts = { backTitle: T.backTitle, backTight: T.backTight };
-    Object.assign(T, { backTitle: 1, backTight: 0 }); desk.TS = 1;
-    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c))])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
-    Object.assign(T, opts); desk.TS = Math.max(1, 12 / (TOK.fs * c)); desk.view.cs = c;
+    desk.TS = 1; // the sizes are the full-scale ones
+    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c), true)])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
+    desk.TS = Math.max(1, 12 / (TOK.fs * c)); desk.view.cs = c;
     // The longest side (design px) scales with the desk like the layout, but never below the smallest at which every back fits.
     const fitsAt = (cp: number) => sources.every((s) => !capped(s) || !s.backEl || ((b: CardBox) => desk.backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
     let lo = 120, hi = 900; while (hi - lo > 0.5) { const mid = (lo + hi) / 2; if (fitsAt(mid)) hi = mid; else lo = mid; }
-    const cap = Math.max((T.cardMax * k) / c, Math.ceil(hi));
+    const cap = Math.max((CARD_MAX * k) / c, Math.ceil(hi));
     for (const s of sources) if (s.kind !== 'deck') { const box = capped(s) ? cardBox(s, ...cappedDims(s, cap)) : fixed.get(s)!; Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
     pileSizes();
     for (const s of sources) {
@@ -288,7 +279,7 @@ function layout() {
     for (const [i, s] of order.entries()) {
       if (s.region && !desk.view.labelY) { desk.view.labelY = y + 10; y += 56; } // research becomes a section further down
       const w = Math.round(s.kind === 'note' || s.kind === 'paper' ? Math.min(full * 0.82, 280) : full);
-      if (!capped(s)) Object.assign(s, fitCard(s, w, full));
+      if (!capped(s)) Object.assign(s, fitCard(s, w));
       s.rot = s.home = (s.slot?.r ?? 0) * 0.7;
       s.px = vw / 2 + (i % 2 ? 1 : -1) * Math.min(14, (vw - w) / 4);
       if (hinged(s)) y += Math.max(0, s.h - 2 * STRIP - 16); // turned over, the note lies above its strip: leave it room
@@ -339,21 +330,21 @@ function layout() {
 // The corner's DOM: its hit area and focus ring (a triangle over the fold, hovered or not), and without WebGPU the fold
 // itself, drawn flat: the sliver underneath, the flap, and the label on it.
 function placeDoor() {
-  const k = desk.view.k, c = T.cornerSize * k * Math.SQRT2, S = Math.ceil((2 * (T.cornerSize + T.cornerLift) - Math.PI * desk.DOOR.R + 14) * k * Math.SQRT2);
+  const k = desk.view.k, c = CORNER.size * k * Math.SQRT2, S = Math.ceil((2 * (CORNER.size + CORNER.lift) - Math.PI * desk.DOOR.R + 14) * k * Math.SQRT2);
   // The focus ring traces the folded corner at rest, 3 px out: the flap's edges out to its tip, and the page's edges.
-  const m = 3, tip = S - ((2 * T.cornerSize - Math.PI * desk.DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
+  const m = 3, tip = S - ((2 * CORNER.size - Math.PI * desk.DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
   const svg = doorEl.querySelector('svg')!, set = (sel: string, d: string) => svg.querySelector(sel)!.setAttribute('d', d);
   for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(String(a), String(v));
-  const ch = (T.cornerSize + T.cornerLift) * k * Math.SQRT2, tipH = S - ((2 * (T.cornerSize + T.cornerLift) - Math.PI * desk.DOOR.R) * k) / Math.SQRT2;
+  const ch = (CORNER.size + CORNER.lift) * k * Math.SQRT2, tipH = S - ((2 * (CORNER.size + CORNER.lift) - Math.PI * desk.DOOR.R) * k) / Math.SQRT2;
   set('.hit', `M${S} ${S - ch}L${tipH} ${tipH}L${S - ch} ${S}H${S}Z`); // the pointer's area: the fold as drawn when hovered (the sliver and the flap), not the larger triangle
   set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
   // Without WebGPU the fold itself, flat, from the corner's state: it lifts and leans toward the pointer like the drawn one
   // (the sliver under it, the flap reflected over the fold, the label printed on the flap).
-  const d = desk.door.d || T.cornerSize * k, a = desk.door.a, [dx, dy] = desk.dirOf(a), far = 2 * d - Math.PI * desk.DOOR.R * k;
+  const d = desk.door.d || CORNER.size * k, a = desk.door.a, [dx, dy] = desk.dirOf(a), far = 2 * d - Math.PI * desk.DOOR.R * k;
   const B = [S - d / Math.cos(a), S], Rt = [S, S - d / Math.sin(a)], tipF = [S + far * dx, S + far * dy], P = (q: number[]) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`;
   set('.sliver', `M${P(Rt)}L${S} ${S}L${P(B)}Z`); set('.flap', `M${P(Rt)}L${P(tipF)}L${P(B)}Z`);
-  const t = svg.querySelector('text')!, at = far - (T.cornerSize - Math.PI * desk.DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
-  Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
+  const t = svg.querySelector('text')!, at = far - (CORNER.size - Math.PI * desk.DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
+  Object.assign(t.style, { fontSize: CORNER.label * k + 'px' });
   for (const [n, v] of [['x', cx], ['y', cy], ['transform', `rotate(${(-45 - (2 * (a - Math.PI / 4) * 180) / Math.PI).toFixed(2)} ${cx} ${cy})`]]) t.setAttribute(String(n), String(v));
 }
 // No frame loop without WebGPU: the flat corner runs its own while it moves.
@@ -401,5 +392,5 @@ function placeFold(s: Card) {
 const absorbance = (ink: number[]) => ink.map((c, i) => -Math.log(Math.max(lin(c), 1e-4) / lin(PAPER[i])));
 return { sources, doorEl, pageEl, linksEl, animateFlatDoor, placeDom, hinged, paperL, nameEl, taglineEl, BOX_T,
   measure, shown, body, capped, STRIP, CAP_LH, wrapLines, canvas, regionLabel, absorbance, noteProfile, noteMesh,
-  hud, layout, placeDoor };
+  layout, placeDoor };
 }

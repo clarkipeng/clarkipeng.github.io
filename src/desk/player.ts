@@ -1,12 +1,12 @@
 import { clips, mediaUrl } from 'virtual:desk-media';
 import { currentDesk } from './state.ts';
-import { MOTION } from './tunables.ts';
+import { MOTION, dbg } from './tunables.ts';
 import type { Card, Clip, Video } from './layout.ts';
 
 
 export function mountPlayer() {
 const desk = currentDesk();
-const { qs, body, reduced, sources, T } = desk;
+const { body, reduced, sources, T } = desk;
 // ---------- media: crossfading playlists ----------
 
 // media/clips.json maps a card key to { poster, clips }; new clips drop in with no code change. Cards without an entry
@@ -24,7 +24,7 @@ function makeVideo(src: string, lazy = false) {
   v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = lazy ? 'none' : 'auto';
   v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
   v.src = src;
-  if (qs.has('mlog')) for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended', 'waiting', 'stalled', 'error']) {
+  if (dbg.mlog) for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended', 'waiting', 'stalled', 'error']) {
     v.addEventListener(ev, () => console.log('[media]', ev, v.currentSrc.split('/').pop(), v.currentTime.toFixed(2), 'rs', v.readyState));
   }
   Object.assign(v.style, { position: 'fixed', left: '0', top: '0', width: '2px', height: '2px', opacity: '0', pointerEvents: 'none' });
@@ -80,11 +80,12 @@ function preloadClips() {
 // Hover playback, one state machine per media card:
 //   rest: the card shows its thumbnail, both elements paused at their clip's start.
 //   on:   the pointer is over the card. The video fades in (T.fadeIn) as it plays from 0, and the playlist runs with
-//         T.xfade crossfades for as long as the pointer stays.
-//   out:  the pointer left. The current clip plays to its end (T.finishFirst), then the card fades back to the
-//         thumbnail (T.fadeOut) and only then pauses and rewinds. Re-entering during "out" just continues.
-// Two elements take turns: the current one plays clip i; T.xfade before it ends (or before T.hold, if set) the other
-// starts clip i + 1 and the shader crossfades. The idle element then preloads the clip after that.
+//         XFADE crossfades for as long as the pointer stays.
+//   out:  the pointer left. The current clip plays to its end, then the card fades back to the thumbnail (T.fadeOut)
+//         and only then pauses and rewinds. Re-entering during "out" just continues.
+// Two elements take turns: the current one plays clip i; XFADE before it ends the other starts clip i + 1 and the shader
+// crossfades. The idle element then preloads the clip after that.
+const XFADE = 0.6; // s
 class Player {
   declare list: Clip[]; declare v: Video[]; declare cur: number; declare i: number; declare fade: number; declare fading: boolean;
   declare state: string; declare outNow: boolean; declare mix: number; declare retry: number; declare quick?: boolean;
@@ -108,18 +109,17 @@ class Player {
   step(dt: number, hovered: boolean) {
     if (hovered && this.state === 'rest') { this.state = 'on'; playFromStart(this.a); if (this.b.preload === 'none') wake(this.b); }
     else if (hovered && this.state === 'out') { this.state = 'on'; this.outNow = false; } // keep going from here
-    else if (!hovered && this.state === 'on') { this.state = 'out'; this.outNow = !T.finishFirst; }
+    else if (!hovered && this.state === 'on') { this.state = 'out'; this.outNow = false; }
     if (this.state === 'rest') return;
     const { a, b } = this;
-    const end = T.hold > 0 ? Math.min(a.duration, T.hold) : a.duration;
     if (this.state === 'on' && a.paused && !a.ended && (this.retry -= dt) < 0) { this.retry = 0.5; play(a); } // play() failed: try again
     if (!this.fading && a.duration) {
-      if (this.state === 'on' && (a.ended || a.currentTime >= end - T.xfade - 0.05)) {
+      if (this.state === 'on' && (a.ended || a.currentTime >= a.duration - XFADE - 0.05)) {
         this.fading = true; this.fade = 0; playFromStart(b);
-        if (qs.has('mlog')) console.log('[media] crossfade', a.currentSrc.split('/').pop(), 'at', a.currentTime.toFixed(2), 'of', a.duration.toFixed(2), '->', b.currentSrc.split('/').pop(), 'from', b.currentTime.toFixed(2));
-      } else if (this.state === 'out' && (a.ended || a.currentTime >= end - 0.02)) this.outNow = true; // clip finished
+        if (dbg.mlog) console.log('[media] crossfade', a.currentSrc.split('/').pop(), 'at', a.currentTime.toFixed(2), 'of', a.duration.toFixed(2), '->', b.currentSrc.split('/').pop(), 'from', b.currentTime.toFixed(2));
+      } else if (this.state === 'out' && (a.ended || a.currentTime >= a.duration - 0.02)) this.outNow = true; // clip finished
     }
-    if (this.fading && b.readyState >= 2 && !b.paused) this.fade += dt / T.xfade;
+    if (this.fading && b.readyState >= 2 && !b.paused) this.fade += dt / XFADE;
     if (this.fading && this.fade >= 1) {
       this.fading = false; this.fade = 0;
       this.cur = 1 - this.cur; this.i = (this.i + 1) % this.list.length;
@@ -130,7 +130,7 @@ class Player {
     this.mix = target > this.mix ? Math.min(target, this.mix + dt / T.fadeIn) : Math.max(target, this.mix - dt / (this.quick ? MOTION.quick : T.fadeOut));
     if (this.state === 'out' && this.outNow && this.mix === 0) {
       this.state = 'rest'; this.outNow = false; this.reset();
-      if (qs.has('mlog')) console.log('[media] rest');
+      if (dbg.mlog) console.log('[media] rest');
     }
   }
 }
@@ -139,8 +139,7 @@ desk.videoSrc = null; desk.videoMix = 0; desk.probing = false; desk.probeKey = n
 // Only one card shows video at a time: a newly hovered card waits until the previous one has faded back to rest.
 function stepMedia(dt: number) {
   if (desk.probing) return; // the crossfade probe drives the player by hand
-  const now = performance.now();
-  const hov = sources.find((s) => s.player && s.hoverOn && now - s.hoverSince >= T.hoverDelay) || null;
+  const hov = sources.find((s) => s.player && s.hoverOn) || null;
   if (hov && desk.videoSrc && hov !== desk.videoSrc) desk.videoSrc.player!.forceOut();
   if (hov && (!desk.videoSrc || desk.videoSrc.player!.state === 'rest')) desk.videoSrc = hov;
   for (const s of sources) s.player?.step(dt, s === hov && s === desk.videoSrc);

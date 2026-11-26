@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { REF_W, REF_H, MOTION, clamp, smooth } from './tunables.ts';
+import { REF_W, REF_H, MOTION, clamp, smooth, ANGLE } from './tunables.ts';
 import type { Card, Stack, OutFlight, InFlight } from './layout.ts';
 
 
@@ -24,9 +24,8 @@ const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, rotA: 0.06, rotB: 0.6, fan: 0
 const upright = (s: Card) => (s.w > s.h ? 90 : 0); // deg: a card in a box stands upright; a landscape one turns a quarter turn
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's box fans: it slides in first
-// One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
-// follows once every card is down: the page turn after a gather.
-const flights = { on: false, t: 0, then: null as (() => void) | null };
+// One clock for every card in the air: a batch that starts while others fly is timed from now on it.
+const flights = { on: false, t: 0 };
 const now = () => (flights.on ? flights.t : (flights.t = 0));
 const easeOutQuart = (u: number) => 1 - (1 - u) ** 4;
 function cubicBezier(x1: number, y1: number, x2: number, y2: number) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
@@ -110,7 +109,7 @@ function pileUp(region: number, own = false) {
   const deck = pageDeck(region);
   if (desk.view.phone || !desk.gpu || reduced || !deck) return;
   if (region !== desk.page) desk.resetBox(deck); // out of sight, a box puts itself away at once
-  const cards = sources.filter((s) => s.region === region && decked(s) && !s.deck && !s.fly && !s.dragging && (own || region !== desk.page || !s.slot)).sort((a, b) => b.order - a.order);
+  const cards = sources.filter((s) => s.region === region && decked(s) && !s.deck && !s.fly && !s.dragging && !s.launch && (own || region !== desk.page || !s.slot)).sort((a, b) => b.order - a.order);
   for (const s of cards) {
     deck.pile.push(s);
     Object.assign(s, { deck, flying: true, face: 1, flip: 0, flipTo: 0, ch: null, emit: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });
@@ -132,9 +131,7 @@ function stepFlights(dt: number) {
     placeDom(s);
   }
   flights.on = busy;
-  const then = flights.then;
-  if (then && !busy) { flights.then = null; then(); }
-  else if (!busy) next();
+  if (!busy) next();
 }
 // A card dealt: it waits in the fan, then lifts off (8% of the draw) and travels home, so it rises up and over the cards
 // below; it turns face up and to its desk angle on the way, and lands.
@@ -189,7 +186,7 @@ function endFlights(region: number | null = null) {
 // page into it, or deals them all when none are on the desk; a card dropped on it goes in on top. Enter deals,
 // Shift+Enter gathers or deals; on an empty box, double-click or Enter gathers.
 const pageDeck = (r: number) => sources.find((s) => s.more && s.region === r);
-const decked = (s: Card) => s.kind !== 'deck'; // every card on a page goes in its box: the projects, the polaroid and the note
+const decked = (s: Card) => s.kind !== 'deck'; // every card on a page goes in its box: the photo cards and the note
 const onDesk = (r: number) => sources.filter((o) => o.region === r && decked(o) && !o.deck && !o.dragging); // (cards being dealt too)
 let deckTimer = 0;
 function deckClick(deck: Card, e: MouseEvent | KeyboardEvent) {
@@ -269,7 +266,7 @@ function deckRect(region: number) {
 // the name, tagline, links, corner and box, inside a 32 px margin, then nearest the middle; its angle is a flip's Gaussian.
 function freeSlot(s: Card) {
   const x0 = s.region * desk.view.w, gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
-  const r = clamp(gauss * T.flipJitter, -T.maxAngle, T.maxAngle), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
+  const r = clamp(gauss * ANGLE.jitter, -ANGLE.max, ANGLE.max), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
   const pad = 24 * desk.view.k, m = 32 * desk.view.k, step = 16;
   const near = sources.filter((o) => o !== s && o.region === s.region && !o.deck && o.kind !== 'deck');
   const boxes = keepOut(x0).concat(near.map((o) => {

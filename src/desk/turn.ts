@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { clamp, smooth, MOTION, lerp, EASES } from './tunables.ts';
+import { clamp, smooth, MOTION, lerp, EASES, CORNER } from './tunables.ts';
 import type { Card } from './layout.ts';
 import type { Sim } from './gpu.ts';
 
@@ -57,18 +57,17 @@ function holdPage(sm: Sim) {
 // ---------- the page corner and the page turn ----------
 // Each page's bottom-right corner (where a notebook page turns) is folded back a little, like a notebook page: under it a sliver of the next page and the
 // edges of the pages below, and on the fold, in pen, the other page's name. Hovering lifts it a little more, leaning
-// toward the pointer. Click (or Enter) turns the page: this page's cards gather into its pile, then the whole page (its
-// last frame, frozen) rolls away from the corner and off the screen, over the other page, live underneath, which then
-// deals its cards to their homes. Dragging the corner turns it by hand: let go past halfway and it completes, else it
-// falls back.
-const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are T.cornerSize and T.cornerLift)
+// toward the pointer. Click (or Enter) turns the page: the whole page (its last frame, frozen, cards and all) rolls away
+// from the corner and off the screen, over the other page, live underneath, which then deals its cards to their homes;
+// the cards it took go back in its pile. Dragging the corner turns it by hand; let go and it completes.
+const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are CORNER.size and CORNER.lift)
 const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null as { x: number; y: number } | null, press: null as { x: number; y: number; d: number; moved: boolean } | null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
 const turn: Turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
 const dirOf = (a: number) => [-Math.cos(a), -Math.sin(a)]; // from the bottom-right corner, up and left
-const rollR = (d: number) => desk.view.k * clamp(DOOR.R + 0.06 * (d / desk.view.k - T.cornerSize), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
+const rollR = (d: number) => desk.view.k * clamp(DOOR.R + 0.06 * (d / desk.view.k - CORNER.size), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
 const span = (a: number) => desk.view.w * Math.cos(a) + desk.view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
 const farD = (a: number) => span(a) + (Math.PI / 2) * DOOR.rMax * desk.view.k + 8; // the fold's distance once the page is all off screen
-const restD = (hover: boolean) => desk.view.k * (T.cornerSize + (hover ? T.cornerLift : 0));
+const restD = (hover: boolean) => desk.view.k * (CORNER.size + (hover ? CORNER.lift : 0));
 // The fold leans a little toward the pointer, between 25 and 65 degrees.
 const leanTo = (x: number, y: number) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(desk.view.h - y, Math.max(desk.view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
 function stepDoor(dt: number) {
@@ -98,12 +97,12 @@ function show(region: number) {
   if (desk.sim) desk.sim.pre = false;
   cam.x = desk.view.phone ? 0 : region * desk.view.w; placePage(); setInert(region);
   if (!turn.on && desk.chipRegion() !== region) desk.chips.clear(); // the chips stay on the page you left (a turn throws them off it)
-  desk.tweakSync?.();
+  desk.adminSync?.();
 }
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
-// cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).
+// cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go).
 function startTurn(to: number, mode: string) {
-  desk.launch(desk.pageDeck(desk.page)); // the box is not part of the page: it flies off as the page turns
+  desk.launch(desk.page); // what lies on the page is not part of it: it is thrown off as the page turns
   freeze();
   Object.assign(turn, { on: true, mode, from: desk.page, to, t: 0, dur: T.turnS, d0: door.d, d: door.d, start: door.d, target: door.d, a: door.a, d1: farD(door.a) });
   show(to);
@@ -111,23 +110,18 @@ function startTurn(to: number, mode: string) {
   turn.links = { left: r.left + (to ? desk.view.w : 0), top: r.top, width: r.width, height: r.height };
   Object.assign(door, { amt: 0, d: 0, a: Math.PI / 4 }); // the new page's corner lies flat until the turn is over
   desk.arriveDeck(to, mode === 'drag' ? 0 : ARRIVE_AT * T.turnS, MOTION.respond);
-  if (mode !== 'drag') desk.drawFrom(to, { delay: ARRIVE_AT * T.turnS + MOTION.respond, hold: false }); // a turn by hand deals once let go past halfway
+  if (mode !== 'drag') desk.drawFrom(to, { delay: ARRIVE_AT * T.turnS + MOTION.respond, hold: false }); // a turn by hand deals once let go
 }
 function stepTurn(dt: number) {
   if (!turn.on) return;
   if (turn.mode === 'drag') turn.d += (turn.target - turn.d) * (1 - Math.exp(-dt / 0.03));
   else {
     turn.t = Math.min(1, window.__j?.at != null ? window.__j.at / turn.dur : turn.t + dt / turn.dur); // test hook: hold the turn at one moment
-    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase as keyof typeof EASES](turn.t) : 1 - (1 - turn.t) ** 3);
+    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES.glide(turn.t) : 1 - (1 - turn.t) ** 3);
   }
   if (turn.mode === 'drag' || turn.t < 1) return;
   turn.on = false;
-  if (turn.mode === 'back') { // fell back: the page you were on comes back to life as it was
-    for (const s of sources) if (s.region === turn.to && s.rel < 0) s.rel = 1e3; // the other page's held agents let go
-    show(turn.from);
-    if (!desk.pageDeck(turn.from)?.launch) desk.arriveDeck(turn.from, 0); // its box comes back in (once it has flown off)
-    Object.assign(door, { amt: 1, d: turn.d, a: turn.a });
-  } else desk.pileUp(turn.from); // a page turned by hand leaves its cards on its pile
+  desk.pileUp(turn.from); // a turned page leaves its cards on its pile
   next();
 }
 const clipPoly = (poly: Poly, f: (p: Pt) => number) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
@@ -158,12 +152,12 @@ function hull(pts: Poly) {
   return h;
 }
 function clipLinks() {
-  const st = linksEl.style, box = sources.find((s) => s.launch?.hull)?.launch!.hull;
-  if (desk.view.phone || !turn.links || (turn.on ? turn.from && turn.to : !box || desk.page)) { st.clipPath = st.translate = ''; return; }
+  const st = linksEl.style, drawn = sources.flatMap((s) => (s.launch?.hull ? [s.launch.hull] : [])); // what a turn threw, where it shows
+  if (desk.view.phone || !turn.links || (turn.on ? turn.from && turn.to : !drawn.length || desk.page)) { st.clipPath = st.translate = ''; return; }
   const out = turn.on && turn.from === 0, { left: L, top: Tp, width: w, height: h } = turn.links; // on screen at L, Tp
   const rect = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly: Poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
   let shown = rect;
-  const holes: Poly[] = box ? [box.map(([x, y]) => [x - L, y - Tp])] : [];
+  const holes: Poly[] = drawn.map((h) => h.map(([x, y]) => [x - L, y - Tp]));
   if (turn.on) {
     const [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d;
     const X = ([u, v]: Pt) => dx * (L + u - desk.view.w) + dy * (Tp + v - desk.view.h); // from the page's corner along the fold's direction
@@ -212,12 +206,10 @@ const letGo = () => {
   door.press = null;
   if (!pr?.moved) return;
   doorEl.dataset.dragged = '1'; // the click that follows is not a turn
-  if (2 * turn.target - Math.PI * rollR(turn.target) > span(turn.a) / 2) { // the corner is past halfway: complete the turn
-    const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
-    Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
-    desk.drawFrom(turn.to, { delay: DEAL_AT * dur, hold: false });
-    desk.dest = turn.to; record(turn.to);
-  } else Object.assign(turn, { mode: 'back', t: 0, d0: turn.d, d1: restD(hitEl.matches(':hover')), dur: 0.4 });
+  const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
+  Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
+  desk.drawFrom(turn.to, { delay: DEAL_AT * dur, hold: false });
+  desk.dest = turn.to; record(turn.to);
 };
 hitEl.addEventListener('pointerup', letGo);
 hitEl.addEventListener('pointercancel', letGo);
@@ -238,8 +230,8 @@ function navigate(to: number) {
   if (!popped) go(to);
 }
 addEventListener('popstate', () => { const r = regionOf(location.pathname); if (r != null) go(r); }); // not when leaving the desk
-// Every page change: gather this page's cards, turn the page, deal the other's. One change at a time; the last asked for
-// waits its turn.
+// Every page change: turn the page (its cards on it), deal the other's. One change at a time; the last asked for waits
+// its turn.
 let pendingNav: number | null = null;
 function go(region: number) {
   desk.dest = region;
@@ -247,9 +239,7 @@ function go(region: number) {
   if (region === desk.page) return;
   if (!turns()) { jump(region); return; }
   prewarm(region, 3); // a turn is coming: hurry
-  const out = sources.filter((s) => s.region === desk.page && desk.decked(s) && !s.deck && !s.dragging);
-  if (!out.length) { startTurn(region, 'auto'); return; }
-  desk.gather(out, desk.pageDeck(desk.page)!); desk.flights.then = () => startTurn(region, 'auto'); // the page turns once every card is in its box
+  startTurn(region, 'auto');
 }
 function next() {
   if (busy() || pendingNav == null) return;
@@ -289,6 +279,6 @@ function jump(region: number) {
   show(region);
   if (reduced && desk.gpu && desk.sim) drawStill(); // no frame loop with reduced motion: settle this page and draw it once
 }
-return { turn, clipLinks, cam, regionFromUrl, placePage, setInert, DOOR, door, dirOf, stepDoor, cursor, next,
+return { turn, clipLinks, cam, regionFromUrl, placePage, setInert, DOOR, door, dirOf, span, stepDoor, cursor, next,
   drawStill, holdPage, rollR, restD, farD, hull, NAMES, WARM_STEPS, syncInert, stepTurn, stepWarm, prewarm };
 }

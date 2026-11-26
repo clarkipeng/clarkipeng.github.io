@@ -1,5 +1,5 @@
 import { currentDesk, type Desk } from './state.ts';
-import { REF_W, REF_H } from './tunables.ts';
+import { REF_W, REF_H, dbg } from './tunables.ts';
 import { GRAIN_WGSL, E_WGSL, DIFFUSE_WGSL, TILE_WGSL, TILE } from './wgsl.ts';
 import { createChipRenderer } from './chip-render.ts';
 import { createNote } from './note.ts';
@@ -20,8 +20,8 @@ type Quality = { tier: { name: string; cap: number }; level: number; shown: numb
 
 export function mountGpu() {
 const desk = currentDesk();
-const { reduced, T, qs, canvas, renderWGSL, AGENT_WGSL, sources, nameEl, cam, taglineEl, linksEl, regionLabel } = desk;
-desk.gpu = null; desk.sim = null; desk.tweakSync = null;
+const { reduced, T, canvas, renderWGSL, AGENT_WGSL, sources, nameEl, cam, taglineEl, linksEl, regionLabel } = desk;
+desk.gpu = null; desk.sim = null; desk.adminSync = null;
 desk.dealing = !reduced; // decks deal cards (no deals with reduced motion or without WebGPU)
 const Q: Quality = { tier: { name: 'high', cap: 1 }, level: 1, shown: 1, resScale: 1, depMul: 1, gpuMs: 0, samples: [], cool: 0, calm: 0, nextCheck: 0, checkUntil: 2.5 };
 function deviceTier(adapter: GPUAdapter) {
@@ -32,15 +32,14 @@ function deviceTier(adapter: GPUAdapter) {
   if (cores >= 8 && mem >= 8) return { name: 'high', cap: 1 };
   return { name: 'mid', cap: 0.6 };
 }
-const autoOn = () => !!T.auto;
-const simRes = () => T.res * (autoOn() ? Q.resScale : 1);
+const simRes = () => T.res * Q.resScale;
 // Agents for a page at the reference density, and how many of them run now.
 const refAgents = (cssW: number, cssH: number) => Math.max(6000, Math.round((T.agents * cssW * cssH * (simRes() / 0.5) ** 2) / (REF_W * REF_H)));
 
 const SB = { STORAGE: 0x80, COPY_DST: 0x08, UNIFORM: 0x40 };
 
 async function initGpu() {
-  if (qs.has('nogpu') || !navigator.gpu) return null;
+  if (dbg.nogpu || !navigator.gpu) return null;
   try {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) return null;
@@ -104,7 +103,7 @@ function createSim(g: Gpu, page: number) {
   const EW = Math.ceil(W / 2), EH = Math.ceil(H / 2);
   const etex = [0, 1].map(() => tex(EW, EH, 'r32float', TU.TEXTURE | TU.STORAGE));
   const dep = device.createBuffer({ size: W * H * 16, usage: SB.STORAGE }); // rgb (hue-weighted) and density
-  const ref = refAgents(desk.view.w, cssH), n = Math.round(ref * (autoOn() ? Q.tier.cap : 1)); // allocated: the tier's cap
+  const ref = refAgents(desk.view.w, cssH), n = Math.round(ref * Q.tier.cap); // allocated: the tier's cap
   // Scatter the agents; each carries the hue of the nearest card on this page.
   const origin = page * desk.view.w, mine = sources.filter((x) => desk.view.phone || x.region === page);
   const init = new Float32Array(n * 4);
@@ -166,11 +165,11 @@ function createSim(g: Gpu, page: number) {
   const U0 = { buffer: g.uniform };
   const view_ = (t: GPUTexture) => t.createView();
   return {
-    page, origin, W, H, EW, EH, n, ref, dpr, bloom: 0, trail, etex, dep, agents, mask, parity: 0, t: 0, warm: 0,
+    page, origin, W, H, EW, EH, n, ref, dpr, trail, etex, dep, agents, mask, parity: 0, t: 0, warm: 0,
     eBG: [0, 1].map((p) => bg(g.ePipe, [U0, view_(etex[p]), view_(etex[1 - p])])),
     agentBG: [0, 1].map((p) => bg(g.agentPipe, [U0, { buffer: agents }, { buffer: dep }, view_(trail[p]), view_(etex[1 - p])])),
     diffuseBG: [0, 1].map((p) => bg(g.diffusePipe, [U0, { buffer: dep }, view_(trail[p]), view_(trail[1 - p])])),
   };
 }
-return { initGpu, createShared, createSim, autoOn, Q, simRes };
+return { initGpu, createShared, createSim, Q, simRes };
 }

@@ -1,22 +1,59 @@
 import { currentDesk } from './state.ts';
-import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, EDGE_MODES, CHOICES } from './tunables.ts';
+import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, CORNER, LAND } from './tunables.ts';
+
+const SHADOW_SOFT = 1.1; // how blurred card shadows are
 import type { Card } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 import { NCH } from './chips.ts';
 import { NS } from './note.ts';
+import { createSheet, NODES, BINS, type Sheet } from './sheet.ts';
 
 
 export function mountUniforms() {
 const desk = currentDesk();
 const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launchPose, BOX_STEP, carried, boxH,
   cross, facing, FAR, capped, projR, FULL, BOX_T, STYLE, cam, sources, flyingOrder, FACE_SLOTS, coverRect, Q, cursor,
-  turn, dirOf, rollR, door, DOOR } = desk;
+  turn, rollR, door, DOOR } = desk;
 // ---------- uniforms ----------
 
-// Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
+// Uniform layout: 22 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
+const G_HEAD = 22, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
 const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
-const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
+const SHEET_OFF = CHIP_OFF + CHIP_VEC4 * 4, SHEET_F = (3 + NODES + BINS / 2) * 4; // then the two sheets (wgsl.ts Sheet)
+const U = new Float32Array(SHEET_OFF + 2 * SHEET_F);
+// The sheets drawn: the turning page (the physics' paper while it throws from this page, else its own, on the render's
+// clock) and the page's corner (curled at rest).
+const turnSheet = createSheet({ state: (_, out) => { out[0] = turn.d; out[1] = turn.a; out[2] = turn.start; }, rollR, model: () => T.pageModel, gravity: () => T.gravity * desk.view.k, lift: () => T.pageLift });
+const doorSheet = createSheet({ state: (_, out) => { out[0] = door.d; out[1] = door.a; out[2] = door.d; }, rollR, model: () => 0 });
+function writeSheet(k: number, sh: Sheet | null, dev: number) {
+  const o = SHEET_OFF + k * SHEET_F;
+  if (!sh || sh.reach < 0) { U[o + 2] = 0; return; }
+  U.set([sh.dx, sh.dy, NODES, sh.reach * dev + 1, (1 + 0.6 * sh.R) * dev, sh.low < 1e5 ? sh.low * dev : 1e6, sh.R * dev, 0], o);
+  for (let j = 0; j < NODES; j++) U.set([sh.X[j] * dev, sh.Z[j] * dev, sh.M[j] * dev, sh.TH[j]], o + 8 + 4 * j);
+  // Which segments reach each of BINS strips across the profile (along dir), so a pixel tests only those (a few of
+  // NODES - 1): a bitmask per strip, 24 segments to a float (exact), two floats to a strip.
+  let lo = Infinity, hi = -Infinity;
+  for (let j = 0; j < NODES; j++) { lo = Math.min(lo, sh.X[j]); hi = Math.max(hi, sh.X[j]); }
+  lo = lo * dev - 0.5; hi = hi * dev + 0.5;
+  const bw = Math.max((hi - lo) / BINS, 1e-3), b = o + 8 + 4 * NODES, m = b + 4;
+  U.set([lo, bw, 0, 0], b); U.fill(0, m, m + 2 * BINS);
+  for (let j = 0; j + 1 < NODES; j++) {
+    const x0 = Math.min(sh.X[j], sh.X[j + 1]) * dev - 0.5, x1 = Math.max(sh.X[j], sh.X[j + 1]) * dev + 0.5;
+    const i0 = Math.max(0, Math.floor((x0 - lo) / bw - 1e-3)), i1 = Math.min(BINS - 1, Math.floor((x1 - lo) / bw + 1e-3)), w = m + (j < 24 ? 0 : 1);
+    for (let i = i0; i <= i1; i++) U[w + 2 * i] += 2 ** (j % 24);
+  }
+}
+function writeSheets(dev: number) {
+  const P = desk.phys, k = desk.view.k, w = desk.view.w, h = desk.view.h;
+  let a: Sheet | null = null;
+  if (turn.on && !desk.capturing) {
+    if (P?.L && P.L.region === turn.from) a = P.sheet;
+    else { turnSheet.page(0, w, h, k); turnSheet.prepare(performance.now() / 1000); a = turnSheet; }
+  }
+  writeSheet(0, a, dev);
+  if (desk.capturing || desk.view.phone) writeSheet(1, null, dev);
+  else { doorSheet.page(0, w, h, k); doorSheet.prepare(0); writeSheet(1, doorSheet, dev); }
+}
 function invert3(m: number[]) {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
@@ -62,16 +99,16 @@ function flipPath(s: Card) {
 // sheet and shadows fit in, from the box they can reach in its frame (the sheet up to 15% nearer the camera), turned.
 const NOTE_U = new Float32Array(24 + (NS + 1) * 4);
 function noteUniform(s: Card, x: number, y: number, th: number, z: number) {
-  const dev = desk.shared!.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * Math.max(T.shadowSoft, 1), L = s.h - STRIP * (s.k || 1);
+  const dev = desk.shared!.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * SHADOW_SOFT, L = s.h - STRIP * (s.k || 1);
   const X = hw * 1.15 + M + 20, y0 = -hh - L * 1.15 - M, y1 = hh + M + 60, cy = (y0 + y1) / 2, hy = (y1 - y0) / 2;
   const ex = X * Math.abs(c) + hy * Math.abs(n), ey = X * Math.abs(n) + hy * Math.abs(c), t0 = [Math.floor((x - n * cy - ex) * dev), Math.floor((y + c * cy - ey) * dev)];
   desk.gpu!.note.size(Math.ceil(2 * ex * dev) + 2, Math.ceil(2 * ey * dev) + 2);
   NOTE_U.set([hw, hh, 3, STRIP * (s.k || 1) - hh, x, y, c, n, ...t0, desk.gpu!.note.w, desk.gpu!.note.h, dev, 1800, z, M,
-    c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), T.shadowSoft, L, 0, 0]);
+    c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), SHADOW_SOFT, L, 0, 0]);
   NOTE_U.set(noteProfile(s), 24);
   return [...t0, Math.hypot(ex, ey) + Math.abs(cy) + s.h];
 }
-function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, tint = 0, base: string | null = null, hueMix = 1) {
+function cardUniform(s: Card, dpr: number, o: number, originX = 0, tint = 0, base: string | null = null, hueMix = 1) {
   const fa = s.flipA ?? Math.PI * s.face, fc = Math.cos(fa); // the card's face; the box's lid by its angle
   let [fz, fv] = flipPath(s);
   const lift = Math.max(s.lift, fz / T.lift, s.flyLift);
@@ -98,25 +135,30 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, jbloom = -1, 
   } else if (s.carrier) { // riding in it: seen by the box's eye
     const d = s.carrier, P = launchPose(d), i = d.pile.indexOf(s), a = (d.rot * Math.PI) / 180;
     if (i >= 0) { const inn = P.w * (2 + i * BOX_STEP + 3) * desk.view.k; sx += Math.cos(a) * inn; sy += Math.sin(a) * inn; } // in all the way
-    const r = carried(d, { sx, sy, z, mu, mv }, P);
+    const r = carried(d, s, { sx, sy, z, mu, mv }, P);
     ({ mu, mv } = r); z = P.C[2] + r.dc[2]; lv = looks(mv);
     H = s.flyH = boxH(P, r.dc, mu, mv, dpr, originX);
     fade = i >= 0 ? Math.max(P.fade, P.w) : P.fade;
     s.plane = { dc: r.dc, n: cross(mu, mv) };
+  } else if (s.launch) { // thrown: as its body lies, seen from straight above as any lifted card is
+    const P = launchPose(s), M = P.M, turn = (m: number[]) => [0, 3, 6].map((r) => M[r] * m[0] + M[r + 1] * m[1] + M[r + 2] * m[2]);
+    mu = turn(mu); mv = turn(mv); sx = P.C[0]; sy = P.C[1]; z += P.C[2]; fade = P.fade;
+    th = Math.atan2(mu[1], mu[0]); lv = looks(mv);
   }
   const zh = z * dpr, f = 1800 * dpr - zh; // the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
   let cx = (sx - originX) * dpr, cy = sy * dpr; // page-local
   H ||= [f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f];
-  const hw = (s.w * dpr) / 2, hh = ((mesh && s.flip > 0.5 ? yh - lo : s.h) * dpr) / 2, fh = s.carrier && s.carrier !== s ? facing(H) : mesh ? 1 : fc, edgeOn = Math.abs(fh) < 1e-4;
+  const eyed = s.carrier ? s.carrier !== s : !!s.launch; // riding in the box or thrown: drawn as it turns in 3D
+  const hw = (s.w * dpr) / 2, hh = ((mesh && s.flip > 0.5 ? yh - lo : s.h) * dpr) / 2, fh = eyed ? facing(H) : mesh ? 1 : fc, edgeOn = Math.abs(fh) < 1e-4;
   const inv = edgeOn ? FAR : invert3(H);
-  if (s.carrier && s.carrier !== s) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
+  if (eyed) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
+  if (s.launch && !s.carrier) s.launch.hull = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const q = (H[6] * u * hw + H[7] * v * hh + H[8]) * dpr; return [(H[0] * u * hw + H[1] * v * hh + H[2]) / q, (H[3] * u * hw + H[4] * v * hh + H[5]) / q]; }); // where it shows (CSS px)
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
-    ...s.uv, ...s.mediaUV, s.carrier && s.carrier !== s ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
-    ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), ...hexRGB(s.hueHex).map(lin), s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
-    // On a j page every card emits its J ink (blooming in from the shared ink on arrival); on paper every inked card
-    // emits a mild share of its ink (tint) and the full ink while open.
-    ...(jbloom >= 0 && s.jinkHex ? [...absorbance(hexRGB(s.jinkHex)), jbloom] : s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
+    ...s.uv, ...s.mediaUV, eyed ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
+    ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), 0, 0, 0, s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
+    // Every inked card emits a mild share of its ink (tint) and the full ink while open.
+    ...(s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
     ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
     ...shd, 4 * flags + lv, ...(s.patch || FULL)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
@@ -146,10 +188,10 @@ const NAME_ABS = absorbance(NAME_INK);
 desk.capturing = false;
 const trans = { fade: 0 };
 function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
-  const s = sm, d = s.dpr, dev = desk.shared!.dev, st = STYLE[PAGE_NAMES[s.page]], jm = desk.isJ(s);
+  const s = sm, d = s.dpr, dev = desk.shared!.dev, st = STYLE[PAGE_NAMES[s.page]];
   // This page's cards whose shadows can reach the screen, bottom to top; the passes only visit these.
   const sx = desk.view.phone ? 0 : s === desk.sim ? cam.x : s.origin, sy = desk.view.phone ? scrollY : 0; // a page warming in the background sees its own view
-  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, desk.view.phone ? s.origin : src.region * desk.view.w, jm ? s.bloom : -1, st.mode === 'paper' ? st.tint : 0, st.ink, st.hueMix ?? 1); // each card from its own page's origin (the box flying off the page you left)
+  for (const src of sources) cardUniform(src, d, (CARD0 + src.id * CARD_VEC4) * 4, desk.view.phone ? s.origin : src.region * desk.view.w, st.tint, st.ink, st.hueMix); // each card from its own page's origin (the box flying off the page you left)
   // A flying box is drawn as a box (its faces in the slots after the cards'), with what rides in it in its own order.
   let slot = sources.length;
   const fly = (ids: number[]) => ids.flatMap((id) => {
@@ -161,12 +203,13 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     return r;
   });
   const order = fly(sources.filter((x) => {
-    if ((!desk.view.phone && x.region !== s.page) || x.gone || (desk.capturing && x.carrier)) return false;
-    const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
+    if ((!desk.view.phone && x.region !== s.page) || x.gone || (desk.capturing && (x.carrier || x.launch))) return false;
+    if (x.launch) return true;
+    const r = Math.hypot(x.w, x.h) / 2 + 100 * SHADOW_SOFT;
     return x.x + r > sx && x.x - r < sx + desk.view.w && x.y + r > sy && x.y - r < sy + desk.view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id));
-  // The page you left's card box flies off over the turn, above both pages (never part of the turning page's frame).
-  const over = !desk.capturing && !desk.view.phone ? fly(sources.filter((x) => x.carrier === x && x.region !== s.page).map((x) => x.id)).slice(0, MAX - order.length) : [];
+  // What the page you left threw flies off over the turn, above both pages (never part of the turning page's frame), lowest first.
+  const over = !desk.capturing && !desk.view.phone ? fly(sources.filter((x) => x.launch && x.region !== s.page).sort((a, b) => a.launch!.P.C[2] - b.launch!.P.C[2]).map((x) => x.id)).slice(0, MAX - order.length) : [];
   const vs = desk.videoSrc;
   let vu = [0, 0, 1, 1];
   if (vs) {
@@ -178,28 +221,26 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     T.sd * d, T.sa, T.turn, 0,
     T.respawn, T.edge, sources.length, clock.frame,
     (cursor.x - s.origin) * d, cursor.y * d, cursor.amt, 0.94, 0.6, 0.4, st.gain, st.gamma,
-    ...absorbance(hexRGB(st.ink)), s.W / desk.shared!.CW, ...NAME_ABS, Math.max(1, Math.round(1 / T.share)),
+    ...absorbance(hexRGB(st.ink)), s.W / desk.shared!.CW, ...NAME_ABS, 0,
     vs ? vs.id : -1, desk.videoMix, vs?.player!.fading ? clamp(vs.player!.fade) : 0, dev * desk.view.k,
-    EDGE_MODES.indexOf(T.edgeMode), T.ridge * d, T.ridgeW * d, T.landR * d,
-    T.landBurst, T.landDecay, T.hoverE, T.cursorE,
+    0, T.ridge * d, T.ridgeW * d, LAND.r * d,
+    T.landBurst, LAND.decay, T.hoverE, T.cursorE,
     st.soft, st.grain, over.length, order.length,
-    T.edgeMode === 'ring2' ? 1 : T.ring2, T.ring2At, T.corner, st.opacity,
-    T.shadowSoft, T.shadow, T.landRelease, desk.shared!.TX,
-    CHOICES.mode.indexOf(st.mode), st.glow, st.halo, s.t,
+    0, 0, 0, st.opacity,
+    SHADOW_SOFT, T.shadow, LAND.release, desk.shared!.TX,
+    0, 0, 0, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,
-    st.stain, st.bleed * d, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
-    T.pDesat, T.pWarm, T.pBlack, T.pDuo,
-    T.pGrain, T.pMatte, 0, 0,
-    ...(turn.on && !desk.capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
-    ...(desk.capturing || desk.view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
+    0, 0, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
+    0, 0, 0, 0,
     // the label sits on the flap at rest, its foot a few px from the fold
-    (desk.view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - desk.shared!.label!.hh) * dev, desk.shared!.label!.hw * dev, desk.shared!.label!.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * desk.view.k)) : 1,
+    (desk.view.k * (CORNER.size - Math.PI * DOOR.R - 4) - desk.shared!.label!.hh) * dev, desk.shared!.label!.hw * dev, desk.shared!.label!.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * desk.view.k)) : 1,
     ...desk.shared!.labelUV![desk.page], ...desk.shared!.labelUV![turn.from],
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   desk.chipUniforms(s);
+  writeSheets(dev);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
-return { writeUniforms, easeFlip, CARD0, CARD_VEC4, U, invert3, flipPath, oklab, fromOklab, CHIP_OFF, CHIP_VEC4,
+return { writeUniforms, easeFlip, CARD0, CARD_VEC4, U, invert3, flipPath, CHIP_OFF, CHIP_VEC4,
   clock, NOTE_U, trans, VU_OFF };
 }
