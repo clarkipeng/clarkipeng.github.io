@@ -24,9 +24,8 @@ const DRAW = { dur: 0.73, flipA: 0.1, flipB: 0.51, rotA: 0.06, rotB: 0.6, fan: 0
 const upright = (s: Card) => (s.w > s.h ? 90 : 0); // deg: a card in a box stands upright; a landscape one turns a quarter turn
 const GATHER = { dur: 0.36, stagger: 0.05 }; // a gather is the deal backward at twice the pace, the cards close together
 const INTRO_DELAY = 0.15 + MOTION.settle; // s before the first visit's box fans: it slides in first
-// One clock for every card in the air: a batch that starts while others fly is timed from now on it. then: what
-// follows once every card is down: the page turn after a gather.
-const flights = { on: false, t: 0, then: null as (() => void) | null };
+// One clock for every card in the air: a batch that starts while others fly is timed from now on it.
+const flights = { on: false, t: 0 };
 const now = () => (flights.on ? flights.t : (flights.t = 0));
 const easeOutQuart = (u: number) => 1 - (1 - u) ** 4;
 function cubicBezier(x1: number, y1: number, x2: number, y2: number) { // CSS cubic-bezier timing, solved for x by Newton steps with a bisection fallback
@@ -132,9 +131,7 @@ function stepFlights(dt: number) {
     placeDom(s);
   }
   flights.on = busy;
-  const then = flights.then;
-  if (then && !busy) { flights.then = null; then(); }
-  else if (!busy) next();
+  if (!busy) next();
 }
 // A card dealt: it waits in the fan, then lifts off (8% of the draw) and travels home, so it rises up and over the cards
 // below; it turns face up and to its desk angle on the way, and lands.

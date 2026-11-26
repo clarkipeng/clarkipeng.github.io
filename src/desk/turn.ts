@@ -57,9 +57,9 @@ function holdPage(sm: Sim) {
 // ---------- the page corner and the page turn ----------
 // Each page's bottom-right corner (where a notebook page turns) is folded back a little, like a notebook page: under it a sliver of the next page and the
 // edges of the pages below, and on the fold, in pen, the other page's name. Hovering lifts it a little more, leaning
-// toward the pointer. Click (or Enter) turns the page: this page's cards gather into its pile, then the whole page (its
-// last frame, frozen) rolls away from the corner and off the screen, over the other page, live underneath, which then
-// deals its cards to their homes. Dragging the corner turns it by hand: let go past halfway and it completes, else it
+// toward the pointer. Click (or Enter) turns the page: the whole page (its last frame, frozen, cards and all) rolls away
+// from the corner and off the screen, over the other page, live underneath, which then deals its cards to their homes;
+// the cards it took go back in its pile. Dragging the corner turns it by hand: let go past halfway and it completes, else it
 // falls back.
 const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are CORNER.size and CORNER.lift)
 const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null as { x: number; y: number } | null, press: null as { x: number; y: number; d: number; moved: boolean } | null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
@@ -127,7 +127,7 @@ function stepTurn(dt: number) {
     show(turn.from);
     if (!desk.pageDeck(turn.from)?.launch) desk.arriveDeck(turn.from, 0); // its box comes back in (once it has flown off)
     Object.assign(door, { amt: 1, d: turn.d, a: turn.a });
-  } else desk.pileUp(turn.from); // a page turned by hand leaves its cards on its pile
+  } else desk.pileUp(turn.from); // a turned page leaves its cards on its pile
   next();
 }
 const clipPoly = (poly: Poly, f: (p: Pt) => number) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
@@ -238,8 +238,8 @@ function navigate(to: number) {
   if (!popped) go(to);
 }
 addEventListener('popstate', () => { const r = regionOf(location.pathname); if (r != null) go(r); }); // not when leaving the desk
-// Every page change: gather this page's cards, turn the page, deal the other's. One change at a time; the last asked for
-// waits its turn.
+// Every page change: turn the page (its cards on it), deal the other's. One change at a time; the last asked for waits
+// its turn.
 let pendingNav: number | null = null;
 function go(region: number) {
   desk.dest = region;
@@ -247,9 +247,7 @@ function go(region: number) {
   if (region === desk.page) return;
   if (!turns()) { jump(region); return; }
   prewarm(region, 3); // a turn is coming: hurry
-  const out = sources.filter((s) => s.region === desk.page && desk.decked(s) && !s.deck && !s.dragging);
-  if (!out.length) { startTurn(region, 'auto'); return; }
-  desk.gather(out, desk.pageDeck(desk.page)!); desk.flights.then = () => startTurn(region, 'auto'); // the page turns once every card is in its box
+  startTurn(region, 'auto');
 }
 function next() {
   if (busy() || pendingNav == null) return;
