@@ -264,8 +264,10 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
   // each one's points against the other's shape. Each reaches as far as it moves in a step, so a fast one meets what it
   // is about to pass through, not just what it is already in (a chip is thinner than it falls in a step).
   function pairs() {
-    for (const b of bodies) { const o = b.id * V; b.reach = (Math.hypot(vel[o], vel[o + 1], vel[o + 2]) + b.bound * Math.hypot(vel[o + 3], vel[o + 4], vel[o + 5])) * h; }
-    const lo = (b: Body) => b.x[0] - b.bound - b.reach;
+    for (const b of bodies) {
+      const o = b.id * V, v0 = vel[o], v1 = vel[o + 1], v2 = vel[o + 2], w0 = vel[o + 3], w1 = vel[o + 4], w2 = vel[o + 5];
+      b.reach = (Math.sqrt(v0 * v0 + v1 * v1 + v2 * v2) + b.bound * Math.sqrt(w0 * w0 + w1 * w1 + w2 * w2)) * h;
+    }
     for (let i = 1; i < order.length; i++) {
       const o = order[i], l = lo(bodies[o]);
       let j = i - 1;
@@ -285,6 +287,7 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
       }
     }
   }
+  const lo = (b: Body) => b.x[0] - b.bound - b.reach; // where its sweep along x begins
   function pointsInto(A: Body, B: Body, m: number) {
     const RA = A.R, RB = B.R, P = A.points, r2 = (B.bound + 1 + m) ** 2;
     pick.fill(-1);
