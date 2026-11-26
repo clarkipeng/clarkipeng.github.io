@@ -23,23 +23,23 @@ export const CORNER = { size: 70, label: 19, lift: 10 };
 // A card coming down onto the desk (see Landing below): its burst reaches `r` px and decays by `decay` a step; the agents
 // held under it stream out over `release` s. A landing pushes by the momentum it sheds: its mass (the card box's is 1)
 // x (`wn` x its speed coming down + its other motion), a full burst at `p`, seen as its square root (as loudness grows,
-// so a chip a twentieth of the box's weight still shows); it counts only after it rose above `band` px.
+// so a chip a twentieth of the box's weight still shows); it counts only after it rose above the panel's landH px.
 export const push = (momentum: number) => Math.min(1, Math.sqrt(momentum / LAND.p));
-export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 320, wn: 0.36, band: 12 };
+export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 320, wn: 0.36 };
 // Touchdown, one rule for every item that comes down part by part (a chip rocking, the note's sheet rolling down). Its
 // samples (x, y, height: px, now and the step before; a missing part is at height Infinity) arm once they rise above
-// LAND.band and land on first coming within `band` of the desk, so a part settling as it is eaten never lands again.
+// `rise` (the panel's landH) and land on first coming within `band` of the desk, so a part settling as it is eaten never lands again.
 // Slime under the newly covered area is squeezed out at the speed the contact front sweeps across the item (the change
 // in sqrt of the share down x the item's radius `size`, px), plus the motion the parts shed (wn x coming down + along).
 // It pushes by the item's mass `m` x that speed: the slime under a part feels the item's weight per area there, as if
 // all of it landed so. Returns how many, their middle, and that push.
-export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, armed: Uint8Array, band: number, dt: number, m: number, size: number) {
+export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, armed: Uint8Array, band: number, rise: number, dt: number, m: number, size: number) {
   let n = 0, all = 0, down = 0, sx = 0, sy = 0, v = 0;
   for (let o = 0, i = 0; o < at.length; o += 3, i++) {
     const z = at[o + 2];
     if (z === Infinity) continue;
     all++;
-    if (z > LAND.band) armed[i] = 1;
+    if (z > rise) armed[i] = 1;
     if (z > band) continue;
     down++;
     if (!armed[i] || was[o + 2] === Infinity) continue;
@@ -74,6 +74,7 @@ export const GROUPS = {
     ['bounce', 0.25, 0, 0.9, 0.05, 'Bounce'],
     ['shove', 1, 0, 2, 0.05, 'Shove'],
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'Page turn length'],
+    ['landH', 12, 1, 40, 1, 'Landing height (px)'],
   ],
   Cards: [
     ['cardScale', 0.75, 0.6, 1, 0.01, 'Size'],

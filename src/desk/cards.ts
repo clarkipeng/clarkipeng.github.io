@@ -228,7 +228,7 @@ function stepPaper(s: Card, dt: number) {
   if (!c || c.rest) return;
   const k = s.k || 1, was = sheet(c, k);
   stepChain(c, dt, { g: T.gravity, drag: NOTE.drag, bend: NOTE.bend, lift: NOTE.lift });
-  const l = touchdown(sheet(c, k), was, (c.armed ??= new Uint8Array(c.n)), 1, dt, desk.mass(s), Math.sqrt((s.w * s.h) / Math.PI));
+  const l = touchdown(sheet(c, k), was, (c.armed ??= new Uint8Array(c.n)), 1, T.landH, dt, desk.mass(s), Math.sqrt((s.w * s.h) / Math.PI));
   if (l) { // the patch, in the frame its card is drawn in (uniforms.ts: past half way, the sheet over its strip)
     const yh = STRIP * k - s.h / 2, lo = Math.min(yh + c.x[2 * c.n] * k, -s.h / 2), [m, h] = s.flip > 0.5 ? [(lo + yh) / 2, (yh - lo) / 2] : [0, s.h / 2];
     land(s, l[3], [0, (yh + l[2] - m) / h, 1, (l[0] * c.l * k) / 2 / h]);
@@ -263,7 +263,7 @@ function contact(s: Card, dt: number, h: number, rest: boolean, patch = FULL) {
   const p = s.pv;
   if (s.dragging || s.kb || s.deck || s.kind === 'deck') { s.pk = s.pv = null; return; } // held (the box does not land)
   s.pv = [s.x, s.y, h, s.rot, s.face];
-  if (!s.pk && h > LAND.band) s.pk = { t: 0, n: 0, a: 0 };
+  if (!s.pk && h > T.landH) s.pk = { t: 0, n: 0, a: 0 };
   const m = s.pk;
   if (!m) return;
   if (p && dt > 0) {
