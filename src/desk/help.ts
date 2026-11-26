@@ -27,18 +27,9 @@ export const HELP: Record<string, string> = {
   emitIn: 'How long an opened card takes to reach its full ink color in the slime.',
   emitOut: 'How long that color takes to fade after the card closes.',
   // Landing
-  intro: 'Deals the cards onto the desk on the first visit.',
   landBurst: 'How hard a landing card pushes the slime under it out past its edges.',
-  landR: 'How far around a landing card that push reaches.',
-  landDecay: 'How fast the push fades. Higher lasts longer.',
-  landRelease: 'How long agents held under an arriving card take to all stream out.',
   drawStagger: 'The delay between cards dealt off a deck.',
-  landP: 'The landing speed that counts as a full burst. Lower makes gentle landings burst more.',
-  landWn: 'How much of a card\'s downward speed counts toward its landing burst (its other motion always counts fully).',
-  landBand: 'A card has to rise higher than this above the desk for its coming down to count as a landing.',
   shove: 'How far a dropped card pushes the cards it lands on. 0 turns it off.',
-  flipJitter: 'How much a card\'s angle changes when it lands after a flip.',
-  maxAngle: 'The most a card is ever turned on the desk.',
   // Media
   fadeIn: 'How long a hovered card\'s clip takes to fade in.',
   fadeOut: 'How long it takes to fade back to the still.',

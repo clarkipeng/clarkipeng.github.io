@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, CORNER } from './tunables.ts';
+import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, CORNER, LAND } from './tunables.ts';
 
 const SHADOW_SOFT = 1.1; // how blurred card shadows are
 import type { Card } from './layout.ts';
@@ -181,11 +181,11 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     (cursor.x - s.origin) * d, cursor.y * d, cursor.amt, 0.94, 0.6, 0.4, st.gain, st.gamma,
     ...absorbance(hexRGB(st.ink)), s.W / desk.shared!.CW, ...NAME_ABS, 0,
     vs ? vs.id : -1, desk.videoMix, vs?.player!.fading ? clamp(vs.player!.fade) : 0, dev * desk.view.k,
-    0, T.ridge * d, T.ridgeW * d, T.landR * d,
-    T.landBurst, T.landDecay, T.hoverE, T.cursorE,
+    0, T.ridge * d, T.ridgeW * d, LAND.r * d,
+    T.landBurst, LAND.decay, T.hoverE, T.cursorE,
     st.soft, st.grain, over.length, order.length,
     0, 0, 0, st.opacity,
-    SHADOW_SOFT, T.shadow, T.landRelease, desk.shared!.TX,
+    SHADOW_SOFT, T.shadow, LAND.release, desk.shared!.TX,
     0, 0, 0, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,

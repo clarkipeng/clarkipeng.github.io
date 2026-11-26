@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { MOTION, clamp, CORNER } from './tunables.ts';
+import { MOTION, clamp, CORNER, LAND } from './tunables.ts';
 import type { Card } from './layout.ts';
 
 interface Obb { x: number; y: number; hw: number; hh: number; u: number[]; v: number[] } // a card's oriented box
@@ -71,7 +71,7 @@ function placeable(s: Card, x: number, y: number, x0: number, boxes: Edges[]) {
 function shove(p: Card) {
   if (!T.shove || desk.view.phone) return;
   const x0 = p.region * desk.view.w, pad = 6 * desk.view.k, boxes = keepOut(x0);
-  const m = T.shove * (1 + 0.8 * clamp(p.relV / T.landP)); // further after a throw
+  const m = T.shove * (1 + 0.8 * clamp(p.relV / LAND.p)); // further after a throw
   const at = (s: Card) => (s.shove ? [s.shove.tx, s.shove.ty] : [s.x, s.y]);
   const others = sources.filter((s) => s !== p && s.region === p.region && !s.dragging && !s.flying && s.kind !== 'deck' && !s.deck);
   const pos = new Map([[p, [p.x + p.vx / 7, p.y + p.vy / 7]]]), depth = new Map([[p, 0]]); // p's resting spot

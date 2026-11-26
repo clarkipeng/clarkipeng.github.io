@@ -10,9 +10,10 @@ const NX = [-1, 0, -1, 1, 1, 0, 1, -1], NY = [0, -1, -1, -1, 0, 1, 1, 1], NW = [
 const SOLID = 0.2; // a voxel holds (and is a contact point) while its density is above this
 
 import type { Body as PBody, World } from './physics.ts';
+import { LAND } from './tunables.ts';
 
 // The tunables chips read (desk.ts T); see createChips.
-type ChipKey = 'chipCurl' | 'friction' | 'bounce' | 'chipEat' | 'landWn' | 'landP';
+type ChipKey = 'chipCurl' | 'friction' | 'bounce' | 'chipEat';
 export type ChipTunables = Record<ChipKey, number>;
 const CHIP_MASS = 0.05; // a chip's mass, against the card box's 1 (box.ts)
 // A chip's fixed shape and feel; the panel tunes its size, curl and eating speed. Lengths are for a chip of radius 31.
@@ -371,7 +372,7 @@ export function createChips(P: ChipTunables, world: () => World) {
   }
 
   // Contact, the cards' rule (desk.ts contact) on the part of it that has just come within CHIP.band of the desk: that patch
-  // lands with the motion it sheds there, (landWn x coming down + along) / landP. A rocking chip lands strip by strip as
+  // lands with the motion it sheds there, (LAND.wn x coming down + along) / LAND.p. A rocking chip lands strip by strip as
   // its curve rolls down; a slide or a lift brings no new part down, so it pushes no slime.
   function touchdown(b: Body, dt: number) {
     const R = b.R, c = b.c, band = CHIP.band + b.rs, was = b.at, at = b.at = b.atWas || new Float32Array(CN * CN * 3);
@@ -390,7 +391,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       if (!was || at[o + 2] > band || was[o + 2] <= band) continue; // only a part that has just come down
       n++; sx += at[o]; sy += at[o + 1]; vn += Math.max(0, was[o + 2] - at[o + 2]) / dt; vt += Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1]) / dt;
     }
-    if (n) b.land = [sx / n, sy / n, Math.sqrt(n / Math.PI) * b.cell, Math.min(1, (P.landWn * vn + vt) / n / P.landP)]; // center, radius (desk px), strength
+    if (n) b.land = [sx / n, sy / n, Math.sqrt(n / Math.PI) * b.cell, Math.min(1, (LAND.wn * vn + vt) / n / LAND.p)]; // center, radius (desk px), strength
   }
 
   // After the sim has advanced: a chip's first touch is its landing (contact); then eating.

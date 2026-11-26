@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { REF_W, REF_H, MOTION, clamp, smooth } from './tunables.ts';
+import { REF_W, REF_H, MOTION, clamp, smooth, ANGLE } from './tunables.ts';
 import type { Card, Stack, OutFlight, InFlight } from './layout.ts';
 
 
@@ -269,7 +269,7 @@ function deckRect(region: number) {
 // the name, tagline, links, corner and box, inside a 32 px margin, then nearest the middle; its angle is a flip's Gaussian.
 function freeSlot(s: Card) {
   const x0 = s.region * desk.view.w, gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
-  const r = clamp(gauss * T.flipJitter, -T.maxAngle, T.maxAngle), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
+  const r = clamp(gauss * ANGLE.jitter, -ANGLE.max, ANGLE.max), b = obb({ ...s, rot: r }), ex = reach(b, [1, 0]), ey = reach(b, [0, 1]);
   const pad = 24 * desk.view.k, m = 32 * desk.view.k, step = 16;
   const near = sources.filter((o) => o !== s && o.region === s.region && !o.deck && o.kind !== 'deck');
   const boxes = keepOut(x0).concat(near.map((o) => {

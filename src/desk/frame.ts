@@ -291,7 +291,7 @@ async function rebuild(first: boolean) {
   if (!first || reduced) { clock.t = 4.5; desk.sim.t = 4.5; }
   for (const sm of desk.sims) if (sm !== desk.sim) sm.warm = WARM_STEPS;
 }
-const introOn = () => !!T.intro && !reduced;
+const introOn = () => qs.get('intro') !== '0' && !reduced; // ?intro=0 skips the deal
 
 // Rebuild the sim (new agent count or viewport) without reloading the page.
 async function reseed() {

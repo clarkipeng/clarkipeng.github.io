@@ -21,6 +21,12 @@ export const MOTION = { quick: 0.15, respond: 0.3, settle: 0.55, travel: 1, exit
 export const IMPRINT_S = 1; // a lifted card's imprint fades over this long (s)
 // Each page's folded corner, the way to the other page: its size, its label's size, and how far it lifts on hover (px).
 export const CORNER = { size: 70, label: 19, lift: 10 };
+// A card coming down onto the desk (see Landing below): its burst reaches `r` px and decays by `decay` a step; the agents
+// held under it stream out over `release` s. A landing sheds momentum: `wn` x its speed coming down plus its other motion,
+// a full burst at `p` px/s; it counts only after the card rose above `band` px.
+export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 503, wn: 0.36, band: 12 };
+// A flipped or dealt card lands at its home angle plus a gaussian spread of `jitter` deg (std dev), never past `max` deg.
+export const ANGLE = { jitter: 1.5, max: 5 };
 export const NAME_INK = [30, 34, 40];
 
 // Every tunable, defaults matched to b-desk.html's CPU sim (scale 0.45, 26k agents, 1.1 sim px per step at 60 steps/s,
@@ -60,18 +66,9 @@ export const GROUPS = {
   // Landing: every card that comes down onto the desk sends the agents under and around it out from its edge with a burst
   // of speed, and releases any agents waiting for it (a page's network grows out of its cards when they fly in).
   Landing: [
-    ['intro', 1, 0, 1, 1, 'draw the cards on first visit (?intro=0 skips)'],
     ['landBurst', 1.8, 0, 6, 0.05, 'burst strength (speed x)'],
-    ['landR', 29, 0, 60, 1, 'burst reach px'],
-    ['landDecay', 0.955, 0.8, 0.995, 0.001, 'burst decay / step'],
-    ['landRelease', 0.15, 0, 1.5, 0.05, 'release time s'],
     ['drawStagger', 0.1, 0, 0.4, 0.01, 'draw stagger s (cards dealt off a deck)'],
-    ['landP', 503, 100, 2000, 1, 'momentum shed for a full burst px/s'],
-    ['landWn', 0.36, 0, 2, 0.01, 'share of coming-down momentum'],
-    ['landBand', 12, 0, 60, 1, 'contact band px (higher is off the page)'],
     ['shove', 1, 0, 2, 0.05, 'shove strength (0 off)'],
-    ['flipJitter', 1.5, 0, 6, 0.1, 'flip angle spread (std dev, deg)'],
-    ['maxAngle', 5, 0, 15, 0.5, 'max card angle deg'],
   ],
   Media: [
     ['fadeIn', 0.4, 0.05, 2, 0.05, 'fade in s'],

@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { lerp, clamp, MOTION, smooth, IMPRINT_S } from './tunables.ts';
+import { lerp, clamp, MOTION, smooth, IMPRINT_S, LAND, ANGLE } from './tunables.ts';
 
 const TILT = 6; // a dragged card tilts with its motion, up to this many degrees
 // The sticky note's paper (note.ts): links from the strip to its free edge; air drag, which damps its swinging; its
@@ -115,7 +115,7 @@ function flip(s: Card) {
   if (s.flipTo) { setHover(s, false); s.z = ++desk.topZ; }
   // Gaussian around the card's home angle (Box-Muller): most flips land near it, a few tilt further; capped at maxAngle.
   const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
-  s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : desk.view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay
+  s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : desk.view.phone ? s.home : clamp(s.home + gauss * ANGLE.jitter, -ANGLE.max, ANGLE.max); // a phone's card nearly fills the screen's width: it lands as it lay
   if (!desk.gpu || reduced) { // the still fallback and reduced motion just swap faces
     if (!desk.gpu && s.flipTo) desk.paintDomBack(s);
     if (hinged(s)) s.ch = s.flipTo ? paperChain(NOTE.n, paperL(s), 1) : null;
@@ -170,7 +170,7 @@ function stepCards(dt: number) {
     contact(s, dt, Math.max(T.lift * Math.max(s.lift, s.flyLift), desk.flipPath(s)[0]), rest);
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
-    if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > T.landRelease + 0.5) s.rel = 1e3; // its held agents have all left
+    if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > LAND.release + 0.5) s.rel = 1e3; // its held agents have all left
     if (s.squash || s.squashV) { // the box's nudge: a small damped squash
       s.squashV += (-260 * s.squash - 16 * s.squashV) * dt; s.squash += s.squashV * dt;
       if (Math.abs(s.squash) + Math.abs(s.squashV) < 1e-3) s.squash = s.squashV = 0;
@@ -248,7 +248,7 @@ function contact(s: Card, dt: number, h: number, rest: boolean, patch = FULL) {
   const p = s.pv;
   if (s.dragging || s.kb || s.deck || s.kind === 'deck') { s.pk = s.pv = null; return; } // held (the box does not land)
   s.pv = [s.x, s.y, h, s.rot, s.face];
-  if (!s.pk && h > T.landBand) s.pk = { t: 0, n: 0, a: 0 };
+  if (!s.pk && h > LAND.band) s.pk = { t: 0, n: 0, a: 0 };
   const m = s.pk;
   if (!m) return;
   if (p && dt > 0) {
@@ -256,7 +256,7 @@ function contact(s: Card, dt: number, h: number, rest: boolean, patch = FULL) {
     m.n = Math.max(m.n, (p[2] - h) / dt);
     m.a = Math.max(m.a, (Math.hypot(s.w, s.h) / Math.sqrt(12)) * Math.hypot(((s.rot - p[3]) * Math.PI) / 180, (s.face - p[4]) * Math.PI) / dt);
   }
-  if (rest) { s.pk = null; land(s, Math.min(1, (T.landWn * m.n + m.t + m.a) / T.landP), patch); }
+  if (rest) { s.pk = null; land(s, Math.min(1, (LAND.wn * m.n + m.t + m.a) / LAND.p), patch); }
 }
 // Landing: the next sim step sends the agents under and just around the patch out through its edge with a burst of
 // speed (scaled by strength), the ink there gets a pulse of excitation, and agents held for it (a page whose cards fly
