@@ -38,19 +38,12 @@ function tweakPanel() {
     group.append(Object.assign(document.createElement('summary'), { textContent: name }));
     if (name === 'Performance') group.append(Object.assign(document.createElement('div'), { className: 'tweak-perf' }));
     for (const [k, , min, max, step, label] of params as readonly ParamRow[]) {
-      let input: TweakInput, out: HTMLOutputElement | undefined;
-      if (step === 1 && max === 1) {
-        input = Object.assign(document.createElement('input'), { type: 'checkbox' });
-        input.oninput = () => set(k, input.checked ? 1 : 0);
-      } else {
-        input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
-        out = document.createElement('output');
-        input.oninput = () => { set(k, +input.value); out!.value = input.value; };
-      }
+      const input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
+      const out = document.createElement('output');
+      input.oninput = () => { set(k, +input.value); out.value = input.value; };
       inputs[k] = Object.assign(input, { out });
       const r = Object.assign(document.createElement('label'), { title: HELP[k] ?? '' });
-      r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
-      if (out) r.append(out);
+      r.append(Object.assign(document.createElement('span'), { textContent: label }), input, out);
       resetBtn(r, () => String(T[k]) === String(DEFAULTS[k]), () => { set(k, DEFAULTS[k]); sync(); });
       group.append(r);
     }
@@ -83,8 +76,7 @@ function tweakPanel() {
   panel.prepend(styleGroup);
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
-      if (el.type === 'checkbox') el.checked = !!T[k];
-      else el.value = String(T[k]);
+      el.value = String(T[k]);
       if (el.out) el.out.value = String(T[k]);
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[desk.page]} page)`;

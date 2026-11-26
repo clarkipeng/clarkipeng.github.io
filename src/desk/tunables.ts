@@ -32,7 +32,7 @@ export const NAME_INK = [30, 34, 40];
 // Every tunable, defaults matched to b-desk.html's CPU sim (scale 0.45, 26k agents, 1.1 sim px per step at 60 steps/s,
 // about 147 CSS px/s). Distances are CSS px, speed is CSS px per second. Each one is a URL parameter and a slider in the
 // tweak panel (press t), and all of them apply live; only the agent count re-seeds the sim.
-// Groups of [key, default, min, max, step, label]. A 0/1 default with step 1 is a checkbox.
+// Groups of [key, default, min, max, step, label].
 export const GROUPS = {
   Performance: [
     ['res', 1, 0.2, 1, 0.05, 'sim resolution (re-seeds)'],
