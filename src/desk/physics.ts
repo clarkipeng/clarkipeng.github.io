@@ -34,6 +34,7 @@ const SEC = 8, MAXC = 4096; // directions contacts are thinned to, per body and 
 // IB (rb x d), 1 / k.
 const CF = 66, ROW = 18, RW = 16;
 const V = 12; // per body velocity floats: v, w, and the overlap push's v, w
+const REST = 0.5, NAP = 0.4; // a body that stays within REST px of where it came to rest for NAP s sleeps
 
 // A body-frame point in io[0..2]; out, its outward normal (io[0..2]) and signed distance (io[3]). See the header.
 export type Sdf = (io: Float64Array) => void;
@@ -94,7 +95,6 @@ export interface Body {
 }
 export interface World {
   g: number;
-  rest: number;
   surface: Surface | null;
   hz: number;
   bodies: Body[];
@@ -120,7 +120,7 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
   const cf = new Float64Array(MAXC * CF), ci = new Int32Array(MAXC * 4); // A, B (-1: the surface or a sleeping body), point, B's id
   let nc = 0;
   const pick = new Int32Array(SEC), pd = new Float64Array(SEC), pk = new Float64Array(SEC * 6), cd = new Float64Array(7), so = new Float64Array(7), sn = new Float64Array(4);
-  const world = { g: 9000, rest: 0.5, surface: null, hz, bodies } as World; // add, remove, ... and time are set below
+  const world = { g: 9000, surface: null, hz, bodies } as World; // add, remove, ... and time are set below
 
   world.add = (o) => {
     const n = o.points.length / 3, I = o.inertia;
@@ -205,16 +205,16 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
       const a = q[0] - wx * q[1] - wy * q[2] - wz * q[3], x = q[1] + wx * q[0] + wy * q[3] - wz * q[2], y = q[2] - wx * q[3] + wy * q[0] + wz * q[1], z = q[3] + wx * q[2] - wy * q[1] + wz * q[0];
       const l = Math.sqrt(a * a + x * x + y * y + z * z); q[0] = a / l; q[1] = x / l; q[2] = y / l; q[3] = z / l;
       orient(b);
-      // Still while it touches something and stays within world.rest px (its rim's travel included) of where it came to
-      // rest: a pile's jitter never adds up to that.
+      // Still while it touches something and stays within REST px (its rim's travel included) of where it came to rest:
+      // a pile's jitter never adds up to that.
       const A = b.ax, Q = b.aq, dq = Math.abs(q[0] * Q[0] + q[1] * Q[1] + q[2] * Q[2] + q[3] * Q[3]);
       const off = Math.abs(b.x[0] - A[0]) + Math.abs(b.x[1] - A[1]) + Math.abs(b.x[2] - A[2]) + 2 * b.bound * Math.sqrt(Math.max(0, 2 * (1 - dq)));
-      if (b.touch && off < world.rest) b.still += h; else { b.still = 0; A.set(b.x); Q.set(q); }
+      if (b.touch && off < REST) b.still += h; else { b.still = 0; A.set(b.x); Q.set(q); }
     }
     // Asleep once it has been still a moment, and so has everything awake it touches (a pile sleeps together, so nothing
     // settles onto one asleep); then it costs nothing until something moves it.
-    for (let c = 0; c < nc; c++) { const a = bodies[ci[c * 4]], b = ci[c * 4 + 1]; if (b >= 0 && Math.min(a.still, bodies[b].still) <= 0.4) a.still = bodies[b].still = Math.min(a.still, bodies[b].still, 0.4); }
-    for (const b of bodies) if (!b.sleep && b.still > 0.4 && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, b.id * V, b.id * V + 6); }
+    for (let c = 0; c < nc; c++) { const a = bodies[ci[c * 4]], b = ci[c * 4 + 1]; if (b >= 0 && Math.min(a.still, bodies[b].still) <= NAP) a.still = bodies[b].still = Math.min(a.still, bodies[b].still, NAP); }
+    for (const b of bodies) if (!b.sleep && b.still > NAP && !S.moving(b.x[0], b.x[1], b.bound)) { b.sleep = true; vel.fill(0, b.id * V, b.id * V + 6); }
   }
   function orient(b: Body) {
     const q = b.q; qmat(q[0], q[1], q[2], q[3], b.R);

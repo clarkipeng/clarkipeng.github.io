@@ -78,8 +78,8 @@ export const GROUPS = {
   Notebook: [
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
   ],
-  // World: one physical world. The card box, the chips and the sticky note fall under the same gravity; the box and the
-  // chips share one friction and one bounce.
+  // World: one physical world. The card box, the cards a page throws, the chips and the sticky note fall under the same
+  // gravity; all but the note share one friction and one bounce.
   World: [
     ['gravity', 9000, 2000, 20000, 100, 'gravity px/s²'],
     ['friction', 0.6, 0, 1.5, 0.05, 'friction'],

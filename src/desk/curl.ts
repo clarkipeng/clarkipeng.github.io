@@ -4,29 +4,28 @@
 // of the page ahead of the fold, 2R up. Things on it rest on the topmost paper. The flap's free edge sags to the page, so
 // it slides under what lies ahead of it instead of meeting it as a wall. Every point of paper moves with the turn.
 //
-//   const curl = createCurl({ state(t, out) { out[0] = d; out[1] = a; }, rollR: (d) => R, sag });
-//   curl.page(ox, w, h);  // where the page is (world CSS px: its left edge, its size)
+//   const curl = createCurl({ state(t, out) { out[0] = d; out[1] = a; }, rollR: (d) => R });
+//   curl.page(ox, w, h, k);  // where the page is (world CSS px: its left edge, its size) and its scale
 //   world.surface = curl; // prepare / at / moving / top, as physics.ts asks
 import type { Surface } from './physics.ts';
 
 const EPS = 1 / 2000; // s: the time step a point of paper's velocity is measured over
+const SAG = 40; // CSS px at k = 1: the length of the flap's edge that sags to the page
 
 export interface CurlOptions {
   state: (t: number, out: Float64Array) => void; // out: the fold d and its angle a at time t
   rollR: (d: number) => number;
-  sag?: number;
 }
 export interface Curl extends Surface {
-  sag: number;
   still: boolean;
-  page(x: number, w: number, h: number): void;
+  page(x: number, w: number, h: number, k: number): void;
   at(out: Float64Array, vel?: boolean): void;
 }
 
-export function createCurl({ state, rollR, sag = 40 }: CurlOptions): Curl {
+export function createCurl({ state, rollR }: CurlOptions): Curl {
   const s0 = new Float64Array(2), s1 = new Float64Array(2), A = new Float64Array(10), B = new Float64Array(10), p = new Float64Array(3);
-  let ox = 0, W = 0, H = 0;
-  const curl = { top: 0, speed: 0, sag, page(x: number, w: number, h: number) { ox = x; W = w; H = h; } } as Curl; // the rest is set below
+  let ox = 0, W = 0, H = 0, L = SAG;
+  const curl = { top: 0, speed: 0, page(x: number, w: number, h: number, k: number) { ox = x; W = w; H = h; L = SAG * k; } } as Curl; // the rest is set below
   // One moment of the turn: fold d, its direction, the roll's radius.
   const frame = (st: Float64Array, F: Float64Array) => { const d = st[0], a = st[1], c = Math.cos(a), s = Math.sin(a); F[0] = d; F[1] = -c; F[2] = -s; F[3] = s; F[4] = -c; F[5] = d > 0 ? rollR(d) : 0; F[6] = s; F[7] = c; };
   // The paper there is along a row (yN across the fold): material from x' = m0 to m1 from the corner (none: m0 > m1).
@@ -36,7 +35,7 @@ export function createCurl({ state, rollR, sag = 40 }: CurlOptions): Curl {
   };
   const m = new Float64Array(2);
   // How far the flap's free edge (arc length s_hi from the fold) sags at arc length s.
-  const droop = (R: number, s: number, sHi: number) => { const L = curl.sag; return 2 * R * Math.min(1, Math.max(0, 1 - (sHi - s) / L)) * Math.min(1, Math.max(0, (s - Math.PI * R) / L)); };
+  const droop = (R: number, s: number, sHi: number) => 2 * R * Math.min(1, Math.max(0, 1 - (sHi - s) / L)) * Math.min(1, Math.max(0, (s - Math.PI * R) / L));
   // Where the paper at x' (in row yN) is at moment F: along dir (p[0]), across (p[1]), height (p[2]).
   const place = (F: Float64Array, xp: number, yN: number) => {
     const d = F[0], R = F[5], s = d - xp;

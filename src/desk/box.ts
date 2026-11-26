@@ -90,7 +90,7 @@ function throwWorld() {
   L.seg = { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide };
   desk.phys = { world, curl, L, rem: 0 };
   const k = desk.view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
-  curl.page(0, desk.view.w, desk.view.h); world.g = T.gravity * k;
+  curl.page(0, desk.view.w, desk.view.h, k); world.g = T.gravity * k;
   const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [desk.view.w, 0.36 * desk.view.h, 32.5 * k] });
   for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
   world.remove(b); desk.phys.L = null; world.time = 0;
@@ -144,7 +144,7 @@ function launch(region: number) {
   const P = throwWorld(), { world, curl } = P, k = desk.view.k;
   for (const s of sources) if (s.launch && s.region !== region) endThrow(s, true); // one turn at a time: what the last one threw is long off the frame
   P.L = newTurn(region); world.time = 0; world.g = T.gravity * k;
-  curl.page(region * desk.view.w, desk.view.w, desk.view.h); curl.prepare(0);
+  curl.page(region * desk.view.w, desk.view.w, desk.view.h, k); curl.prepare(0);
   for (const s of sources) if (thrown(s, region)) {
     if (s.launch) { Object.assign(s.launch, { home: null, out: null }); continue; }
     const { W, H, D } = dims(s), a = (s.rot * Math.PI) / 180, m = paper({ W, H, D }) / paper(boxDims(d)), sh = boxShape(W, H, D, s.more ? 24 * k : Math.max(W, H));
