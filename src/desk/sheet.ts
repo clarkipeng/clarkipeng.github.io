@@ -22,6 +22,7 @@ import type { Surface } from './physics.ts';
 import { paperChain, stepChain, type Chain } from './note.ts';
 
 export const NODES = 48;
+export const BINS = 64; // the shader's lookup of which segments reach each strip across the turn (uniforms.ts writeSheet)
 const EPS = 1 / 2000; // s: the step a point of paper's velocity is measured over
 const SAG = 40; // CSS px at k = 1: the length of a turned-over free edge that sags to the paper under it
 const PAPER = { h: 1 / 480, drag: 0.03, bend: 80 }; // the page's sim: its step (s), the air on its face, its stiffness (stepChain)

@@ -6,7 +6,7 @@ import type { Card } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 import { NCH } from './chips.ts';
 import { NS } from './note.ts';
-import { createSheet, NODES, type Sheet } from './sheet.ts';
+import { createSheet, NODES, BINS, type Sheet } from './sheet.ts';
 
 
 export function mountUniforms() {
@@ -19,7 +19,7 @@ const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launc
 // Uniform layout: 22 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
 const G_HEAD = 22, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
 const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
-const SHEET_OFF = CHIP_OFF + CHIP_VEC4 * 4, SHEET_F = (2 + NODES) * 4; // then the two sheets (wgsl.ts Sheet)
+const SHEET_OFF = CHIP_OFF + CHIP_VEC4 * 4, SHEET_F = (3 + NODES + BINS / 2) * 4; // then the two sheets (wgsl.ts Sheet)
 const U = new Float32Array(SHEET_OFF + 2 * SHEET_F);
 // The sheets drawn: the turning page (the physics' paper while it throws from this page, else its own, on the render's
 // clock) and the page's corner (curled at rest).
@@ -30,6 +30,18 @@ function writeSheet(k: number, sh: Sheet | null, dev: number) {
   if (!sh || sh.reach < 0) { U[o + 2] = 0; return; }
   U.set([sh.dx, sh.dy, NODES, sh.reach * dev + 1, (1 + 0.6 * sh.R) * dev, sh.low < 1e5 ? sh.low * dev : 1e6, sh.R * dev, 0], o);
   for (let j = 0; j < NODES; j++) U.set([sh.X[j] * dev, sh.Z[j] * dev, sh.M[j] * dev, sh.TH[j]], o + 8 + 4 * j);
+  // Which segments reach each of BINS strips across the profile (along dir), so a pixel tests only those (a few of
+  // NODES - 1): a bitmask per strip, 24 segments to a float (exact), two floats to a strip.
+  let lo = Infinity, hi = -Infinity;
+  for (let j = 0; j < NODES; j++) { lo = Math.min(lo, sh.X[j]); hi = Math.max(hi, sh.X[j]); }
+  lo = lo * dev - 0.5; hi = hi * dev + 0.5;
+  const bw = Math.max((hi - lo) / BINS, 1e-3), b = o + 8 + 4 * NODES, m = b + 4;
+  U.set([lo, bw, 0, 0], b); U.fill(0, m, m + 2 * BINS);
+  for (let j = 0; j + 1 < NODES; j++) {
+    const x0 = Math.min(sh.X[j], sh.X[j + 1]) * dev - 0.5, x1 = Math.max(sh.X[j], sh.X[j + 1]) * dev + 0.5;
+    const i0 = Math.max(0, Math.floor((x0 - lo) / bw - 1e-3)), i1 = Math.min(BINS - 1, Math.floor((x1 - lo) / bw + 1e-3)), w = m + (j < 24 ? 0 : 1);
+    for (let i = i0; i <= i1; i++) U[w + 2 * i] += 2 ** (j % 24);
+  }
 }
 function writeSheets(dev: number) {
   const P = desk.phys, k = desk.view.k, w = desk.view.w, h = desk.view.h;

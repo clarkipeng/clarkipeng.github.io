@@ -1,6 +1,6 @@
 import { MAX, PAPER, lin, dbg } from './tunables.ts';
 import { NCH } from './chips.ts';
-import { NODES } from './sheet.ts';
+import { NODES, BINS } from './sheet.ts';
 
 // ---------- WGSL ----------
 
@@ -20,8 +20,9 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // ink: the card's own ink as absorbance, w = how strongly it emits it now (open card: 1, fading after close)
 // A sheet of paper (sheet.ts), device px. h0: dir from the corner, its point count (0: none), how far along dir any is
 // lifted; h1: how far its shadow falls, the nearest any is lifted, the roll's radius; nd: its points (along dir, up,
-// material from the corner, angle).
-struct Sheet { h0: vec4f, h1: vec4f, nd: array<vec4f, ${NODES}> };
+// material from the corner, angle); bn: where its strips start along dir and their width; bm: which segments reach each
+// strip (two strips to a vec4f, a 24-bit mask per float).
+struct Sheet { h0: vec4f, h1: vec4f, nd: array<vec4f, ${NODES}>, bn: vec4f, bm: array<vec4f, ${BINS / 2}> };
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -414,7 +415,13 @@ fn sheetHit(k: u32, p: vec2f, lim: f32) -> Hit {
   let x = dot(p - C, dir); let y = dot(p - C, N);
   if (x > g.sh[k].h0.w) { h.flat = 1.0; return h; } // past all lifted paper
   var best = -1e9;
-  for (var j = 0u; j + 1u < u32(g.sh[k].h0.z); j++) {
+  let bi = (x - g.sh[k].bn.x) / g.sh[k].bn.y;
+  if (bi < 0.0 || bi >= ${BINS}.0) { return h; }
+  let st = g.sh[k].bm[u32(bi) / 2u]; let w2 = select(st.xy, st.zw, (u32(bi) & 1u) == 1u);
+  var lo = u32(w2.x); var hi = u32(w2.y);
+  while (lo != 0u || hi != 0u) { // the segments that reach this strip
+    var j: u32;
+    if (lo != 0u) { j = firstTrailingBit(lo); lo &= lo - 1u; } else { j = 24u + firstTrailingBit(hi); hi &= hi - 1u; }
     let a = g.sh[k].nd[j]; let b = g.sh[k].nd[j + 1u];
     if (x < min(a.x, b.x) - 0.5 || x > max(a.x, b.x) + 0.5) { continue; }
     let s = mix(a, b, select(0.5, clamp((x - a.x) / (b.x - a.x), 0.0, 1.0), abs(b.x - a.x) > 1e-3));
