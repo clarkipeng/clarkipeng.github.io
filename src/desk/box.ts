@@ -136,7 +136,9 @@ const onDesk = (s: Card) => s.more || (s.kind !== 'deck' && !hinged(s) && !s.dec
 const thrown = (s: Card, region: number) => s.region === region && onDesk(s) && (s.more || !s.dragging);
 // A body's sizes (CSS px): the box's, or a card's as a sheet of paper.
 const dims = (s: Card) => (s.more ? boxDims(s) : { W: s.w, H: s.h, D: 2 * desk.view.k });
-const paper = ({ W, H, D }: { W: number; H: number; D: number }) => 2 * (W * H + W * D + H * D); // its mass, of the same paper as the box
+const paper = ({ W, H, D }: { W: number; H: number; D: number }) => 2 * (W * H + W * D + H * D);
+// Its mass: its paper over its box's (the box's is 1).
+const mass = (s: Card) => paper(dims(s)) / paper(boxDims(pageDeck(s.region)!));
 // Every card lying on the page you see (or on the page a turn threw), and its box, is a body in the one world all the
 // time: held where it shows, on whatever it overlaps (the app moves it; others meet it as one asleep), until a turn lets
 // it go. The pages share the screen, so their bodies share one frame: the thrown page's while a turn is under it, else
@@ -158,7 +160,7 @@ function syncBodies() {
     if (s.body && (!want || (!s.launch && Math.abs(s.body.bound - Math.hypot(W, H, D) / 2) > 1e-6))) { world.remove(s.body); s.body = null; } // gone, or resized
     if (!want || s.launch) continue;
     if (!s.body) {
-      const m = paper({ W, H, D }) / paper(boxDims(d!)), sh = boxShape(W, H, D, s.more ? 24 * k : Math.max(W, H) / 2);
+      const m = mass(s), sh = boxShape(W, H, D, s.more ? 24 * k : Math.max(W, H) / 2);
       s.body = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: m, inertia: sh.inertia(m), friction: T.friction, bounce: T.bounce });
     }
     const R: Rect = { x, y, c: Math.cos(a), s: Math.sin(a), hw: W / 2, hh: H / 2, top: 0 };
@@ -448,5 +450,5 @@ function stepTally(d: Card, dt: number) {
   desk.redraw = true;
 }
 return { placeDecks, launch, arriveDeck, throwWorld, outside, BOX, resetBox, moveDeck, BOX3D, tallySetup, LIGHT, launchPose,
-  carried, boxH, cross, facing, FAR, projR, flyingOrder, FACE_SLOTS, stepDecks, stepThrows };
+  carried, boxH, cross, facing, FAR, projR, flyingOrder, FACE_SLOTS, stepDecks, stepThrows, mass };
 }
