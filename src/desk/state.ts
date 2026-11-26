@@ -118,7 +118,7 @@ interface Parts {
   backLayout: TexturesPart['backLayout']; paintDomBack: TexturesPart['paintDomBack']; design: TexturesPart['design'];
   BOX_NAMES: TexturesPart['BOX_NAMES']; linkAt: TexturesPart['linkAt']; coverRect: TexturesPart['coverRect'];
   renderEntries: TexturesPart['renderEntries']; buildAtlas: TexturesPart['buildAtlas'];
-  drawBack: TexturesPart['drawBack']; drawCard: TexturesPart['drawCard'];
+  drawBack: TexturesPart['drawBack']; drawCard: TexturesPart['drawCard']; developStamp: TexturesPart['developStamp'];
   // gpu.ts
   initGpu: GpuPart['initGpu']; createShared: GpuPart['createShared']; createSim: GpuPart['createSim'];
   Q: GpuPart['Q']; simRes: GpuPart['simRes'];

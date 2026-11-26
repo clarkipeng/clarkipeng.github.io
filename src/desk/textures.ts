@@ -2,7 +2,7 @@ import { currentDesk, type Desk } from './state.ts';
 import { TOK, CORNER } from './tunables.ts';
 import type { Card, Rect, CardBox } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
-import { STAMP_SIZE, paintStamp } from './stamp.ts';
+import { STAMP_SIZE, paintStamp, develop } from './stamp.ts';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 
@@ -267,9 +267,10 @@ function drawBack(s0: Card, S0: number) {
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
+  let print = null;
   if (stamp) { // its picture, framed as on its front
     const src = s.img!, iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
-    paintStamp(x, s.inkHex!, (p, pw, ph) => { const [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); }, stamp.x, stamp.y, S);
+    print = paintStamp(x, s.inkHex!, (p, pw, ph) => { const [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); }, stamp.x, stamp.y, S);
   }
   x.textBaseline = 'alphabetic';
   for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
@@ -283,12 +284,18 @@ function drawBack(s0: Card, S0: number) {
     x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(t, k.tx, k.base);
     x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15);
   });
-  return { canvas: c, links, w, h };
+  return { canvas: c, links, w, h, print };
+}
+// The stamp's print, as far as it has developed, over its spot in the atlas.
+function developStamp(s: Card) {
+  const p = s.print!;
+  desk.gpu!.device.queue.writeTexture({ texture: desk.shared!.atlas!, origin: [p.x, p.y] }, develop(p, s.dev), { bytesPerRow: p.w * 4 }, [p.w, p.h]);
+  desk.redraw = true;
 }
 function drawLidOutside(s: Card, S: number) {
   const c = new OffscreenCanvas(Math.ceil(s.w * S), Math.ceil(s.h * S));
   paintLid(c.getContext('2d')!, design(s), S * (s.k || 1), true);
-  return { canvas: c, links: [], w: s.w, h: s.h };
+  return { canvas: c, links: [], w: s.w, h: s.h, print: null };
 }
 // A card at its design size (what it is drawn and laid out in; the desk shows it at its card scale).
 const design = (s: Card): Card => (s.k && s.k !== 1 ? { ...s, w: s.w / s.k, h: s.h / s.k } : s);
@@ -362,8 +369,9 @@ async function buildAtlas(g: Gpu) {
     src.uv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     src.mediaUV = mediaPx ? [mediaPx.x / (src.w * S), mediaPx.y / (src.h * S), (mediaPx.x + mediaPx.w) / (src.w * S), (mediaPx.y + mediaPx.h) / (src.h * S)] : [0, 0, 0, 0];
   });
-  backs.forEach(({ src, canvas: c, links }, i) => {
+  backs.forEach(({ src, canvas: c, links, print }, i) => {
     const p = places[drawn.length + i];
+    src.print = print && { ...print, x: p.x + print.x, y: p.y + print.y };
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, links);
@@ -385,7 +393,8 @@ async function buildAtlas(g: Gpu) {
   });
   desk.shared!.labelUV = labelUV;
   desk.shared!.atlas = atlas;
+  for (const src of sources) if (src.print && src.dev < 1) developStamp(src); // as far as it has got
   for (const src of sources) if (src.more) tallySetup(src);
 }
-return { backLayout, paintDomBack, design, BOX_NAMES, linkAt, coverRect, renderEntries, buildAtlas, drawBack, drawCard };
+return { backLayout, paintDomBack, design, BOX_NAMES, linkAt, coverRect, renderEntries, buildAtlas, drawBack, drawCard, developStamp };
 }

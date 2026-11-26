@@ -7,6 +7,7 @@ const TILT = 6; // a dragged card tilts with its motion, up to this many degrees
 const NOTE = { n: 16, drag: 0.03, bend: 50, lift: 12000 };
 import type { Card } from './layout.ts';
 import { paperChain, stepChain } from './note.ts';
+import { DEVELOP_S } from './stamp.ts';
 
 export type Patch = [number, number, number, number]; // center, half size: fractions of the card's half size
 
@@ -168,6 +169,8 @@ function stepCards(dt: number) {
     const rest = !s.fly && s.flip === s.flipTo && !s.kb && !s.over && !s.edgePen && Math.abs(s.lift - liftT) < 0.04 && Math.hypot(s.vx, s.vy) < 60;
     if (rest && s.released) { s.released = false; if (desk.offCorner(s)) s.pk = null; else desk.shove(s); } // let go: it shoves the cards under it (or slides off the corner first, and does not land)
     contact(s, dt, Math.max(T.lift * Math.max(s.lift, s.flyLift), desk.flipPath(s)[0]), rest);
+    // Its stamp develops once, from the first time its back shows, whether it stays open or not.
+    if (s.print && s.dev < 1 && (s.dev || s.flip > 0.5)) { s.dev = Math.min(1, s.dev + dt / DEVELOP_S); desk.developStamp(s); }
     // An open card emits its ink: it ramps up while open and fades back to the shared ink slowly after closing.
     s.emit = s.flipTo ? Math.min(1, s.emit + dt / T.emitIn) : Math.max(0, s.emit - dt / T.emitOut);
     if (s.rel >= 0 && s.rel < 1e3 && (s.rel += dt) > LAND.release + 0.5) s.rel = 1e3; // its held agents have all left

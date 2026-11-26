@@ -4,6 +4,7 @@ import type { Patch } from './cards.ts';
 import { type Chain, NS } from './note.ts';
 import type { Body as PBody } from './physics.ts';
 import type { Mark, TallySurface } from './tally.ts';
+import type { Print } from './stamp.ts';
 
 // ---------- types ----------
 
@@ -70,6 +71,7 @@ export interface Card {
   playlist: Clip[] | null; player?: InstanceType<Desk['Player']>;
   // the atlas (buildAtlas)
   atlasAt: { x: number; y: number }; uv: number[]; buv: number[]; puv: number[]; mediaUV: number[]; raster: OffscreenCanvas;
+  print?: Print | null; dev: number; // its stamp's print in the atlas, and how far it has developed (0 to 1)
   // a card box
   spot: number; slide: Slide; pile: Card[]; lidT: number; dirty: boolean; bx: Tween; room: { pw: number; ph: number };
   launch?: Launch | null; tally?: Tally; faceUV: { front: number[]; [face: string]: number[] }; outFor: number; gatherAsk: boolean; drawAsk: { all: boolean } | null;
@@ -129,7 +131,7 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
     hover: 0, hoverOn: false, burst: 0, z: id, dragging: false, released: false,
     // Landing: landK is set for the one sim step that bursts, landS is how hard it last landed, rel the seconds since then
     // (< 0 while flying in, so its held agents wait; 1e3 once their release is over).
-    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0, relV: 0,
+    landK: false, landS: 1, rel: 1e3, flying: false, flyLift: 0, relV: 0, dev: 0,
   } as Card; // the rest: see Card
 });
 desk.view = { w: innerWidth, h: innerHeight, phone: innerWidth < PHONE, k: 1, docH: innerHeight, dpr: 1 };
