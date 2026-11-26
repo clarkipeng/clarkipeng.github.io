@@ -1,21 +1,26 @@
-// ?colliders: what the physics sees, over the desk. Each body's contact points (dots) and their outline, as the eye that
-// draws it sees them; the turning page's lifted paper (from above, darker the higher); and the last step's contacts, each
-// with its normal. Loaded only with ?colliders, so it costs nothing otherwise.
+// ?colliders: what the physics sees, over the desk, read like a physics debugger. Each body: the outline of its collision
+// points (their convex hull) and the points themselves, as the eye that draws the body sees them, dimmed while it
+// sleeps. The turning page: its paper's height as a few contour lines. Contacts: a dot and a short tick along the
+// normal, fading over a few frames so slow motion (s) shows them. Loaded only with ?colliders, so it costs nothing otherwise.
 import { currentDesk } from './state.ts';
 import type { Body } from './physics.ts';
 import type { Chips } from './chips.ts';
 
 // The eyes that draw them (CSS px): above every card (uniforms.ts), its lean for the box (box.ts BOX3D.a), above the
-// chips (chip-render.ts LOOK.cam); the paper's sample spacing.
-const EYE = 1800, A = 0.4, CHIP_EYE = 1200, GRID = 16;
+// chips (chip-render.ts LOOK.cam).
+const EYE = 1800, A = 0.4, CHIP_EYE = 1200;
+const GRID = 20, LEVELS = [0.5, 15, 40, 80]; // the paper: sample spacing; contour heights (CSS px)
+const FADE = 8; // frames a contact stays
+const AWAKE = '22,150,95', ASLEEP = '120,120,120', HIT = '255,90,30', PAPER = '60,110,210';
 type Eye = { x0: number; a: number; w: number }; // its page's left edge on the desk; its lean; its perspective eased in (-1: a chip's)
 
 export function showColliders(chips: Chips) {
   const desk = currentDesk(), cv = document.createElement('canvas'), g = cv.getContext('2d')!;
-  cv.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999';
+  cv.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:9999';
   document.body.append(cv);
   const io = new Float64Array(7), C = new Float64Array(3), R = new Float64Array(9);
-  const eyes = new Map<Body, Eye>();
+  const eyes = new Map<Body, Eye>(), hits: number[] = []; // hits: x, y, tick x, tick y, frame seen
+  let frameN = 0, seen = -1, zs = new Float64Array(0);
   // A world point to the screen, as the eye that draws the body about C sees it.
   const view = ({ x0, a, w }: Eye, x: number, y: number, z: number): [number, number] => {
     const rx = x - C[0], ry = y - C[1], rz = z - C[2];
@@ -23,24 +28,41 @@ export function showColliders(chips: Chips) {
     const F = EYE - C[2], q = F / (F - w * rz);
     return [C[0] - x0 + q * (rx + a * rz), C[1] + q * (ry - a * rz)];
   };
+  // The paper's height on a coarse grid, then each level's contour (marching squares, one segment per crossed cell).
+  const paper = (x0: number, curl: { at(o: Float64Array): void }) => {
+    const nx = Math.ceil(desk.view.w / GRID) + 1, ny = Math.ceil(desk.view.h / GRID) + 1;
+    if (zs.length !== nx * ny) zs = new Float64Array(nx * ny);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { io[0] = x0 + i * GRID; io[1] = j * GRID; curl.at(io); zs[j * nx + i] = io[0]; }
+    LEVELS.forEach((lv, li) => {
+      g.strokeStyle = `rgba(${PAPER},${0.35 + (0.5 * li) / (LEVELS.length - 1)})`;
+      g.beginPath();
+      for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+        const c = [zs[j * nx + i], zs[j * nx + i + 1], zs[(j + 1) * nx + i + 1], zs[(j + 1) * nx + i]];
+        const corner = [[0, 0], [1, 0], [1, 1], [0, 1]], cut: number[] = [];
+        for (let e = 0; e < 4; e++) {
+          const a = c[e], b = c[(e + 1) & 3];
+          if ((a < lv) === (b < lv)) continue;
+          const t = (lv - a) / (b - a), [ax, ay] = corner[e], [bx, by] = corner[(e + 1) & 3];
+          cut.push((i + ax + t * (bx - ax)) * GRID, (j + ay + t * (by - ay)) * GRID);
+        }
+        for (let k = 0; k + 3 < cut.length; k += 4) { g.moveTo(cut[k], cut[k + 1]); g.lineTo(cut[k + 2], cut[k + 3]); }
+      }
+      g.stroke();
+    });
+  };
   const frame = () => {
     requestAnimationFrame(frame);
+    frameN++;
     const dpr = devicePixelRatio, P = desk.phys;
     if (cv.width !== innerWidth * dpr || cv.height !== innerHeight * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; }
     g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, innerWidth, innerHeight);
+    g.lineWidth = 1;
     if (!P) return;
     const { world, curl, L } = P;
-    if (L) { // the paper, from above
-      const x0 = L.region * desk.view.w;
-      for (let y = GRID / 2; y < desk.view.h; y += GRID) for (let x = GRID / 2; x < desk.view.w; x += GRID) {
-        io[0] = x0 + x; io[1] = y; curl.at(io);
-        if (io[0] < 0.5) continue;
-        g.fillStyle = `rgba(0,90,255,${Math.min(0.7, 0.15 + io[0] / 150)})`; g.fillRect(x - 2, y - 2, 4, 4);
-      }
-    }
-    const W = desk.view.phone ? 0 : desk.view.w, rest = { x0: desk.cam.x, a: 0, w: 1 };
+    if (L) paper(L.region * desk.view.w, curl);
+    const W = desk.view.phone ? 0 : desk.view.w, x0 = (L ? L.region : desk.page) * W, rest = { x0, a: 0, w: 1 }; // the bodies' frame (box.ts syncBodies)
     eyes.clear();
-    for (const s of desk.sources) if (s.launch) eyes.set(s.launch.body, s.more ? { x0: s.region * W, a: A, w: s.launch.P.w } : { x0: s.region * W, a: 0, w: 1 });
+    for (const s of desk.sources) if (s.body && s.more) eyes.set(s.body, { x0, a: A, w: s.launch ? s.launch.P.w : 0 }); // at rest the box is its painting
     for (const c of chips.bodies) eyes.set(c.p, { x0: c.chip.region * W, a: 0, w: -1 });
     for (const b of world.bodies) {
       world.pose(b, C, R);
@@ -49,18 +71,28 @@ export function showColliders(chips: Chips) {
         const lx = b.points[i * 3], ly = b.points[i * 3 + 1], lz = b.points[i * 3 + 2];
         pts.push(view(e, C[0] + R[0] * lx + R[1] * ly + R[2] * lz, C[1] + R[3] * lx + R[4] * ly + R[5] * lz, C[2] + R[6] * lx + R[7] * ly + R[8] * lz));
       }
-      const h = desk.hull(pts.slice());
-      g.strokeStyle = b.sleep ? 'rgba(120,120,120,0.8)' : 'rgba(0,160,60,0.9)'; g.lineWidth = 1.5;
+      const col = b.sleep ? `rgba(${ASLEEP},0.8)` : `rgba(${AWAKE},0.95)`, h = desk.hull(pts.slice());
+      g.strokeStyle = g.fillStyle = col;
       g.beginPath(); h.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.stroke();
-      g.fillStyle = g.strokeStyle;
       for (const [x, y] of pts) g.fillRect(x - 1, y - 1, 2, 2);
     }
-    g.strokeStyle = g.fillStyle = 'rgba(230,0,40,0.95)'; g.lineWidth = 2;
-    world.eachContact((b, p, n) => {
-      C.set(b.px);
-      const e = eyes.get(b) ?? rest, [x, y] = view(e, p[0], p[1], p[2]), [nx, ny] = view(e, p[0] + 14 * n[0], p[1] + 14 * n[1], p[2] + 14 * n[2]);
-      g.fillRect(x - 2.5, y - 2.5, 5, 5); g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke();
-    });
+    // The last step's contacts, kept for FADE frames: new ones only when the sim has stepped since.
+    if (world.time !== seen) {
+      seen = world.time;
+      world.eachContact((b, p, n) => {
+        C.set(b.px);
+        const e = eyes.get(b) ?? rest, [x, y] = view(e, p[0], p[1], p[2]), [tx, ty] = view(e, p[0] + 10 * n[0], p[1] + 10 * n[1], p[2] + 10 * n[2]);
+        hits.push(x, y, tx, ty, frameN);
+      });
+    }
+    let k = 0;
+    while (k < hits.length && frameN - hits[k + 4] >= FADE) k += 5;
+    if (k) hits.splice(0, k);
+    for (let i = 0; i < hits.length; i += 5) {
+      g.strokeStyle = g.fillStyle = `rgba(${HIT},${1 - (frameN - hits[i + 4]) / FADE})`;
+      g.beginPath(); g.arc(hits[i], hits[i + 1], 2, 0, 2 * Math.PI); g.fill();
+      g.beginPath(); g.moveTo(hits[i], hits[i + 1]); g.lineTo(hits[i + 2], hits[i + 3]); g.stroke();
+    }
   };
   requestAnimationFrame(frame);
 }

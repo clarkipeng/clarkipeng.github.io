@@ -31,10 +31,10 @@ export interface Slide extends Tween { want: string; wait: number; arrive?: numb
 export interface Seg { t0: number; d0: number; d1: number; dur: number; a: number; ease: Ease; mode?: string }
 // The thrown box this frame (poseThrow).
 export interface ThrowPose { X: V3; Y: V3; w: number; C: V3; M: number[]; low: number; foot: number[] | null; fade: number }
-// A card or its box thrown off by the page turn (launch): its body in the physics world, where it lay, the time since,
-// its ease home or slide off, its pose, and its outline as last drawn (page-local CSS px).
+// A card or its box thrown off by the page turn (launch): where it lay, the time since, its ease home or slide off, its
+// pose, and its outline as last drawn (page-local CSS px).
 export interface Launch {
-  body: PBody; x: number; y: number; wt: number;
+  x: number; y: number; wt: number;
   home: { t: number; q: number[] } | null; out: { t: number } | null; P: ThrowPose; hull: number[][] | null;
 }
 // The card box's pencil tally (tallySetup).
@@ -72,7 +72,7 @@ export interface Card {
   atlasAt: { x: number; y: number }; uv: number[]; buv: number[]; puv: number[]; mediaUV: number[]; raster: OffscreenCanvas;
   // a card box
   spot: number; slide: Slide; pile: Card[]; lidT: number; dirty: boolean; bx: Tween; room: { pw: number; ph: number };
-  launch?: Launch | null; tally?: Tally; faceUV: { front: number[]; [face: string]: number[] }; outFor: number; gatherAsk: boolean; drawAsk: { all: boolean } | null;
+  body?: PBody | null; launch?: Launch | null; tally?: Tally; faceUV: { front: number[]; [face: string]: number[] }; outFor: number; gatherAsk: boolean; drawAsk: { all: boolean } | null;
   welcome?: boolean; near?: boolean;
 }
 

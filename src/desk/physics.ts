@@ -27,6 +27,8 @@
 //   world.advance(t);  // fixed steps up to time t (s); world.pose(b, pos, rot) is interpolated between the last two
 //   world.stepped = () => {}; // optional: after each step (to act at an exact moment of the sim, whatever the frame rate)
 //   world.remove(b); const s = world.save(); world.load(s); // a load replays exactly (deterministic)
+//   world.hold(b, pos, q); // held: the app moves it (a card at rest, dragged or dealt); the sim never does, and
+//   b.held = false;        //   others meet it as one asleep. Let go, it sleeps until something wakes it.
 
 const SEC = 8, MAXC = 4096; // directions contacts are thinned to, per body and partner; contacts per step
 // Per contact: ra (0), rb (3), overlap (6), wanted normal speed (7), impulses n, t1, t2 (8), push (11), surface
@@ -87,6 +89,7 @@ export interface Body {
   wstep: Int32Array;
   wside: Int8Array;
   sleep: boolean;
+  held: boolean;
   still: number;
   touch: boolean;
   moved: boolean;
@@ -102,6 +105,7 @@ export interface World {
   stepped?: (() => void) | null;
   add(o: BodyOptions): Body;
   remove(b: Body): void;
+  hold(b: Body, x: ArrayLike<number>, q: ArrayLike<number>): void;
   advance(t: number): void;
   eachContact(fn: (b: Body, p: Float64Array, n: Float64Array) => void): void;
   pose(b: Body, pos: Float64Array, rot: Float64Array): void;
@@ -132,14 +136,18 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
       x: Float64Array.from(o.x || [0, 0, 0]), q: Float64Array.from(o.q || [1, 0, 0, 0]), v: null!, w: null!, // set by reindex, below
       px: new Float64Array(3), pq: new Float64Array(4), ax: new Float64Array(3), aq: new Float64Array(4), // ax, aq: where it came to rest
       warm: new Float64Array(n * 3), wid: new Int32Array(n), wstep: new Int32Array(n).fill(-9), wside: new Int8Array(n),
-      sleep: false, still: 0, touch: false, moved: true, reach: 0, id: bodies.length,
+      sleep: false, held: false, still: 0, touch: false, moved: true, reach: 0, id: bodies.length,
     };
     b.px.set(b.x); b.pq.set(b.q); b.ax.set(b.x); b.aq.set(b.q); orient(b);
     bodies.push(b); reindex();
     b.v.set(o.v || [0, 0, 0]); b.w.set(o.w || [0, 0, 0]);
     return b;
   };
-  const wake = (b: Body) => { b.sleep = false; b.still = 0; };
+  const wake = (b: Body) => { if (!b.held) { b.sleep = false; b.still = 0; } };
+  world.hold = (b, x, q) => {
+    b.held = b.sleep = true; b.still = 0; b.v.fill(0); b.w.fill(0);
+    b.x.set(x); b.px.set(x); b.ax.set(x); b.q.set(q); b.pq.set(q); b.aq.set(q); orient(b);
+  };
   // Gone: what rested on it wakes, and falls; the last step's contacts go (the ids they name have moved).
   world.remove = (b) => { const i = bodies.indexOf(b); if (i < 0) return; bodies.splice(i, 1); reindex(); nc = 0; for (const o of bodies) if (Math.hypot(o.x[0] - b.x[0], o.x[1] - b.x[1], o.x[2] - b.x[2]) < o.bound + b.bound + 2) wake(o); };
   // Velocities live side by side (the solver's hot loop reads them); each body's v and w are views into them.
@@ -183,12 +191,12 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
   const SV = 29;
   world.save = () => {
     const s = new Float64Array(2 + bodies.length * SV); s[0] = time; s[1] = alpha;
-    bodies.forEach((b, i) => { const o = 2 + i * SV; s.set(b.x, o); s.set(b.v, o + 3); s.set(b.w, o + 6); s.set(b.q, o + 9); s.set(b.px, o + 13); s.set(b.pq, o + 16); s[o + 20] = b.sleep ? 1 : 0; s[o + 21] = b.still; s.set(b.ax, o + 22); s.set(b.aq, o + 25); });
+    bodies.forEach((b, i) => { const o = 2 + i * SV; s.set(b.x, o); s.set(b.v, o + 3); s.set(b.w, o + 6); s.set(b.q, o + 9); s.set(b.px, o + 13); s.set(b.pq, o + 16); s[o + 20] = b.sleep ? 1 + Number(b.held) : 0; s[o + 21] = b.still; s.set(b.ax, o + 22); s.set(b.aq, o + 25); });
     return s;
   };
   world.load = (s) => {
     time = s[0]; alpha = s[1]; stepN += 2; // warm starts from before are stale
-    bodies.forEach((b, i) => { const o = 2 + i * SV; b.x.set(s.subarray(o, o + 3)); b.v.set(s.subarray(o + 3, o + 6)); b.w.set(s.subarray(o + 6, o + 9)); b.q.set(s.subarray(o + 9, o + 13)); b.px.set(s.subarray(o + 13, o + 16)); b.pq.set(s.subarray(o + 16, o + 20)); b.sleep = s[o + 20] > 0; b.still = s[o + 21]; b.ax.set(s.subarray(o + 22, o + 25)); b.aq.set(s.subarray(o + 25, o + 29)); orient(b); });
+    bodies.forEach((b, i) => { const o = 2 + i * SV; b.x.set(s.subarray(o, o + 3)); b.v.set(s.subarray(o + 3, o + 6)); b.w.set(s.subarray(o + 6, o + 9)); b.q.set(s.subarray(o + 9, o + 13)); b.px.set(s.subarray(o + 13, o + 16)); b.pq.set(s.subarray(o + 16, o + 20)); b.sleep = s[o + 20] > 0; b.held = s[o + 20] > 1; b.still = s[o + 21]; b.ax.set(s.subarray(o + 22, o + 25)); b.aq.set(s.subarray(o + 25, o + 29)); orient(b); });
   };
 
   function step() {
@@ -197,7 +205,7 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
     S.prepare(time);
     for (const b of bodies) {
       b.px.set(b.x); b.pq.set(b.q);
-      if (b.sleep) { if (!S.moving(b.x[0], b.x[1], b.bound)) continue; wake(b); b.moved = true; } // the paper moves under it
+      if (b.sleep) { if (b.held || !S.moving(b.x[0], b.x[1], b.bound)) continue; wake(b); b.moved = true; } // the paper moves under it
       const o = b.id * V;
       vel[o + 2] -= world.g * h;
       vel.fill(0, o + 6, o + 12);
@@ -312,7 +320,7 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
       B.sdf!(sn); // pairs() only calls this when B has one
       const dist = sn[3];
       if (dist > 0.5 + m) continue;
-      if (A.sleep) { if (dist < -0.25) { wake(A); A.moved = true; return; } continue; } // pressed into: it wakes, and is pushed out from the next step
+      if (A.sleep) { if (dist < -0.25 && !A.held) { wake(A); A.moved = true; return; } continue; } // pressed into: it wakes, and is pushed out from the next step
       cd[0] = rx; cd[1] = ry; cd[2] = rz; cd[6] = -dist;
       cd[3] = RB[0] * sn[0] + RB[1] * sn[1] + RB[2] * sn[2]; cd[4] = RB[3] * sn[0] + RB[4] * sn[1] + RB[5] * sn[2]; cd[5] = RB[6] * sn[0] + RB[7] * sn[1] + RB[8] * sn[2];
       keep(i);
