@@ -1,7 +1,8 @@
 import { currentDesk } from './state.ts';
 import { MOTION, EASES, STEP, lerp, clamp, smooth, MAX } from './tunables.ts';
 import type { Seg, V3, Card, Slide, Ease, ThrowPose } from './layout.ts';
-import { type Curl, createCurl } from './curl.ts';
+import type { Curl } from './curl.ts';
+import { createPage } from './profile.ts';
 import { type World, type Body, createWorld, boxShape } from './physics.ts';
 import { TALLY, tallySurface, type Mark, paintTally } from './tally.ts';
 
@@ -84,7 +85,7 @@ const newTurn = (region: number): Turn => ({ region, seg: null, keys: [0, door.d
 // Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
 function throwWorld() {
   if (desk.phys) return desk.phys;
-  const world = createWorld(), curl = createCurl({ state: (t, out) => (desk.phys!.L ? turnAt(desk.phys!.L, t, out) : out.fill(0)), rollR }); // no turn: flat
+  const world = createWorld(), curl = createPage({ state: (t, out) => (desk.phys!.L ? turnAt(desk.phys!.L, t, out) : out.fill(0)), rollR }, () => T.pageModel, () => world.g); // no turn: flat
   world.surface = curl; world.stepped = toss;
   const L = newTurn(0);
   L.seg = { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide };
@@ -103,7 +104,7 @@ function throwWorld() {
 // once each turn.
 function toss() {
   const { world, L } = desk.phys!;
-  if (!L || L.end) return;
+  if (!L || L.end || T.pageModel) return; // the other page models move what they lift themselves
   const t = world.time;
   turnAt(L, t, F0); turnAt(L, t + 0.01, F1);
   const a = F0[1], c = Math.cos(a), s = Math.sin(a), v = (F1[0] - F0[0]) / 0.01, om = (Math.PI * v) / span(a);

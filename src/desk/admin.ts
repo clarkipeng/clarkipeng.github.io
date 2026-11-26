@@ -1,5 +1,5 @@
 import type { Desk } from './state.ts';
-import { GROUPS, RESEED, PAGE_NAMES, STYLE_PARAMS, STYLE_DEFAULTS, dbg, type ParamRow } from './tunables.ts';
+import { GROUPS, RESEED, PAGE_NAMES, STYLE_PARAMS, STYLE_DEFAULTS, OPTS, dbg, type ParamRow } from './tunables.ts';
 import { HELP } from './help.ts';
 import { colorRows } from './colors.ts';
 import { textRows } from './text.ts';
@@ -42,7 +42,7 @@ export function mountAdmin(desk: Desk) {
     if (k.startsWith('tally')) for (const d of sources) if (d.tally) d.tally.dirty = true;
   };
   const params = (rows: readonly ParamRow[]): Row[] => rows.map(([key, def, min, max, step, label]) =>
-    ({ key, label, hint: HELP[key], def, range: [min, max, step], get: () => T[key], set: (v) => setT(key, +v) }));
+    ({ key, label, hint: HELP[key], def, range: [min, max, step], opts: OPTS[key], get: () => T[key], set: (v) => setT(key, +v) }));
   const pg = () => PAGE_NAMES[desk.page]; // the page style rows show the page you are on
   const style = STYLE_PARAMS.map(([k, , min, max, step, label], i): Row => ({
     get key() { return `${pg()}.${k}`; }, get def() { return STYLE_DEFAULTS[pg()][k]; }, label, hint: HELP[k], group: i ? undefined : 'This page',

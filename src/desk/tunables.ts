@@ -75,6 +75,7 @@ export const GROUPS = {
     ['shove', 1, 0, 2, 0.05, 'Shove'],
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'Page turn length'],
     ['landH', 12, 1, 40, 1, 'Landing height (px)'],
+    ['pageModel', 0, 0, 3, 1, 'Page model'],
   ],
   Cards: [
     ['cardScale', 0.75, 0.6, 1, 0.01, 'Size'],
@@ -123,6 +124,8 @@ export const GROUPS = {
 // Every tunable's current value.
 type Param = (typeof GROUPS)[keyof typeof GROUPS][number];
 // A panel row as the panel reads it: key, default, min, max, step, label.
+// Tunables picked from a few choices (a segmented control in the admin panel).
+export const OPTS: Record<string, readonly (readonly [string, number])[]> = { pageModel: [['Curl', 0], ['Board', 1], ['Bend', 2], ['Paper', 3]] };
 export type ParamRow = readonly [string, number, number, number, number, string];
 type Tunables = { [P in Param as P[0]]: number } & Record<string, number>;
 // glide: one page turn whose speed rises gently (as u^1.5) and settles long and soft (as (1 - u)^3): the integral of
