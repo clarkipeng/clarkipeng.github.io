@@ -25,6 +25,7 @@
 //   Floats cross these calls in arrays, not as arguments or return values: V8 allocates for those (and for Math.hypot).
 //   world.g = 9000;    // gravity, px/s²
 //   world.advance(t);  // fixed steps up to time t (s); world.pose(b, pos, rot) is interpolated between the last two
+//   world.stepped = () => {}; // optional: after each step (to act at an exact moment of the sim, whatever the frame rate)
 //   world.remove(b); const s = world.save(); world.load(s); // a load replays exactly (deterministic)
 
 const SEC = 8, MAXC = 4096; // directions contacts are thinned to, per body and partner; contacts per step
@@ -98,6 +99,7 @@ export interface World {
   hz: number;
   bodies: Body[];
   time: number;
+  stepped?: (() => void) | null;
   add(o: BodyOptions): Body;
   remove(b: Body): void;
   advance(t: number): void;
@@ -154,7 +156,7 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
   world.advance = (t) => {
     for (const b of bodies) b.moved = !b.sleep;
     let k = 0;
-    while (time + h <= t + 1e-9 && k++ < 240) { step(); time += h; }
+    while (time + h <= t + 1e-9 && k++ < 240) { step(); time += h; world.stepped?.(); }
     if (time + h <= t) time = t - h * 0.999; // far behind (a hidden tab): the backlog is dropped, not caught up
     alpha = Math.min(1, Math.max(0, (t - time) / h));
     for (const b of bodies) if (b.moved && b.render) b.render(b);
