@@ -310,7 +310,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   pos = wrap(pos + dir(ang) * g.b.x * (1.0 + g.f.y * e + g.y.x * puff));
   let q = vec2u(min(pos, g.a.xy - 1.0));
   let at = (q.y * u32(g.a.x) + q.x) * 4u;
-  let amt = g.b.y * (1.0 + 2.0 * e) * (1.0 - 0.7 * min(puff, 1.0)) * 4096.0;
+  let amt = g.b.y * (1.0 + 2.0 * e) * 4096.0; // a puffed agent moves faster, so its trail is already thinner
   // rgb carries color: the ink's absorbance (the shared olive, or the agent's card ink while that card is open), so
   // overlapping inks darken like dye.
   let ck = g.cards[u32(tag)];
