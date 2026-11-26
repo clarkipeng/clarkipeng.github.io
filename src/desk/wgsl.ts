@@ -187,7 +187,7 @@ export const GRAIN_WGSL = COMMON + PAPER_FNS + /* wgsl */ `
 export function mountWgsl() {
 const desk = currentDesk();
 const { qs } = desk;
-const SLOW = Math.max(0, Math.round(Number(qs.get('slow')) || 0)); // test hook: artificial GPU work per agent
+const LOAD = Math.max(0, Math.round(Number(qs.get('load')) || 0)); // test hook: artificial GPU work per agent
 const AGENT_WGSL = COMMON + /* wgsl */ `
 @group(0) @binding(1) var<storage, read_write> agents: array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dep: array<atomic<u32>>;
@@ -307,7 +307,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (f < l && f < r) { ang += (rnd() - 0.5) * 2.0 * turn; }
   else if (l > r) { ang -= turn; }
   else if (r > l) { ang += turn; }
-  ${SLOW ? `var burn = pos.x; for (var z = 0u; z < ${SLOW}u; z++) { burn = fract(burn * 1.618 + 0.37); } ang += burn * 1e-12; // test load: ?slow=N` : ''}
+  ${LOAD ? `var burn = pos.x; for (var z = 0u; z < ${LOAD}u; z++) { burn = fract(burn * 1.618 + 0.37); } ang += burn * 1e-12; // test load: ?load=N` : ''}
   pos = wrap(pos + dir(ang) * g.b.x * (1.0 + g.f.y * e + g.y.x * puff));
   let q = vec2u(min(pos, g.a.xy - 1.0));
   let at = (q.y * u32(g.a.x) + q.x) * 4u;

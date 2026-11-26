@@ -158,6 +158,13 @@ function resizeSims() {
 }
 
 let last = 0, acc = 0; desk.running = true;
+// Slow motion (?slow=4: a quarter speed): one scale on the desk's clock, so the turn, the physics, the chips, the flights
+// and the slime all slow together; fixed steps keep their size, fewer run per frame. With ?slow or ?colliders, s cycles
+// it through 1x, 4x and 16x slower.
+let slow = Math.max(1, +(qs.get('slow') || 1));
+if (qs.has('slow') || qs.has('colliders')) addEventListener('keydown', (e) => {
+  if (e.key === 's' && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(String(document.activeElement?.tagName))) slow = slow >= 16 ? 1 : slow * 4;
+});
 const stats: { intervals: number[]; throwMs?: number } = { intervals: [] };
 // The uniforms the last drawn frame showed; redraw: a texture it reads has changed since.
 const drawnU = new Float32Array(U.length);
@@ -168,7 +175,7 @@ function frame(now: number) {
   if (!desk.running || desk.dead) return;
   requestAnimationFrame(frame);
   if (document.hidden) { last = now; return; }
-  const dt = last ? Math.min(0.05, (now - last) / 1000) : STEP;
+  const real = last ? Math.min(0.05, (now - last) / 1000) : STEP, dt = real / slow;
   if (last) { stats.intervals.push(now - last); if (stats.intervals.length > 240) stats.intervals.shift(); }
   last = now;
   stepDecks(dt); // first: cards waiting on a deck follow it this frame
@@ -187,7 +194,7 @@ function frame(now: number) {
   if (window.__j?.freeze) acc = 0; // test hook: hold the sim still while the render keeps drawing
   const measure = clock.t <= Q.checkUntil;
   const ts = measure && desk.gpu!.ts && !desk.gpu!.ts.busy ? desk.gpu!.ts : null;
-  if (measure && !desk.gpu!.ts && last) Q.samples.push(dt * 1000); // no GPU timestamps: judge by the frame interval
+  if (measure && !desk.gpu!.ts && last) Q.samples.push(real * 1000); // no GPU timestamps: judge by the frame interval
   while (acc >= STEP && steps < 2) {
     acc -= STEP; steps++;
     clock.t += STEP; clock.frame++;
