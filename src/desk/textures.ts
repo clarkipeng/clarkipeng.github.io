@@ -2,7 +2,7 @@ import { currentDesk, type Desk } from './state.ts';
 import { TOK, CORNER } from './tunables.ts';
 import type { Card, Rect, CardBox } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
-import { STAMP, STAMP_SIZE, paintStamp } from './stamp.ts';
+import { STAMP_SIZE, paintStamp } from './stamp.ts';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 
@@ -202,7 +202,7 @@ function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
     return { lines: [], links, w, h: b.h, need: first + (per - 1) * r + bottom + STRIP }; // clear of the strip along its bottom
   }
   // An inked card has its stamp in the top right when the copy still fits beside it.
-  const stamped = STAMP_SIZE[STAMP] && s.inkHex ? backText(s, b, STAMP_SIZE[STAMP]) : null;
+  const stamped = s.inkHex && s.img ? backText(s, b, STAMP_SIZE) : null;
   return stamped && stamped.need <= b.h ? stamped : backText(s, b, null);
 }
 // A back's copy and links, wrapped beside a stamp of size [w, h] in the top right while the lines are level with it.
@@ -267,10 +267,9 @@ function drawBack(s0: Card, S0: number) {
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
-  if (stamp) {
-    const title = s.titled ? s.lines!.slice(0, -1).join(' ') : s.lines?.[0] ?? ''; // as on the front
-    const pic = s.img ? (p: Ctx, pw: number, ph: number) => { const src = s.img!, iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height, [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); } : null;
-    paintStamp(x, STAMP, { ink: s.inkHex!, seed: s.id + 1, title, pic }, stamp.x, stamp.y, S);
+  if (stamp) { // its picture, framed as on its front
+    const src = s.img!, iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+    paintStamp(x, s.inkHex!, (p, pw, ph) => { const [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); }, stamp.x, stamp.y, S);
   }
   x.textBaseline = 'alphabetic';
   for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
