@@ -16,7 +16,7 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // uv: front atlas rect | media: media rect in card uv | bound: bounding radius, facing (+1 front, -1 back), landing now, how long its horizontal axis looks (0 to 1)
 // inv1.w: seconds since the card last landed (< 0 while it is flying in, 1e3 once its release is over) | inv2.w: how hard it last landed
 // pat: the patch that just came into contact, in the card's frame as fractions of its half size: center, half size
-// buv: back atlas rect | off: w = off the desk (no outline food), xyz unused
+// buv: back atlas rect | off: x = how far the slime has eaten it (0 to 1), w = off the desk (no outline food), yz unused
 // ink: the card's own ink as absorbance, w = how strongly it emits it now (open card: 1, fading after close)
 // A sheet of paper (sheet.ts), device px. h0: dir from the corner, its point count (0: none), how far along dir any is
 // lifted; h1: how far its shadow falls, the nearest any is lifted, the roll's radius; nd: its points (along dir, up,
@@ -513,7 +513,14 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
     col *= (1.0 - near * (1.0 - c.imp.w)) * (1.0 - far * (1.0 - c.imp.w)); // imp.w: its shadow fades as it flies off
   }
   if (base) { return col; }
-  let cov = select(clamp(0.5 - d / q, 0.0, 1.0), nm.a, mesh);
+  var cov = select(clamp(0.5 - d / q, 0.0, 1.0), nm.a, mesh);
+  // Eaten: a ragged front moves in from its edge to its middle, the paper just ahead of it soaked in the card's ink.
+  var soak = 0.0;
+  if (c.off.x > 0.0) {
+    let v = 0.65 * clamp(-d / min(c.geo.x, c.geo.y), 0.0, 1.0) + 0.35 * (0.6 * vnoise(lp / (9.0 * s)) + 0.4 * vnoise(lp / (3.0 * s) + 5.0));
+    let f = 1.05 * c.off.x;
+    cov *= smoothstep(f, f + 0.03, v); soak = 1.0 - smoothstep(f, f + 0.1, v);
+  }
   if (cov > 0.0) {
     var un = select(lp / (2.0 * c.geo.xy) + 0.5, clamp(nm.xy, vec2f(0.0), vec2f(1.0)), mesh);
     let back = select(c.bound.y < 0.0, nm.z < 0.0, mesh);
@@ -559,6 +566,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
       cc += 0.015 * exp(-band * band * 6.0) * (1.0 - cc);
     }
     cc *= (1.0 + (gr.y - 0.5) * 0.03) * select(select(0.82 + 0.18 * c.bound.w * fract(c.obj.w * 0.25) * 4.0, c.bound.w, face), abs(nm.z), mesh); // a turning card catches less light
+    cc *= exp(-1.5 * soak * min(c.ink.rgb, vec3f(1.2))); // capped: a black ink soaks it dark, not solid black
     col = mix(col, cc, cov * select(1.0, tex.a, c.obj.x > 0.5) * select(1.0, c.obj.y, face)); // a box's open end and cut corners are see-through; a face of the flying box fades by obj.y
   }
   return col;

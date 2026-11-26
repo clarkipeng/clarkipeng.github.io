@@ -50,6 +50,7 @@ export const HELP: Record<string, string> = {
   chipEat: 'How fast the slime eats chips.',
   pageModel: 'How the page turns, drawn and carrying what lies on it. Curl: the corner rolls up and over. Board: a stiff page swung over about the spine. Bend: a page lifted by its corner, bending in one arc as it swings over. Paper: a simulated sheet, a hand carrying its corner up over the spine. Watch it in Colliders.',
   pageLift: 'Paper only: how high the hand carries the corner, of the way to the spine. Low folds the page over flat, like folding a sheet on a desk; high lifts it up over the spine like a book page.',
+  leftover: 'What happens to a card the turn left lying on the page you turned to. Eaten: the slime swarms it and eats it from the edge in, carrying its ink off. Nearest edge: it slides off the closest edge of the screen.',
   landH: 'How high a card, the note or a chip must rise before coming down again counts as a landing that pushes the slime.',
   chipBand: 'How close to the desk a chip must be to be eaten, and to count as touching it. Lower parts are eaten faster.',
   chipGold: 'Chip color, pale to deep gold.',

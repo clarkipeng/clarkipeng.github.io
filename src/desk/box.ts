@@ -73,9 +73,10 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 // the frame. A corner turned by hand moves the paper under them the same way: let go before halfway and they drop back
 // onto the page, settle, and ease home. Once off the frame the box slides in again when its page next shows, the cards in
 // it.
-// fadeZ: CSS px up by which a shadow has faded; out: s one left at rest on screen after a turn takes to slide off; limit:
+// fadeZ: CSS px up by which a shadow has faded; out: s one left at rest on screen after a turn takes to slide off; eat: s
+// the slime takes to eat one instead (T.leftover); limit:
 // s at most in the air; persp: s the box takes to ease into its 3D view
-const THROW = { fadeZ: 180, out: 0.6, limit: 6, persp: 0.25 };
+const THROW = { fadeZ: 180, out: 0.6, eat: 1.6, limit: 6, persp: 0.25 };
 const LID_WAIT = 0.3; // the flap waits this long before it shuts (s)
 const easeOutCubic = (u: number) => 1 - (1 - u) ** 3;
 const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7), F0 = new Float64Array(2), F1 = new Float64Array(2);
@@ -222,9 +223,18 @@ function stepThrow(s: Card, dt: number, L: Turn | null) {
   const B = s.launch!, drawn = B.hull;
   B.wt = window.__j?.at ?? B.wt + dt;
   if (B.out) B.out.t += dt;
-  else if (L?.end && (s.body!.sleep || L.t > THROW.limit)) B.out = { t: 0 }; // at rest after the turn, on screen: off to the right
+  else if (L?.end && (s.body!.sleep || L.t > THROW.limit)) B.out = { t: 0, dir: exitDir(s) }; // at rest after the turn, on screen: it goes
   poseThrow(s);
-  if (offFrame(s, drawn)) endThrow(s, true);
+  if (offFrame(s, drawn) || eaten(s) >= 1) endThrow(s, true);
+}
+// Left on screen after a turn, a card is eaten where it lies (the box, too big to eat, and every card when T.leftover
+// says so, slide off the nearest edge instead): how far it is eaten, 0 to 1.
+const eats = (s: Card) => !T.leftover && s.kind !== 'deck';
+const eaten = (s: Card) => (s.launch?.out && eats(s) ? clamp(s.launch.out.t / THROW.eat) : 0);
+// The way to the nearest edge of its page from where it lies.
+function exitDir(s: Card) {
+  const C = s.launch!.P.C, x = C[0] - s.region * desk.view.w, y = C[1];
+  return [[x, -1, 0], [desk.view.w - x, 1, 0], [y, 0, -1], [desk.view.h - y, 0, 1]].reduce((a, b) => (b[0] < a[0] ? b : a)).slice(1);
 }
 // A thrown body this frame: its axes at rest on the desk (X, Y); where its middle is (C, CSS px, z above the desk) and
 // how it is turned from rest (M, row major); how far the box's perspective has eased in (w); how high its lowest point is
@@ -233,7 +243,7 @@ function poseThrow(d: Card) {
   const L = d.launch!, { W, H, D } = dims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   desk.phys!.world.pose(d.body!, POS, ROT); L.hull = null; // where it shows, once drawn
   const C = [...POS], R = ROT, w = easeOutCubic(clamp(L.wt / THROW.persp));
-  if (L.out) C[0] += 1.2 * desk.view.w * clamp(L.out.t / THROW.out) ** 3;
+  if (L.out && !eats(d)) { const m = 1.2 * Math.max(desk.view.w, desk.view.h) * clamp(L.out.t / THROW.out) ** 3; C[0] += L.out.dir[0] * m; C[1] += L.out.dir[1] * m; }
   const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
   // Its shadow: the body seen from straight above, as the smallest rectangle along one of its edges that holds it.
   const reach = (x: number, y: number) => (W * Math.abs(x * R[0] + y * R[3]) + H * Math.abs(x * R[1] + y * R[4]) + D * Math.abs(x * R[2] + y * R[5])) / 2;
@@ -445,6 +455,6 @@ function stepTally(d: Card, dt: number) {
   desk.gpu!.device.queue.writeTexture({ texture: desk.shared!.atlas!, origin: [d.atlasAt.x + rect.x, d.atlasAt.y + rect.y] }, paintTally(tl.surf, kept, tl.t, T), { bytesPerRow: rect.w * 4 }, [rect.w, rect.h]);
   desk.redraw = true;
 }
-return { placeDecks, launch, arriveDeck, throwWorld, outside, BOX, resetBox, moveDeck, BOX3D, tallySetup, LIGHT, launchPose,
+return { placeDecks, launch, arriveDeck, throwWorld, outside, BOX, resetBox, moveDeck, BOX3D, tallySetup, LIGHT, launchPose, eaten,
   carried, boxH, cross, facing, FAR, projR, flyingOrder, FACE_SLOTS, stepDecks, stepThrows, mass };
 }
