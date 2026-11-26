@@ -21,7 +21,8 @@ export function createProfile({ state }: CurlOptions, model: Model, gravity: () 
   const st = new Float64Array(2), U = new Float64Array(N + 1), Z = new Float64Array(N + 1), VU = new Float64Array(N + 1), VZ = new Float64Array(N + 1);
   const pu = new Float64Array(N + 1), pz = new Float64Array(N + 1); // the paper's last step
   let ox = 0, W = 0, H = 0, dx = -1, dy = 0, S = 1, d0 = 0, simT = -1;
-  const surf = { top: 0, speed: 0, still: true, page(x: number, w: number, h: number) { ox = x; W = w; H = h; } } as Curl;
+  const surf = { top: 0, speed: 0, still: true } as unknown as Curl;
+  surf.page = (x, w, h) => { ox = x; W = w; H = h; };
   // Progress at time t (and the turn's direction and the spine's distance from the corner).
   const progress = (t: number) => {
     state(t, st);
@@ -121,7 +122,7 @@ export const MODELS: Model[] = ['board', 'bend', 'paper'];
 export function createPage(o: CurlOptions, pick: () => number, gravity: () => number): Curl {
   const all = [createCurl(o), ...MODELS.map((m) => createProfile(o, m, gravity))];
   let cur = all[0];
-  const page = { top: 0, speed: 0, still: true } as Curl;
+  const page = { top: 0, speed: 0 } as Curl;
   page.page = (x, w, h, k) => { for (const m of all) m.page(x, w, h, k); };
   page.prepare = (t) => { cur = all[pick()] ?? all[0]; cur.prepare(t); page.top = cur.top; page.speed = cur.speed; page.still = cur.still; };
   page.at = (io, vel) => cur.at(io, vel);
