@@ -81,7 +81,7 @@ function throwWorld() {
   world.surface = curl;
   desk.phys = { world, curl, hz: T.throwHz, L: { seg: { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide }, keys: [] } };
   const k = desk.view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
-  curl.page(0, desk.view.w, desk.view.h); world.g = T.throwG * k; world.rest = T.throwRest;
+  curl.page(0, desk.view.w, desk.view.h); world.g = T.gravity * k; world.rest = T.throwRest;
   const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [desk.view.w, 0.36 * desk.view.h, 32.5 * k] });
   for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
   world.remove(b); desk.phys.L = null;
@@ -109,13 +109,13 @@ function launch(d: Card | undefined) {
   let L = d.launch;
   if (!L) {
     const { W, H, D } = boxDims(d), a = (d.rot * Math.PI) / 180, sh = boxShape(W, H, D, 24 * desk.view.k);
-    const body = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: T.throwMass, inertia: sh.inertia(T.throwMass), friction: T.throwMu, bounce: T.throwBounce,
+    const body = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), friction: T.friction, bounce: T.bounce,
       x: [d.x, d.y, D / 2], q: [Math.cos(a / 2), 0, 0, Math.sin(a / 2)] });
     body.sleep = true;
     L = d.launch = { d, body, x: d.x, y: d.y, wt: 0 } as Launch; // the rest is set just below
   }
   Object.assign(L, { t: 0, seg: null, keys: [0, door.d, door.a], kj: 0, mode: '', end: null, home: null, out: null });
-  P.L = L; world.time = 0; world.g = T.throwG * desk.view.k; world.rest = T.throwRest;
+  P.L = L; world.time = 0; world.g = T.gravity * desk.view.k; world.rest = T.throwRest;
   curl.page(d.region * desk.view.w, desk.view.w, desk.view.h); curl.sag = T.throwSag * desk.view.k; curl.prepare(0);
   L.sv = world.save();
   const lid = lidOf(d);

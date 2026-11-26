@@ -59,7 +59,6 @@ export const GROUPS = {
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
     ['paperN', 16, 8, 24, 1, 'note: paper links, strip to free edge'],
     ['paperBend', 50, 20, 120, 1, 'note: paper stiffness (px it holds out straight)'],
-    ['paperG', 8000, 2000, 20000, 100, 'note: gravity px/s^2'],
     ['paperDrag', 0.03, 0, 0.1, 0.001, 'note: air drag on the paper'],
     ['paperLift', 12000, 2000, 40000, 500, 'note: finger lift on the free edge'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
@@ -109,12 +108,15 @@ export const GROUPS = {
     ['cornerLift', 10, 0, 40, 1, 'hover lift px'],
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
   ],
+  // World: one physical world. The card box, the chips and the sticky note fall under the same gravity; the box and the
+  // chips share one friction and one bounce.
+  World: [
+    ['gravity', 9000, 2000, 20000, 100, 'gravity px/s²'],
+    ['friction', 0.6, 0, 1.5, 0.05, 'friction'],
+    ['bounce', 0.25, 0, 0.9, 0.05, 'bounce'],
+  ],
   // Throw: the card box as a rigid body the turning page throws off (physics.ts, curl.ts).
   Throw: [
-    ['throwG', 9000, 2000, 20000, 100, 'gravity px/s²'],
-    ['throwMass', 1, 0.1, 5, 0.05, 'box mass (against what it hits)'],
-    ['throwMu', 0.6, 0, 1.5, 0.05, 'box friction on paper'],
-    ['throwBounce', 0.25, 0, 0.9, 0.05, 'box restitution'],
     ['throwSag', 40, 0, 120, 1, 'curl coupling: flap edge sag px'],
     ['throwHz', 480, 120, 960, 60, 'physics steps per s'],
     ['throwRest', 0.5, 0.05, 2, 0.05, 'asleep once it stays within px for 0.4 s'],
@@ -140,10 +142,7 @@ export const GROUPS = {
     ['chipBend', 0.8, 0.05, 2, 0.01, 'how gradually the edges curl'],
     ['chipDrop', 150, 0, 400, 1, 'drop height px'],
     ['chipSpin', 10, 0, 30, 0.5, 'tumble rad/s'],
-    ['chipMass', 0.05, 0.005, 0.5, 0.005, 'mass against the card box'],
     ['chipCam', 1200, 400, 4000, 10, 'camera height px (nearer looks larger)'],
-    ['chipE', 0.3, 0, 0.8, 0.01, 'bounce'],
-    ['chipMu', 0.5, 0, 1.5, 0.01, 'friction'],
     ['chipDamp', 16, 0, 40, 0.5, 'rocking dies at x/s on the desk'],
     ['chipEat', 1.2, 0.05, 3, 0.01, 'eating speed'],
     ['chipBand', 1, 0.2, 4, 0.05, 'eaten within px of the desk'],

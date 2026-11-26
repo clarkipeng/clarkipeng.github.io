@@ -12,9 +12,10 @@ const SOLID = 0.2; // a voxel holds (and is a contact point) while its density i
 import type { Body as PBody, World } from './physics.ts';
 
 // The tunables chips read (desk.ts T); see createChips.
-type ChipKey = 'chipThick' | 'chipCurl' | 'chipFold' | 'chipBend' | 'chipDrop' | 'chipSpin' | 'chipMass' | 'chipMu' | 'chipE' | 'chipDamp' |
+type ChipKey = 'chipThick' | 'chipCurl' | 'chipFold' | 'chipBend' | 'chipDrop' | 'chipSpin' | 'friction' | 'bounce' | 'chipDamp' |
   'chipEat' | 'chipBand' | 'chipCrumbS' | 'chipCrumbs' | 'landWn' | 'landP';
 export type ChipTunables = Record<ChipKey, number>;
+const CHIP_MASS = 0.05; // a chip's mass, against the card box's 1 (box.ts)
 // A chip's outline and surface (makeShape).
 export interface Shape {
   seed: number;
@@ -180,9 +181,9 @@ export class Body {
     const R = from.R, dc = c.map((v, i) => v - this.c[i]), x = R ? [0, 3, 6].map((r, i) => from.x[i] + R[r] * dc[0] + R[r + 1] * dc[1] + R[r + 2] * dc[2]) : from.x;
     if (this.p) world.remove(this.p);
     this.c = c;
-    const s = P.chipMass / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
+    const s = CHIP_MASS / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each voxel's own spread
     this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(lo[i] - c[i]), Math.abs(hi[i] - c[i])))) + this.cell, sdf: (io: Float64Array) => this.sdf(io),
-      mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.chipMu, bounce: P.chipE, damp: P.chipDamp, x, q: from.q, v: from.v, w: from.w });
+      mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.friction, bounce: P.bounce, damp: P.chipDamp, x, q: from.q, v: from.v, w: from.w });
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
   freeze(world: World) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
@@ -226,7 +227,7 @@ function chamfer(D: Float32Array) {
 }
 
 // ---------- the chips ----------
-// P: the tunables (desk.ts T): chipMass its mass against the card box's, chipE bounce, chipMu friction, chipDamp how fast
+// P: the tunables (desk.ts T): bounce and friction (the box's too), chipDamp how fast
 // it stops rocking, chipEat eating speed, chipBand how close to the desk a voxel is eaten, chipHurry the speed-up for the
 // oldest chip over the cap.
 // world: () => the shared sim (physics.ts) they fall, tumble and are thrown in.

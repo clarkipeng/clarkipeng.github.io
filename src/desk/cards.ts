@@ -218,7 +218,7 @@ function stepKey(s: Card, dt: number) {
 function stepPaper(s: Card, dt: number) {
   const c = s.ch;
   if (!c || c.rest) return;
-  const v = stepChain(c, dt, { g: T.paperG, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
+  const v = stepChain(c, dt, { g: T.gravity, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
   if (v) land(s, Math.max(0.1, clamp(v / 600))); // the floor the old land() gave it
   s.flip = clamp(Math.atan2(c.x[2 * c.n + 1], c.x[2 * c.n]) / Math.PI);
   if (c.rest) {
