@@ -76,7 +76,7 @@ export const GROUPS = {
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'Page turn length'],
     ['landH', 12, 1, 40, 1, 'Landing height (px)'],
     ['pageModel', 3, 0, 3, 1, 'Page model'],
-    ['pageLift', 0.02, 0, 1, 0.01, 'Hand lift'],
+    ['pageLift', 0.2, 0, 1, 0.01, 'Hand lift'],
     ['leftover', 0, 0, 1, 1, 'Leftover cards'],
   ],
   Cards: [

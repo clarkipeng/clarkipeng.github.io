@@ -98,22 +98,27 @@ function throwWorld() {
   return desk.phys;
 }
 // The page's turn tosses what it lifts: a page turns over about its far edge (the spine, span from the corner), so the
-// step the paper first moves a body, the body takes the page's spin and the speed of the paper where it lies (omega x r:
+// step the paper first comes over a body, the body takes the page's spin and the speed of the paper where it lies (omega x r:
 // straight up, as the paper there is only starting to lift, and more the further it is from the spine), and the roll
 // pushes it on along the turn at half the fold's speed, so it comes down clear of the page. Box, cards and chips alike,
-// once each turn, whatever the page model: nothing rides the lifting paper (it would slide down to the crease and be
-// swept along with it).
+// whatever the page model: nothing rides the lifting paper (it would slide down to the crease and be swept along with
+// it, the page arching over it). However slowly a hand turns it, the paper tosses it at least as a click's turn does at
+// its fastest (EASES.glide peaks at twice its mean speed), and one that comes down ahead of the paper is tossed again.
 function toss() {
-  const { world, L } = desk.phys!;
+  const { world, L, sheet } = desk.phys!;
   if (!L || L.end) return;
   const t = world.time;
   turnAt(L, t, F0); turnAt(L, t + 0.01, F1);
-  const a = F0[1], c = Math.cos(a), s = Math.sin(a), v = (F1[0] - F0[0]) / 0.01, om = (Math.PI * v) / span(a);
-  if (v <= 0) return; // the page is falling back: it tosses nothing
+  const a = F0[1], c = Math.cos(a), s = Math.sin(a), vt = (F1[0] - F0[0]) / 0.01;
+  if (vt <= 0) return; // the page is falling back (or held still): it tosses nothing
+  const v = Math.max(vt, (2 * span(a)) / T.turnS), om = (Math.PI * v) / span(a);
+  let over = -1; // as far along the turn as the paper is off the desk: the fold, or a lifted page arching on ahead of it
+  for (let j = 0; j < sheet.X.length; j++) if (sheet.Z[j] > 1) over = Math.max(over, sheet.X[j]);
   for (const b of world.bodies) {
-    if (b.sleep || L.tossed.has(b) || b.v[0] ** 2 + b.v[1] ** 2 + b.v[2] ** 2 < 2500) continue; // at rest
+    if (b.sleep) continue; // at rest
     const X = -(b.x[0] - (L.region + 1) * desk.view.w) * c - (b.x[1] - desk.view.h) * s; // from the corner along the turn
-    if (X - b.bound > F0[0]) continue; // the paper has not reached it: something else moves it
+    if (X - b.bound > over) { if (b.touch) L.tossed.delete(b); continue; } // no paper over it yet (again, once it is down)
+    if (L.tossed.has(b)) continue;
     b.v[0] -= v * c / 2; b.v[1] -= v * s / 2; b.v[2] += om * Math.max(0, span(a) - X);
     b.w[0] += om * s; b.w[1] -= om * c;
     L.tossed.add(b);
@@ -158,7 +163,7 @@ function syncBodies() {
   for (const s of [...sources].sort((a, b) => a.z - b.z)) {
     const d = pageDeck(s.region), { W, H, D } = dims(s), [sx, y, r] = shown(s), a = (r * Math.PI) / 180 + s.sway, x = sx + (from - s.region) * pw;
     // The other page's box joins once it has slid in (held while it slides, it is a wall the thrown box hits).
-    const want = !!s.launch || (on && !!d && !!s.w && (s.region === from || (s.region === desk.page && !(s.more && arriving(s)) && !under(x, y, Math.hypot(W, H) / 2))) && onDesk(s));
+    const want = !!s.launch || (on && !!d && !!s.w && (s.region === from || (s.region === desk.page && !(s.more && arriving(s)) && !under(x, y, Math.hypot(W, H) / 2) && (!!s.body || clear(x, y, Math.hypot(W, H) / 2, D)))) && onDesk(s));
     if (s.body && (!want || (!s.launch && Math.abs(s.body.bound - Math.hypot(W, H, D) / 2) > 1e-6))) { world.remove(s.body); s.body = null; } // gone, or resized
     if (!want || s.launch) continue;
     if (!s.body) {
@@ -180,6 +185,9 @@ function under(x: number, y: number, r: number) {
   const c = Math.cos(F0[1]), s = Math.sin(F0[1]);
   return -(x - (L.region + 1) * desk.view.w) * c - (y - desk.view.h) * s - r > F0[0];
 }
+// Nothing thrown is still in the space a body would fill as it joins: the pages share the screen, so the next page's
+// box can lie just where the thrown one did, and joining around it would pin it to the desk.
+const clear = (x: number, y: number, r: number, top: number) => !sources.some(({ launch, body: b }) => launch && b && b.x[2] - b.bound < top && Math.hypot(b.x[0] - x, b.x[1] - y) < r + b.bound);
 // The turn starts: what lies on the page is let go where it lies (asleep, so exactly as painted until the paper reaches
 // it); the box's lid and cards ride with the box.
 function launch(region: number) {
@@ -388,6 +396,7 @@ function stepDecks(dt: number) {
     if (!d.more || desk.view.phone || !d.slide || !desk.dealing) continue;
     stepTally(d, dt);
     if (d.launch) continue; // thrown (stepThrows)
+    if (desk.phys?.L?.region === d.region && !desk.phys.L.end) continue; // thrown off while its page still turns: back once it has
     const v = d.slide;
     if (v.wait > 0) v.wait -= dt;
     else if (v.want === 'off') slideDeck(d, 'out', v.arrive || MOTION.settle, easeOutQuart); // the arrival
