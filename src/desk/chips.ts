@@ -136,6 +136,7 @@ export class Body {
   declare gone?: boolean;
   declare at?: Float32Array; // contact (touchdown): each column's lowest solid point on the desk, now and the frame before
   declare atWas?: Float32Array;
+  declare armed?: Uint8Array; // touchdown: which columns may land
   declare land?: number[] | null; // the patch that just came down: center, radius (desk px), strength
   constructor(S: Shape, chip: Chip) {
     this.S = S; this.chip = chip; this.id = nextId++;
@@ -395,7 +396,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       at[o + 2] = b.x[2] + Math.min(z0, z1);
       at[o] = b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz; at[o + 1] = b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz;
     }
-    const l = was && touchdown(at, was, P.chipBand, dt, (CHIP_MASS * b.m) / b.mass0, true);
+    const l = was && touchdown(at, was, (b.armed ??= new Uint8Array(CN * CN)), P.chipBand, dt, (CHIP_MASS * b.m) / b.mass0, Math.sqrt(b.solidCols / Math.PI) * b.cell);
     if (l) b.land = [l[1], l[2], Math.sqrt(l[0] / Math.PI) * b.cell, l[3]]; // center, radius (desk px), strength
   }
 

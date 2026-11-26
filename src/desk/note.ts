@@ -22,6 +22,7 @@ export interface Chain {
   dir: number;
   push: boolean;
   rest: boolean;
+  armed?: Uint8Array; // touchdown: which joints may land
 }
 export interface ChainParams {
   g: number;

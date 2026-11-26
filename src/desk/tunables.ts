@@ -26,19 +26,29 @@ export const CORNER = { size: 70, label: 19, lift: 10 };
 // so a chip a twentieth of the box's weight still shows); it counts only after it rose above `band` px.
 export const push = (momentum: number) => Math.min(1, Math.sqrt(momentum / LAND.p));
 export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 320, wn: 0.36, band: 12 };
-// Touchdown, one rule for every item that comes down part by part (a chip rocking, the note's sheet rolling down): its
-// samples (x, y, height: px, now and the step before; a missing part is at height Infinity) that have just come within
-// `band` of the desk land together. The mass that stops with them (all of its mass `m` for a rigid item, their share of
-// it for a sheet) pushes with the motion they shed there: wn x coming down + along. Returns how many, their middle, and
-// that push.
-export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, band: number, dt: number, m: number, rigid: boolean) {
-  let n = 0, all = 0, sx = 0, sy = 0, v = 0;
-  for (let o = 0; o < at.length; o += 3) {
-    if (at[o + 2] < Infinity) all++;
-    if (at[o + 2] > band || was[o + 2] <= band || was[o + 2] === Infinity) continue; // only a part that has just come down (not one just made)
-    n++; sx += at[o]; sy += at[o + 1]; v += (LAND.wn * Math.max(0, was[o + 2] - at[o + 2]) + Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1])) / dt;
+// Touchdown, one rule for every item that comes down part by part (a chip rocking, the note's sheet rolling down). Its
+// samples (x, y, height: px, now and the step before; a missing part is at height Infinity) arm once they rise above
+// LAND.band and land on first coming within `band` of the desk, so a part settling as it is eaten never lands again.
+// Slime under the newly covered area is squeezed out at the speed the contact front sweeps across the item (the change
+// in sqrt of the share down x the item's radius `size`, px), plus the motion the parts shed (wn x coming down + along).
+// It pushes by the item's mass `m` x that speed: the slime under a part feels the item's weight per area there, as if
+// all of it landed so. Returns how many, their middle, and that push.
+export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, armed: Uint8Array, band: number, dt: number, m: number, size: number) {
+  let n = 0, all = 0, down = 0, sx = 0, sy = 0, v = 0;
+  for (let o = 0, i = 0; o < at.length; o += 3, i++) {
+    const z = at[o + 2];
+    if (z === Infinity) continue;
+    all++;
+    if (z > LAND.band) armed[i] = 1;
+    if (z > band) continue;
+    down++;
+    if (!armed[i] || was[o + 2] === Infinity) continue;
+    armed[i] = 0; n++; sx += at[o]; sy += at[o + 1];
+    v += (LAND.wn * Math.max(0, was[o + 2] - z) + Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1])) / dt;
   }
-  return n ? [n, sx / n, sy / n, push(((rigid ? m : (m * n) / all) * v) / n)] : null;
+  if (!n) return null;
+  const front = (size * (Math.sqrt(down / all) - Math.sqrt((down - n) / all))) / dt;
+  return [n, sx / n, sy / n, push(m * (v / n + front))];
 }
 // A flipped or dealt card lands at its home angle plus a gaussian spread of `jitter` deg (std dev), never past `max` deg.
 export const ANGLE = { jitter: 1.5, max: 5 };
