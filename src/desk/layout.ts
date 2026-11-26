@@ -31,11 +31,11 @@ export interface Slide extends Tween { want: string; wait: number; arrive?: numb
 export interface Seg { t0: number; d0: number; d1: number; dur: number; a: number; ease: Ease; mode?: string }
 // The thrown box this frame (poseThrow).
 export interface ThrowPose { X: V3; Y: V3; w: number; C: V3; M: number[]; low: number; foot: number[] | null; fade: number }
-// A card box thrown off by the page turn (launch): its body in the physics world, and the turn under it.
+// A card or its box thrown off by the page turn (launch): its body in the physics world, where it lay, the time since,
+// its ease home or slide off, its pose, and its outline as last drawn (page-local CSS px).
 export interface Launch {
-  d: Card; body: PBody; x: number; y: number; wt: number; t: number;
-  seg: Seg | null; keys: number[]; kj: number; mode: string; end: string | null; tossed: boolean;
-  home: { t: number; q: number[] } | null; out: { t: number } | null; sv: Float64Array; P: ThrowPose; hull: number[][] | null;
+  body: PBody; x: number; y: number; wt: number;
+  home: { t: number; q: number[] } | null; out: { t: number } | null; P: ThrowPose; hull: number[][] | null;
 }
 // The card box's pencil tally (tallySetup).
 interface Tally { t: number; free: number; gen: number; marks: Mark[]; shown: boolean; surf?: TallySurface; dirty?: boolean }

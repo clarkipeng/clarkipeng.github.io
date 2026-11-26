@@ -105,16 +105,22 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, tint = 0, bas
     H = s.flyH = boxH(P, r.dc, mu, mv, dpr, originX);
     fade = i >= 0 ? Math.max(P.fade, P.w) : P.fade;
     s.plane = { dc: r.dc, n: cross(mu, mv) };
+  } else if (s.launch) { // thrown: as its body lies, seen from straight above as any lifted card is
+    const P = launchPose(s), M = P.M, turn = (m: number[]) => [0, 3, 6].map((r) => M[r] * m[0] + M[r + 1] * m[1] + M[r + 2] * m[2]);
+    mu = turn(mu); mv = turn(mv); sx = P.C[0]; sy = P.C[1]; z += P.C[2]; fade = P.fade;
+    th = Math.atan2(mu[1], mu[0]); lv = looks(mv);
   }
   const zh = z * dpr, f = 1800 * dpr - zh; // the camera is as far above the lifted card as above the desk, so lifting never scales it (the shadow shows the height)
   let cx = (sx - originX) * dpr, cy = sy * dpr; // page-local
   H ||= [f * mu[0] - cx * mu[2], f * mv[0] - cx * mv[2], cx * f, f * mu[1] - cy * mu[2], f * mv[1] - cy * mv[2], cy * f, -mu[2], -mv[2], f];
-  const hw = (s.w * dpr) / 2, hh = ((mesh && s.flip > 0.5 ? yh - lo : s.h) * dpr) / 2, fh = s.carrier && s.carrier !== s ? facing(H) : mesh ? 1 : fc, edgeOn = Math.abs(fh) < 1e-4;
+  const eyed = s.carrier ? s.carrier !== s : !!s.launch; // riding in the box or thrown: drawn as it turns in 3D
+  const hw = (s.w * dpr) / 2, hh = ((mesh && s.flip > 0.5 ? yh - lo : s.h) * dpr) / 2, fh = eyed ? facing(H) : mesh ? 1 : fc, edgeOn = Math.abs(fh) < 1e-4;
   const inv = edgeOn ? FAR : invert3(H);
-  if (s.carrier && s.carrier !== s) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
+  if (eyed) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
+  if (s.launch && !s.carrier) s.launch.hull = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const q = (H[6] * u * hw + H[7] * v * hh + H[8]) * dpr; return [(H[0] * u * hw + H[1] * v * hh + H[2]) / q, (H[3] * u * hw + H[4] * v * hh + H[5]) / q]; }); // where it shows (CSS px)
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
     hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
-    ...s.uv, ...s.mediaUV, s.carrier && s.carrier !== s ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
+    ...s.uv, ...s.mediaUV, eyed ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
     ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), 0, 0, 0, s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
     // Every inked card emits a mild share of its ink (tint) and the full ink while open.
     ...(s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
@@ -162,12 +168,13 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     return r;
   });
   const order = fly(sources.filter((x) => {
-    if ((!desk.view.phone && x.region !== s.page) || x.gone || (desk.capturing && x.carrier)) return false;
+    if ((!desk.view.phone && x.region !== s.page) || x.gone || (desk.capturing && (x.carrier || x.launch))) return false;
+    if (x.launch) return true;
     const r = Math.hypot(x.w, x.h) / 2 + 100 * SHADOW_SOFT;
     return x.x + r > sx && x.x - r < sx + desk.view.w && x.y + r > sy && x.y - r < sy + desk.view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id));
-  // The page you left's card box flies off over the turn, above both pages (never part of the turning page's frame).
-  const over = !desk.capturing && !desk.view.phone ? fly(sources.filter((x) => x.carrier === x && x.region !== s.page).map((x) => x.id)).slice(0, MAX - order.length) : [];
+  // What the page you left threw flies off over the turn, above both pages (never part of the turning page's frame), lowest first.
+  const over = !desk.capturing && !desk.view.phone ? fly(sources.filter((x) => x.launch && x.region !== s.page).sort((a, b) => a.launch!.P.C[2] - b.launch!.P.C[2]).map((x) => x.id)).slice(0, MAX - order.length) : [];
   const vs = desk.videoSrc;
   let vu = [0, 0, 1, 1];
   if (vs) {

@@ -109,7 +109,7 @@ function pileUp(region: number, own = false) {
   const deck = pageDeck(region);
   if (desk.view.phone || !desk.gpu || reduced || !deck) return;
   if (region !== desk.page) desk.resetBox(deck); // out of sight, a box puts itself away at once
-  const cards = sources.filter((s) => s.region === region && decked(s) && !s.deck && !s.fly && !s.dragging && (own || region !== desk.page || !s.slot)).sort((a, b) => b.order - a.order);
+  const cards = sources.filter((s) => s.region === region && decked(s) && !s.deck && !s.fly && !s.dragging && !s.launch && (own || region !== desk.page || !s.slot)).sort((a, b) => b.order - a.order);
   for (const s of cards) {
     deck.pile.push(s);
     Object.assign(s, { deck, flying: true, face: 1, flip: 0, flipTo: 0, ch: null, emit: 0, vx: 0, vy: 0, released: false, shove: null, kb: null });

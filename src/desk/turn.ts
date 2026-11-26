@@ -103,7 +103,7 @@ function show(region: number) {
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
 // cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).
 function startTurn(to: number, mode: string) {
-  desk.launch(desk.pageDeck(desk.page)); // the box is not part of the page: it flies off as the page turns
+  desk.launch(desk.page); // what lies on the page is not part of it: it is thrown off as the page turns
   freeze();
   Object.assign(turn, { on: true, mode, from: desk.page, to, t: 0, dur: T.turnS, d0: door.d, d: door.d, start: door.d, target: door.d, a: door.a, d1: farD(door.a) });
   show(to);
@@ -158,12 +158,12 @@ function hull(pts: Poly) {
   return h;
 }
 function clipLinks() {
-  const st = linksEl.style, box = sources.find((s) => s.launch?.hull)?.launch!.hull;
-  if (desk.view.phone || !turn.links || (turn.on ? turn.from && turn.to : !box || desk.page)) { st.clipPath = st.translate = ''; return; }
+  const st = linksEl.style, drawn = sources.flatMap((s) => (s.launch?.hull ? [s.launch.hull] : [])); // what a turn threw, where it shows
+  if (desk.view.phone || !turn.links || (turn.on ? turn.from && turn.to : !drawn.length || desk.page)) { st.clipPath = st.translate = ''; return; }
   const out = turn.on && turn.from === 0, { left: L, top: Tp, width: w, height: h } = turn.links; // on screen at L, Tp
   const rect = [[0, 0], [w, 0], [w, h], [0, h]], fmt = (poly: Poly) => poly.map(([u, v]) => `${u.toFixed(1)} ${v.toFixed(1)}`).join(' L ');
   let shown = rect;
-  const holes: Poly[] = box ? [box.map(([x, y]) => [x - L, y - Tp])] : [];
+  const holes: Poly[] = drawn.map((h) => h.map(([x, y]) => [x - L, y - Tp]));
   if (turn.on) {
     const [dx, dy] = dirOf(turn.a), R = rollR(turn.d), d = turn.d;
     const X = ([u, v]: Pt) => dx * (L + u - desk.view.w) + dy * (Tp + v - desk.view.h); // from the page's corner along the fold's direction

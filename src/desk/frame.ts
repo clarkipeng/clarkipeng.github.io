@@ -37,7 +37,7 @@ function chipUniforms(s: Sim) {
     if (b.land) U.set([(b.land[0] - s.origin) * s.dpr, b.land[1] * s.dpr, b.land[2] * s.dpr, b.land[3]], CHIP_OFF + 4 + (NCH + i) * 4);
   });
 }
-// The sim advances here unless a thrown box's turn is advancing it (stepThrow). Chips wholly off the screen are gone; any
+// The sim advances in stepThrows, on the same clock as everything a turn threw. Chips wholly off the screen are gone; any
 // a finished turn left on it carry on on the new page, where they are on the screen.
 function stepChips(dt: number) {
   while (chipWait.length && chips.bodies.length < NCH) { const [x, y, p] = chipWait.shift()!; if (p === desk.page) dropChip(x, y); }
@@ -46,12 +46,11 @@ function stepChips(dt: number) {
     const dx = desk.view.phone ? 0 : (desk.page - chipRegion()) * desk.view.w;
     for (const b of chips.bodies) { b.p.x[0] += dx; b.p.px[0] += dx; b.chip.region = desk.page; }
   }
-  const { world, L } = desk.phys!, x0 = chipX0(), own = chipRegion() === desk.page, H = desk.view.phone ? desk.view.docH : desk.view.h;
-  if (own) chips.push(sources.filter((c) => (desk.view.phone || c.region === desk.page) && !c.gone && !c.deck && !c.carrier && c.w).map((c) => {
+  const x0 = chipX0(), own = chipRegion() === desk.page, H = desk.view.phone ? desk.view.docH : desk.view.h;
+  if (own) chips.push(sources.filter((c) => (desk.view.phone || c.region === desk.page) && !c.gone && !c.deck && !c.carrier && !c.launch && c.w).map((c) => {
     const [x, y, r] = shown(c), th = (r * Math.PI) / 180;
     return { x, y, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy };
   }));
-  if (!L || L.home || L.out) { const t = world.time + (desk.phys!.rem || 0) + dt; world.advance(t); desk.phys!.rem = t - world.time; }
   for (const b of chips.bodies.filter((b) => b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + desk.view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
   chips.step(dt, own);
   if (chips.bodies.some((b) => !b.sleep || b.dirty)) desk.redraw = true;
