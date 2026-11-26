@@ -82,7 +82,7 @@ interface Parts {
   // turn.ts
   turn: TurnPart['turn']; clipLinks: TurnPart['clipLinks']; cam: TurnPart['cam'];
   regionFromUrl: TurnPart['regionFromUrl']; placePage: TurnPart['placePage']; setInert: TurnPart['setInert'];
-  DOOR: TurnPart['DOOR']; door: TurnPart['door']; dirOf: TurnPart['dirOf']; stepDoor: TurnPart['stepDoor'];
+  DOOR: TurnPart['DOOR']; door: TurnPart['door']; dirOf: TurnPart['dirOf']; span: TurnPart['span']; stepDoor: TurnPart['stepDoor'];
   cursor: TurnPart['cursor']; next: TurnPart['next']; drawStill: TurnPart['drawStill']; holdPage: TurnPart['holdPage'];
   rollR: TurnPart['rollR']; restD: TurnPart['restD']; farD: TurnPart['farD']; hull: TurnPart['hull'];
   NAMES: TurnPart['NAMES']; WARM_STEPS: TurnPart['WARM_STEPS']; syncInert: TurnPart['syncInert'];

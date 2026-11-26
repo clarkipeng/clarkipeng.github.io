@@ -287,6 +287,6 @@ function jump(region: number) {
   show(region);
   if (reduced && desk.gpu && desk.sim) drawStill(); // no frame loop with reduced motion: settle this page and draw it once
 }
-return { turn, clipLinks, cam, regionFromUrl, placePage, setInert, DOOR, door, dirOf, stepDoor, cursor, next,
+return { turn, clipLinks, cam, regionFromUrl, placePage, setInert, DOOR, door, dirOf, span, stepDoor, cursor, next,
   drawStill, holdPage, rollR, restD, farD, hull, NAMES, WARM_STEPS, syncInert, stepTurn, stepWarm, prewarm };
 }

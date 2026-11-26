@@ -18,7 +18,7 @@ interface FacePlane { H: number[]; hw: number; hh: number } // a plane's homogra
 
 export function mountBox() {
 const desk = currentDesk();
-const { sources, easeOutQuart, pageDeck, T, rollR, restD, farD, door, turn, BOX_T, hull, placeDom, pilePose, pileZ,
+const { sources, easeOutQuart, pageDeck, T, rollR, restD, farD, span, door, turn, BOX_T, hull, placeDom, pilePose, pileZ,
   overDeck, cam, flights, DRAW, boxGather, drawMore, measure, font, reduced, hinged, pileUp } = desk;
 // Each page's card box stands at its right edge, above the page corner, holding its page's cards that are not on the
 // desk (d.pile, bottom to top: the one source of truth for what is in it and in what order).
@@ -69,14 +69,13 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 // ---------- the page throws off what lies on it ----------
 // A page that turns throws off what rests on it: its card box (its lid and the cards in it riding along) and its cards.
 // Nothing is printed on the page: each is a rigid body (physics.ts) on the turning paper (curl.ts, the same curl the page
-// is drawn with). The flap's sagging edge slides under each, lifts and tips it, and flicks it up and along the turn (toss), so it arcs and tumbles off
+// is drawn with). The roll lifts each as it reaches it and the page's turn tosses it (toss), so it arcs and tumbles off
 // the frame. A corner turned by hand moves the paper under them the same way: let go before halfway and they drop back
 // onto the page, settle, and ease home. Once off the frame the box slides in again when its page next shows, the cards in
 // it.
 // fadeZ: CSS px up by which a shadow has faded; out: s one left at rest on screen after a turn takes to slide off; limit:
-// s at most in the air; persp: s the box takes to ease into its 3D view; home: s one that fell back takes to ease home;
-// toss: the flick, of the flap's speed then, along the turn and up
-const THROW = { fadeZ: 180, out: 0.6, limit: 6, persp: 0.25, home: 0.5, toss: [0.2, 1] };
+// s at most in the air; persp: s the box takes to ease into its 3D view; home: s one that fell back takes to ease home
+const THROW = { fadeZ: 180, out: 0.6, limit: 6, persp: 0.25, home: 0.5 };
 const LID_WAIT = 0.3; // the flap waits this long before it shuts (s)
 const easeOutCubic = (u: number) => 1 - (1 - u) ** 3;
 const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7), F0 = new Float64Array(2), F1 = new Float64Array(2);
@@ -97,19 +96,24 @@ function throwWorld() {
   world.remove(b); desk.phys.L = null; world.time = 0;
   return desk.phys;
 }
-// The flap flicks what it lifts: the step the paper first moves a body, it is tossed up and along the turn, as fast as
-// the flap (twice the fold) moves then. Box, cards and chips alike, once each turn.
+// The page's turn tosses what it lifts: a page turns over about its far edge (the spine, span from the corner), so the
+// step the paper first moves a body, the body takes the page's spin and the speed of the paper where it lies (omega x r:
+// straight up, as the paper there is only starting to lift, and more the further it is from the spine), and the roll
+// pushes it on along the turn at half the fold's speed, so it comes down clear of the page. Box, cards and chips alike,
+// once each turn.
 function toss() {
   const { world, L } = desk.phys!;
   if (!L || L.end) return;
   const t = world.time;
   turnAt(L, t, F0); turnAt(L, t + 0.01, F1);
-  const a = F0[1], c = Math.cos(a), s = Math.sin(a), v = (2 * Math.abs(F1[0] - F0[0])) / 0.01;
+  const a = F0[1], c = Math.cos(a), s = Math.sin(a), v = (F1[0] - F0[0]) / 0.01, om = (Math.PI * v) / span(a);
+  if (v <= 0) return; // the page is falling back: it tosses nothing
   for (const b of world.bodies) {
     if (b.sleep || L.tossed.has(b) || b.v[0] ** 2 + b.v[1] ** 2 + b.v[2] ** 2 < 2500) continue; // at rest
     const X = -(b.x[0] - (L.region + 1) * desk.view.w) * c - (b.x[1] - desk.view.h) * s; // from the corner along the turn
     if (X - b.bound > F0[0]) continue; // the paper has not reached it: something else moves it
-    b.v[0] -= THROW.toss[0] * v * c; b.v[1] -= THROW.toss[0] * v * s; b.v[2] += THROW.toss[1] * v;
+    b.v[0] -= v * c / 2; b.v[1] -= v * s / 2; b.v[2] += om * Math.max(0, span(a) - X);
+    b.w[0] += om * s; b.w[1] -= om * c;
     L.tossed.add(b);
   }
 }
