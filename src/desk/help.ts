@@ -33,7 +33,6 @@ export const HELP: Record<string, string> = {
   paperG: 'Gravity on the peeling sticky note.',
   paperDrag: 'Air drag on the sticky note, which damps its swinging.',
   paperLift: 'How hard your finger lifts the sticky note\'s free edge.',
-  cards: 'A card size preset. Picking one overwrites the card size settings below.',
   cardScale: 'Card size on the desk (text never goes below 12 px).',
   cardMax: 'The longest a card side can be at 1440x900; scales with the desk.',
   backTitle: 'Repeats the card title on its back.',

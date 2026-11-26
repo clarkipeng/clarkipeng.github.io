@@ -1,7 +1,7 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
 import { HELP } from './help.ts';
-import { CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
+import { RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
 
 
 export function mountTweak() {
@@ -29,7 +29,6 @@ function tweakPanel() {
   const colors = colorsGroup(desk, resetBtn); // appended last, under the other groups
   const set = (k: string, v: number | string) => {
     T[k] = v;
-    if (k === 'cards') { Object.assign(T, CARD_PRESETS[v]); sync(); if (desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } }
     // card sizes rebuild the desk too (and a corner label size, the card atlas)
     if ((RESEED.includes(k) || ['cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
     if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();

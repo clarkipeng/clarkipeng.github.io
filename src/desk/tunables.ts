@@ -63,7 +63,6 @@ export const GROUPS = {
     ['paperG', 8000, 2000, 20000, 100, 'note: gravity px/s^2'],
     ['paperDrag', 0.03, 0, 0.1, 0.001, 'note: air drag on the paper'],
     ['paperLift', 12000, 2000, 40000, 500, 'note: finger lift on the free edge'],
-    ['cards', 'compact', 0, 0, 0, 'card size preset'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
     ['cardMax', 280, 180, 400, 1, 'card max side px (desk, at 1440x900; scales with the desk)'],
     ['backTitle', 0, 0, 1, 1, 'title on the back (it is on the front)'],
@@ -193,13 +192,7 @@ export const EASES = {
   sine: (u: number) => -(Math.cos(Math.PI * u) - 1) / 2,
   linear: (u: number) => u,
 };
-// Card size presets: compact (Clark's pick, 2026-11-23, the default) shows cards at 0.75 with the title on the front
-// only, tighter backs, and thumbnails framed on their subject; as-is is the full-size card from before.
-export const CARD_PRESETS: Record<string, Record<string, number>> = {
-  'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
-  compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
-};
-export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), turnEase: Object.keys(EASES) };
+export const CHOICES: Record<string, readonly string[]> = { turnEase: Object.keys(EASES) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
@@ -249,7 +242,6 @@ for (const k of Object.keys(DEFAULTS)) {
   T[k] = typeof DEFAULTS[k] === 'string' ? qs.get(k)! : parseFloat(qs.get(k)!);
 }
 for (const [k, list] of Object.entries(CHOICES)) if (!list.includes(T[k] as string)) T[k] = DEFAULTS[k];
-for (const [k, v] of Object.entries(CARD_PRESETS[T.cards])) if (!qs.has(k)) T[k] = v;
 const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => {
   const v = qs.get(`${pg}.${k}`);
   return [k, v == null ? d : typeof d === 'string' ? v : parseFloat(v)];
