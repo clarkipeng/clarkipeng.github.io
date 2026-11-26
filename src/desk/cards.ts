@@ -72,7 +72,7 @@ for (const s of sources) {
         // near the right edge or the box's spot it calls a tucked box out
         const r = desk.obb(s), ex = desk.reach(r, [1, 0]), ey = desk.reach(r, [0, 1]), q = desk.obb(deck, deck.spot), qx = desk.reach(q, [1, 0]), qy = desk.reach(q, [0, 1]);
         const gap = Math.min((s.region + 1) * desk.view.w - s.x - ex, Math.hypot(Math.max(0, Math.abs(s.x - deck.spot) - ex - qx), Math.max(0, Math.abs(s.y - deck.y) - ey - qy)));
-        deck.near = desk.decked(s) && gap < (deck.near ? desk.BOX.far : desk.BOX.near) * desk.view.k;
+        deck.near = desk.decked(s) && gap < (T.boxNear + (deck.near ? 60 : 0)) * desk.view.k; // it stays open 60 px farther out, so it never flickers
         deck.welcome = s.over;
       }
     };

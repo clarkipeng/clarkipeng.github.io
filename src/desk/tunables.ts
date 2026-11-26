@@ -144,6 +144,7 @@ export const GROUPS = {
     ['edgeSoft', 1, 0, 1, 1, 'thrown cards bounce softly off the edges'],
     ['keyMove', 1, 0, 1, 1, 'arrow keys move the focused card'],
     ['imprint', 1, 0, 1, 1, 'lifting a card leaves a brief imprint (trial)'],
+    ['boxNear', 60, 0, 240, 5, 'a dragged card opens its box within px'],
     ['lidS', 0.25, 0.05, 1, 0.05, 'card box flap folds open or shut s'],
     ['lidWait', 0.3, 0, 1.5, 0.05, 'flap waits before shutting s'],
   ],
