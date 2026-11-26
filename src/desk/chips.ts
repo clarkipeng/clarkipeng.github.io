@@ -238,6 +238,11 @@ export class Body {
   }
 }
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+// How far (x, y) is outside a card (desk px; < 0 inside).
+function cardSd(p: Pusher, x: number, y: number) {
+  const dx = x - p.x, dy = y - p.y, qx = Math.abs(dx * p.c + dy * p.s) - p.hw, qy = Math.abs(-dx * p.s + dy * p.c) - p.hh;
+  return Math.sqrt(Math.max(qx, 0) ** 2 + Math.max(qy, 0) ** 2) + Math.min(Math.max(qx, qy), 0);
+}
 // D (per column: 0 where a distance starts, else large) becomes each column's distance, in columns, to the nearest start:
 // two chamfer passes, forward from the neighbours before, back from those after.
 function chamfer(D: Float32Array) {
@@ -362,25 +367,28 @@ export function createChips(P: ChipTunables, world: () => World) {
   function remove(b: Body) { world().remove(b.p); bodies.splice(bodies.indexOf(b), 1); }
 
   // Cards (pushers: { x, y, hw, hh, c, s, vx, vy } in desk px) shove the chips down on the desk out from under them, at least
-  // as fast as the card moves. A chip's pushes add, so one wedged between two cards settles where they balance.
+  // as fast as the card moves, toward the nearest spot clear of every card and of the other chips there: a chip wedged
+  // between two cards goes out along the gap, and chips pushed together come to rest side by side, not in a pile. It
+  // starts only a little further in than where it ends, so a chip whose shape shifts as it is eaten does not creep.
   function push(pushers: Pusher[]) {
-    for (const b of bodies) {
-      const r = b.foot;
-      if (b.frozen || b.x[2] - b.S.hb > r * 0.5) continue;
-      let tx = 0, ty = 0;
-      for (const p of pushers) {
-        const dx = b.x[0] - p.x, dy = b.x[1] - p.y, lx = dx * p.c + dy * p.s, ly = -dx * p.s + dy * p.c;
-        const cx = Math.max(-p.hw, Math.min(p.hw, lx)), cy = Math.max(-p.hh, Math.min(p.hh, ly)), ex = p.hw - Math.abs(lx), ey = p.hh - Math.abs(ly);
-        const d = Math.hypot(lx - cx, ly - cy), under = !d; // under: out through the nearest edge
-        if (!under && d >= r * 0.92) continue;
-        const [nx, ny, pen] = !under ? [(lx - cx) / d, (ly - cy) / d, r * 0.92 - d] : ex < ey ? [Math.sign(lx) || 1, 0, ex + r] : [0, Math.sign(ly) || 1, ey + r];
-        const wx = nx * p.c - ny * p.s, wy = nx * p.s + ny * p.c, want = Math.max(p.vx * wx + p.vy * wy, Math.min(pen * 10, 260));
-        if (b.sleep && p.vx * wx + p.vy * wy < 2) continue; // asleep (wedged against the rest), only a card moving into it moves it
-        tx += wx * want; ty += wy * want;
+    const low = bodies.filter((b) => !b.frozen && b.x[2] - b.S.hb <= b.foot * 0.5), reach = (b: Body) => b.foot * 0.92;
+    const clear = (b: Body, x: number, y: number) => pushers.every((p) => cardSd(p, x, y) >= reach(b))
+      && low.every((o) => o === b || (x - o.x[0]) ** 2 + (y - o.x[1]) ** 2 >= (0.85 * (reach(b) + reach(o))) ** 2);
+    for (const b of low) {
+      const r = reach(b), x = b.x[0], y = b.x[1], on = pushers.filter((p) => cardSd(p, x, y) < r * 0.85); // hysteresis: an eaten chip's foot grows
+      if (!on.length) continue;
+      let tx = 0, ty = 0, best = Infinity;
+      const tryAt = (X: number, Y: number) => { const d = (X - x) ** 2 + (Y - y) ** 2; if (d < best && clear(b, X, Y)) { best = d; tx = X; ty = Y; } };
+      for (const p of pushers) { // just past each side of each card, level with the chip
+        const dx = x - p.x, dy = y - p.y, lx = dx * p.c + dy * p.s, ly = -dx * p.s + dy * p.c;
+        for (const [X, Y] of [[p.hw + r, ly], [-p.hw - r, ly], [lx, p.hh + r], [lx, -p.hh - r]]) tryAt(p.x + X * p.c - Y * p.s, p.y + X * p.s + Y * p.c);
       }
-      const t = Math.hypot(tx, ty), dv = t - (b.v[0] * tx + b.v[1] * ty) / (t || 1);
-      if (t < 2 || dv <= 0) continue;
-      b.v[0] += (tx / t) * dv; b.v[1] += (ty / t) * dv; b.p.sleep = false;
+      for (let k = 1; k <= 16 && (k * r) / 2 < Math.sqrt(best); k++) for (let a = 0; a < 24; a++) tryAt(x + ((k * r) / 2) * Math.cos(a * Math.PI / 12), y + ((k * r) / 2) * Math.sin(a * Math.PI / 12));
+      if (best === Infinity) continue;
+      const d = Math.sqrt(best), nx = (tx - x) / d, ny = (ty - y) / d;
+      const want = Math.max(Math.min(d * 10, 260), ...on.map((p) => p.vx * nx + p.vy * ny)), dv = want - (b.v[0] * nx + b.v[1] * ny);
+      if (dv <= 0) continue;
+      b.v[0] += nx * dv; b.v[1] += ny * dv; b.p.sleep = false;
     }
   }
 
