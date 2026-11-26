@@ -268,6 +268,11 @@ export const STYLE_DEFAULTS: Record<string, Style> = {
   // research: the same K8 paper, with each paper always emitting a soft wash of its own ink; spectrum and j are one mode switch away
   research: { mode: 'paper', bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, glow: 0, halo: 0, tint: 0.8, hueMix: 0.8, ...J_DEFAULTS },
 };
+// What the tweak panel resets to: the defaults with the default look and print laid over them (the research page keeps its tint).
+const LOOK = LOOKS[DEFAULTS.look];
+export const BASE = { ...DEFAULTS, ...LOOK.T, ...PRINTS[DEFAULTS.print] };
+export const STYLE_BASE = Object.fromEntries(PAGE_NAMES.map((pg) => [pg,
+  { ...STYLE_DEFAULTS[pg], ...Object.fromEntries(Object.entries(LOOK.main).filter(([k]) => pg === 'main' || k !== 'tint')) }])) as Record<string, Style>;
 export const hexRGB = (h: string) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
 
 export const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));

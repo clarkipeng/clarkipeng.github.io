@@ -7,11 +7,12 @@ const CARD_COLORS = [['hueHex', 'hue', 'own color'], ['inkHex', 'ink', 'ink when
 const TOKENS = Object.keys(TOK).filter((k) => String(TOK[k as keyof typeof TOK]).startsWith('#') && k !== 'paper'); // the paper is each page's bg
 const cssVar = (k: string) => '--' + k.replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase()); // text2 -> --text-2
 
-export function colorsGroup(desk: Desk) {
+export function colorsGroup(desk: Desk, resetBtn: (row: HTMLElement, isDefault: () => boolean, reset: () => void) => void) {
   const group = document.createElement('details');
   group.append(Object.assign(document.createElement('summary'), { textContent: 'Colors' }));
   // Card faces and backs are painted once into the atlas: repaint it (not the sim) a moment after a pick.
   let timer = 0;
+  const undo: (() => void)[] = []; // every pick's reset, for the panel's overall reset
   const repaint = () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
@@ -25,6 +26,9 @@ export function colorsGroup(desk: Desk) {
     const r = document.createElement('label'), input = Object.assign(document.createElement('input'), { type: 'color', value: '#' + hex });
     input.oninput = () => set(input.value.slice(1));
     r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
+    const reset = () => { if (input.value !== '#' + hex) { input.value = '#' + hex; set(hex); } };
+    resetBtn(r, () => input.value === '#' + hex, reset);
+    undo.push(reset);
     group.append(r);
   };
   const heading = (text: string) => group.append(Object.assign(document.createElement('h4'), { textContent: text }));
@@ -49,5 +53,5 @@ export function colorsGroup(desk: Desk) {
       setTimeout(() => (save.textContent = 'save colors'), 2000);
     };
   }
-  return { group, save };
+  return { group, save, reset: () => undo.forEach((f) => f()) };
 }

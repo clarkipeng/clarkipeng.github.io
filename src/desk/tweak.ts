@@ -1,6 +1,6 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
-import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, J_KEYS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
+import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, J_KEYS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
 
 
 export function mountTweak() {
@@ -15,6 +15,16 @@ function tweakPanel() {
   type TweakInput = (HTMLInputElement | HTMLSelectElement) & { out?: HTMLOutputElement };
   const inputs: Record<string, TweakInput> = {};
   let reseedTimer = 0;
+  // Every row ends in a small reset to its own default, shown only while the value differs from it.
+  const resets: (() => void)[] = [];
+  const refresh = () => resets.forEach((f) => f());
+  const resetBtn = (row: HTMLElement, isDefault: () => boolean, reset: () => void) => {
+    const b = Object.assign(document.createElement('button'), { className: 'tweak-reset', type: 'button', textContent: '↺', title: 'reset to default' });
+    b.onclick = (e) => { e.preventDefault(); reset(); refresh(); };
+    resets.push(() => (b.style.visibility = isDefault() ? 'hidden' : ''));
+    row.append(b);
+  };
+  panel.addEventListener('input', refresh);
   const set = (k: string, v: number | string) => {
     T[k] = v;
     if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
@@ -54,6 +64,7 @@ function tweakPanel() {
       const r = document.createElement('label');
       r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
       if (out) r.append(out);
+      resetBtn(r, () => String(T[k]) === String(BASE[k]), () => { set(k, BASE[k]); sync(); });
       group.append(r);
     }
     panel.append(group);
@@ -82,6 +93,8 @@ function tweakPanel() {
     styleInputs[k] = Object.assign(input, { out, row: r });
     r.append(Object.assign(document.createElement('span'), { textContent: label }), input);
     if (out) r.append(out);
+    const def = () => STYLE_BASE[PAGE_NAMES[desk.page]][k];
+    resetBtn(r, () => String(curStyle()[k]) === String(def()), () => { curStyle()[k] = def(); sync(); });
     styleGroup.append(r);
   }
   panel.insertBefore(styleGroup, panel.children[1]);
@@ -104,6 +117,7 @@ function tweakPanel() {
       el.value = k === 'ink' || k === 'bg' ? '#' + v : String(v);
       if (el.out) el.out.value = String(v);
     }
+    refresh();
   };
   desk.tweakSync = sync;
   const bar = Object.assign(document.createElement('div'), { className: 'tweak-bar' });
@@ -119,15 +133,15 @@ function tweakPanel() {
   const reset = Object.assign(document.createElement('button'), { textContent: 'reset' });
   reset.onclick = () => {
     const before = RESEED.map((k) => T[k]).join();
-    Object.assign(T, DEFAULTS);
-    for (const pg of PAGE_NAMES) Object.assign(STYLE[pg], STYLE_DEFAULTS[pg]);
-    applyLook(T.look); Object.assign(T, PRINTS[T.print]);
+    Object.assign(T, BASE);
+    for (const pg of PAGE_NAMES) Object.assign(STYLE[pg], STYLE_BASE[pg]);
+    colors.reset();
     sync();
     if (desk.gpu && before !== RESEED.map((k) => T[k]).join()) reseed();
   };
   const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
   replay.onclick = () => drawFrom(desk.page, { delay: INTRO_DELAY }); // starts over from bare paper
-  const colors = colorsGroup(desk);
+  const colors = colorsGroup(desk, resetBtn);
   bar.append(copy, reset, replay, ...(colors.save ? [colors.save] : []));
   panel.append(colors.group, bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
