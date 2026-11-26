@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -34,9 +34,45 @@ export const versionHtml = (html) => html.replace(/(src|href)="(\\/(?:desk-media
   }
 }
 
+// Dev only: the tweak panel's "save colors" (src/desk/colors.ts) posts every color here, and they are written back into
+// the source they came from: the card colors into desk.html, the card text and stock into TOK (and the stylesheet's
+// matching custom properties), each page's background and ink into STYLE_DEFAULTS.
+type Colors = { tok: Record<string, string>; cards: Record<string, Record<string, string>>; pages: Record<string, Record<string, string>> }
+function saveColors({ tok, cards, pages }: Colors) {
+  const hex = (v: string) => { if (!/^#?[0-9a-f]{6}$/i.test(v)) throw new Error(`not a color: ${v}`); return v.replace('#', '').toLowerCase() }
+  const key = (k: string) => { if (!/^\w+$/.test(k)) throw new Error(`bad key: ${k}`); return k }
+  const edit = (file: string, fn: (s: string) => string) => { const s = readFileSync(file, 'utf8'), t = fn(s); if (t !== s) writeFileSync(file, t) }
+  edit('src/desk/desk.html', (s) => Object.entries(cards).reduce((s, [card, attrs]) => s.replace(new RegExp(`<li [^>]*data-key="${key(card)}"[^>]*>`), (tag) =>
+    Object.entries(attrs).reduce((t, [a, v]) => t.replace(new RegExp(`data-${key(a)}="[0-9a-f]{6}"`), `data-${a}="${hex(v)}"`), tag)), s))
+  edit('src/desk/tunables.ts', (s) => {
+    for (const [k, v] of Object.entries(tok)) s = s.replace(new RegExp(`\\b${key(k)}: '#[0-9a-f]{6}'`), `${k}: '#${hex(v)}'`)
+    for (const [pg, st] of Object.entries(pages)) s = s.replace(new RegExp(`^(  ${key(pg)}: \\{ mode: .*)$`, 'm'), (line) =>
+      Object.entries(st).reduce((l, [k, v]) => l.replace(new RegExp(`\\b${key(k)}: '[0-9a-f]{6}'`), `${k}: '${hex(v)}'`), line))
+    return s
+  })
+  edit('src/desk/desk.css', (s) => Object.entries(tok).reduce((s, [k, v]) =>
+    s.replace(new RegExp(`--${key(k).replace(/[A-Z0-9]/g, (m) => '-' + m.toLowerCase())}: #[0-9a-f]{6}`), (m) => m.slice(0, -6) + hex(v)), s))
+}
+function deskColors(): Plugin {
+  return {
+    name: 'desk-colors',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__desk-colors', (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
+        let body = ''
+        req.on('data', (c) => (body += c))
+        req.on('end', () => {
+          try { saveColors(JSON.parse(body)); res.end('ok') } catch (e) { res.statusCode = 400; res.end(String(e)) }
+        })
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), deskMedia()],
+  plugins: [react(), tailwindcss(), deskMedia(), deskColors()],
   // Base path for GitHub Pages (username.github.io deploys at root)
   base: '/',
   build: {

@@ -1,4 +1,5 @@
 import { currentDesk } from './state.ts';
+import { colorsGroup } from './colors.ts';
 import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, J_KEYS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
 
 
@@ -8,7 +9,7 @@ const { T, reseed, applyLook, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, 
   addEventListener, body } = desk;
 // ---------- tweak panel (press t) ----------
 
-// A quiet corner panel with a slider per tunable, the edge mode, the ink color, a copy-link and a reset button.
+// A quiet corner panel with a slider per tunable, the edge mode, the ink color, every card's colors, a copy-link and a reset button.
 function tweakPanel() {
   const panel = Object.assign(document.createElement('div'), { className: 'tweak' });
   type TweakInput = (HTMLInputElement | HTMLSelectElement) & { out?: HTMLOutputElement };
@@ -126,8 +127,9 @@ function tweakPanel() {
   };
   const replay = Object.assign(document.createElement('button'), { textContent: 'replay intro' });
   replay.onclick = () => drawFrom(desk.page, { delay: INTRO_DELAY }); // starts over from bare paper
-  bar.append(copy, reset, replay);
-  panel.append(bar);
+  const colors = colorsGroup(desk);
+  bar.append(copy, reset, replay, ...(colors.save ? [colors.save] : []));
+  panel.append(colors.group, bar);
   // Live readout of the frame interval from requestAnimationFrame, twice a second.
   const perf = panel.querySelector<HTMLElement>('.tweak-perf')!;
   setInterval(() => {

@@ -187,16 +187,15 @@ const BACK_STYLES: Record<string, BackStyle> = {
   index: { underline: 'line', note: 'ruled', ruled: true },
   pen: { underline: 'pen', note: 'pen' },
 };
-const INK = TOK.ink, INK_DEEP = TOK.inkDeep, NOTE_INK = TOK.text2;
-const STOCK: Record<string, string> = { photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note }; // a photo card's back is its film's stock
+const STOCK = (kind: string) => ({ photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // a photo card's back is its film's stock (read when drawn: the colors are tunable)
 const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * desk.TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
   get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
   get label() { return { font: font(400), lh: 16 * desk.TS, color: TOK.muted }; },
   get body() { return { font: font(400), lh: lhBody(), color: TOK.body }; },
-  get link() { return { font: font(500), color: INK_DEEP }; },
-  get noteLink() { return { font: font(500), color: NOTE_INK }; },
-  noteHand: { font: HAND, color: NOTE_INK },
+  get link() { return { font: font(500), color: TOK.inkDeep }; },
+  get noteLink() { return { font: font(500), color: TOK.text2 }; },
+  noteHand: { font: HAND, color: TOK.text2 },
 };
 // Back spacing in design px; T.backTight (an option) takes 4 px off the padding and the space between link rows.
 const BK = {
@@ -378,7 +377,7 @@ function drawBack(s0: Card, S0: number) {
   const S = S0 * (s0.k || 1), s = design(s0), L = backLayout(s), { st, lines, links, w, h } = L, { pad } = BK; // design px
   const cw = Math.ceil(s0.w * S0), chh = Math.ceil(s0.h * S0);
   const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true })!;
-  x.fillStyle = STOCK[s.kind]; x.fillRect(0, 0, cw, chh);
+  x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, cw, chh);
   if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
@@ -405,20 +404,20 @@ function drawBack(s0: Card, S0: number) {
     const t = k.a.textContent!;
     if (s.kind === 'note') {
       const hand = st.note !== 'icons';
-      x.font = hand ? TYPE.noteHand.font : TYPE.noteLink.font; x.fillStyle = NOTE_INK;
+      x.font = hand ? TYPE.noteHand.font : TYPE.noteLink.font; x.fillStyle = TOK.text2;
       x.fillText(t, k.tx, k.base);
       if (!hand && ICONS[t]) {
         const [vb, d] = ICONS[t], sz = 12;
-        x.save(); x.translate(pad, k.base - 11); x.scale(sz / vb, sz / vb); x.fillStyle = NOTE_INK; x.fill(new Path2D(d)); x.restore();
+        x.save(); x.translate(pad, k.base - 11); x.scale(sz / vb, sz / vb); x.fillStyle = TOK.text2; x.fill(new Path2D(d)); x.restore();
       }
       if (st.note === 'pen') { x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, i + 1, 1.3); }
-      else if (st.note === 'icons') { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
+      else if (st.note === 'icons') { x.fillStyle = TOK.ink; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
       return;
     }
     x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(t, k.tx, k.base);
     if (st.underline === 'pen') { x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15); }
-    else if (L.ruleTop == null) { x.fillStyle = INK; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
-    else { x.fillStyle = INK_DEEP; x.fillRect(k.tx, k.base + 5, k.tw, 1); } // the link's stretch of its rule
+    else if (L.ruleTop == null) { x.fillStyle = TOK.ink; x.fillRect(k.tx, k.base + 3, k.tw, 1); }
+    else { x.fillStyle = TOK.inkDeep; x.fillRect(k.tx, k.base + 5, k.tw, 1); } // the link's stretch of its rule
   });
   return { canvas: c, links, w, h };
 }
@@ -454,7 +453,7 @@ function renderEntries(g: Gpu, sm: Sim, extra: GPUBindGroupEntry[] = []) {
 function paintPlainBack(s: Card, S: number) {
   const cs = desk.view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d')!;
-  x.scale(S, S); x.fillStyle = STOCK[s.kind] || TOK.stock; x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
+  x.scale(S, S); x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
   if (hinged(s)) { x.translate(w, h); x.rotate(Math.PI); } // the note is seen turned over its top edge, not its side
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
