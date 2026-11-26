@@ -32,11 +32,7 @@
     "poster": "ray-poster.jpg",
     "cover": "ray-cover.jpg",
     "clips": [
-      {
-        "src": "ray-01.mp4",
-        "start": 2.0
-      },
-      "ray-02.mp4"
+      "ray-01.mp4"
     ]
   },
   "rl": {
