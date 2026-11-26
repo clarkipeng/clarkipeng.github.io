@@ -362,6 +362,9 @@ async function main() {
     encodeRender(enc, desk.gpu.ctx.getCurrentTexture().createView());
     desk.gpu.device.queue.submit([enc.finish()]);
     body.classList.add('settled');
+    // Phones scroll one long page under a fixed canvas: redraw the still as it scrolls, at most once a frame.
+    let queued = false;
+    if (desk.view.phone) addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; if (!desk.dead) drawStill(); }); } }, { passive: true });
     return;
   }
   for (const s of sources) s.playlist = playlistFor(s); // players are made when idle (preloadClips) or on first hover
