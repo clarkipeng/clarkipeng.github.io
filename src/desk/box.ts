@@ -3,7 +3,7 @@ import { MOTION, EASES, STEP, lerp, clamp, smooth, MAX } from './tunables.ts';
 import type { Seg, Launch, V3, Card, Slide, Ease, ThrowPose } from './layout.ts';
 import { type Curl, createCurl } from './curl.ts';
 import { type World, createWorld, boxShape } from './physics.ts';
-import { tallySurface, type Mark, paintTally } from './tally.ts';
+import { TALLY, tallySurface, type Mark, paintTally } from './tally.ts';
 
 type TurnPath = { seg: Seg | null; keys: number[]; kj?: number }; // the paper under a thrown box (turnAt)
 export interface Phys { world: World; curl: Curl; hz: number; L: (TurnPath & Partial<Launch>) | null; rem?: number } // rem: sim time not yet stepped (stepChips)
@@ -351,9 +351,9 @@ function stepTally(d: Card, dt: number) {
     tl.free = start + Math.max(0.4 * dur, dur - late);
     return { start, dur: tl.free - start };
   };
-  while (live.length < n) { const m = { slot: live.length, gen: tl.gen++, gone: null, ...hand(T.tallyDrawS) }; tl.marks.push(m); live.push(m); }
-  while (live.length > n) live.pop()!.gone = hand(T.tallyEraseS);
-  const end = (m: Mark) => (m.gone ? m.gone.start + m.gone.dur + T.tallyFadeS : m.start + m.dur);
+  while (live.length < n) { const m = { slot: live.length, gen: tl.gen++, gone: null, ...hand(TALLY.drawS) }; tl.marks.push(m); live.push(m); }
+  while (live.length > n) live.pop()!.gone = hand(TALLY.eraseS);
+  const end = (m: Mark) => (m.gone ? m.gone.start + m.gone.dur + TALLY.fadeS : m.start + m.dur);
   const kept = tl.marks.filter((m) => !m.gone || end(m) > tl.t);
   if (kept.length !== tl.marks.length) { tl.marks = kept; tl.dirty = true; }
   tl.shown = true;

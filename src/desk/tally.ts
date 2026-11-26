@@ -7,27 +7,31 @@
 // paper's tooth, so a light stroke is broken grain and a pressed one fills in, with a faint metallic sheen where it is
 // densest. An eraser takes the grain off unevenly and leaves a soft grey smear along the stroke that fades.
 
-// [key, default, min, max, step, label]: sizes in the box's design px, times in s.
+// The look of a tally, in the box's design px and seconds.
+export const TALLY = {
+  len: 19, // stroke length
+  gap: 6.6, // stroke spacing
+  groupGap: 19, // gap between fives
+  rowGap: 7, // gap between rows
+  slant: 7, // lean, deg
+  bow: 0.9,
+  flick: 0.35, // the lift-off flick
+  jitter: 1, // how much the hand varies
+  pressure: 0.95,
+  taper: 0.6, // thinning as it lifts off
+  grain: 0.5, // paper grain
+  sheen: 0.3,
+  drawS: 0.2, // a stroke is drawn in
+  eraseS: 0.3, // a stroke is rubbed out in
+  smudge: 0.3, // the eraser's smear
+  smudgeW: 3, // smear width, times the line's
+  fadeS: 1.8, // the smear fades over
+};
+
+// [key, default, min, max, step, label]: the ?tune rows.
 export const TALLY_PARAMS = [
-  ['tallyLen', 19, 8, 30, 0.5, 'stroke length px'],
-  ['tallyGap', 6.6, 2, 10, 0.1, 'stroke spacing px'],
-  ['tallyGroupGap', 19, 2, 24, 0.5, 'gap between fives px'],
-  ['tallyRowGap', 7, 2, 20, 0.5, 'gap between rows px'],
-  ['tallySlant', 7, -20, 20, 0.5, 'lean deg'],
-  ['tallyBow', 0.9, 0, 3, 0.05, 'bow px'],
-  ['tallyFlick', 0.35, 0, 3, 0.05, 'lift-off flick px'],
-  ['tallyJitter', 1, 0, 3, 0.05, 'hand variation'],
   ['tallyWidth', 1.3, 0.5, 4, 0.05, 'line width px'],
-  ['tallyPressure', 0.95, 0.2, 1.5, 0.01, 'pressure'],
-  ['tallyTaper', 0.6, 0, 1, 0.01, 'taper as it lifts off'],
   ['tallyDark', 0.8, 0.2, 1, 0.01, 'graphite darkness'],
-  ['tallyGrain', 0.5, 0, 1, 0.01, 'paper grain'],
-  ['tallySheen', 0.3, 0, 1, 0.01, 'sheen'],
-  ['tallyDrawS', 0.2, 0.05, 0.6, 0.01, 'stroke drawn in s'],
-  ['tallyEraseS', 0.3, 0.05, 1, 0.01, 'stroke rubbed out s'],
-  ['tallySmudge', 0.3, 0, 1, 0.01, 'eraser smudge'],
-  ['tallySmudgeW', 3, 1, 6, 0.1, 'smudge width (x line)'],
-  ['tallyFadeS', 1.8, 0.2, 6, 0.1, 'smudge fades over s'],
 ] as const;
 export type TallyTunables = Record<(typeof TALLY_PARAMS)[number][0], number>;
 
@@ -89,31 +93,31 @@ export function tallySurface(canvas: OffscreenCanvas, S: number, area: Area): Ta
 }
 
 // The rows: how many fives fit in one (at least one), and how far apart groups and rows are.
-const rowsOf = (area: Area, P: TallyTunables): Rows => {
-  const pitch = 3 * P.tallyGap + P.tallyGroupGap, width = 5.6 * P.tallyGap; // a five with its slash's overshoot
-  return { per: Math.max(1, Math.floor((area.w - width) / pitch) + 1), pitch, rowPitch: P.tallyLen + P.tallyRowGap };
+const rowsOf = (area: Area): Rows => {
+  const pitch = 3 * TALLY.gap + TALLY.groupGap, width = 5.6 * TALLY.gap; // a five with its slash's overshoot
+  return { per: Math.max(1, Math.floor((area.w - width) / pitch) + 1), pitch, rowPitch: TALLY.len + TALLY.rowGap };
 };
 // A mark's centerline (a: along the row; b: down the strokes, rows following on), as points with their
 // pressure and half width. slot: its place in the count (every fifth crosses the four before it).
 function markPath(slot: number, gen: number, P: TallyTunables, R: Rows) {
-  const r = handOf(slot * 977 + gen * 131 + 17), J = P.tallyJitter, j = slot % 5, g = (slot - j) / 5;
-  const gap = P.tallyGap, len = P.tallyLen, a0 = gap + (g % R.per) * R.pitch, b0 = Math.floor(g / R.per) * R.rowPitch + len / 2;
+  const r = handOf(slot * 977 + gen * 131 + 17), J = TALLY.jitter, j = slot % 5, g = (slot - j) / 5;
+  const gap = TALLY.gap, len = TALLY.len, a0 = gap + (g % R.per) * R.pitch, b0 = Math.floor(g / R.per) * R.rowPitch + len / 2;
   const v = () => (r() - 0.5) * J;
   let p0: number[], p2: number[], base: number, taper: number;
   if (j < 4) { // a pull down, leaning with the hand (its top further along)
     const l = len * (1 + 0.14 * v()), a = a0 + j * gap + 0.15 * gap * v(), top = b0 - l / 2 + 1.6 * v();
-    const lean = Math.tan(((P.tallySlant + 4 * v()) * Math.PI) / 180) * l;
+    const lean = Math.tan(((TALLY.slant + 4 * v()) * Math.PI) / 180) * l;
     p0 = [a + lean / 2, top]; p2 = [a - lean / 2, top + l];
-    base = 1 + 0.12 * v(); taper = P.tallyTaper * (1 + 0.3 * v());
+    base = 1 + 0.12 * v(); taper = TALLY.taper * (1 + 0.3 * v());
   } else { // the fifth: a long shallow stroke up across the four, past them on both sides
     const over = gap * (0.8 + 0.2 * v());
     p0 = [a0 - over, b0 + len * (0.3 + 0.04 * v())]; p2 = [a0 + 3 * gap + over * (0.9 + 0.2 * v()), b0 - len * (0.3 + 0.04 * v())]; // shallow, about 20 degrees
-    base = 0.95 + 0.08 * v(); taper = P.tallyTaper * 0.45; // pressed evenly all the way across, so it reads as one line
+    base = 0.95 + 0.08 * v(); taper = TALLY.taper * 0.45; // pressed evenly all the way across, so it reads as one line
   }
   const dx = p2[0] - p0[0], dy = p2[1] - p0[1], L = Math.hypot(dx, dy), nx = -dy / L, ny = dx / L;
-  const bow = P.tallyBow * (0.5 + r()) * (r() < 0.75 ? 1 : -1) * Math.min(1, J + 0.2);
+  const bow = TALLY.bow * (0.5 + r()) * (r() < 0.75 ? 1 : -1) * Math.min(1, J + 0.2);
   const c = [(p0[0] + p2[0]) / 2 + nx * bow * 2, (p0[1] + p2[1]) / 2 + ny * bow * 2]; // a quadratic's middle sits half way to its control point
-  const flick = P.tallyFlick * (0.3 + r()), wob = r() * 6.28, hw = P.tallyWidth / 2;
+  const flick = TALLY.flick * (0.3 + r()), wob = r() * 6.28, hw = P.tallyWidth / 2;
   const N = 18, pts: { a: number; b: number; p: number; w: number }[] = [];
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1), u = 1 - t, f = smooth((t - 0.82) / 0.18) ** 2 * flick; // the flick: the end turns along the label
@@ -127,16 +131,16 @@ function markPath(slot: number, gen: number, P: TallyTunables, R: Rows) {
 export function paintTally(surf: TallySurface, marks: Mark[], t: number, P: TallyTunables) {
   const { rect, S, area, base, tooth, rub, glint, D, M, out } = surf, W = rect.w, H = rect.h;
   D.fill(0); M.fill(0);
-  const R = rowsOf(area, P);
+  const R = rowsOf(area);
   const toPx = (a: number, b: number) => [(area.x + a) * S - rect.x, (area.y + b) * S - rect.y];
   for (const m of marks) {
     const draw = minJerk((t - m.start) / m.dur);
     if (draw <= 0) continue;
     const erase = m.gone ? clamp((t - m.gone.start) / m.gone.dur) : 0;
-    const fade = m.gone ? smooth((t - m.gone.start - m.gone.dur) / P.tallyFadeS) : 0;
-    const { pts, dir } = markPath(m.slot, m.gen, P, R), q = pts.map((p) => [...toPx(p.a, p.b), p.p * P.tallyPressure, p.w * S]);
+    const fade = m.gone ? smooth((t - m.gone.start - m.gone.dur) / TALLY.fadeS) : 0;
+    const { pts, dir } = markPath(m.slot, m.gen, P, R), q = pts.map((p) => [...toPx(p.a, p.b), p.p * TALLY.pressure, p.w * S]);
     const reach = draw * (q.length - 1); // how far along its points the pencil has come
-    const smudge = m.gone ? P.tallySmudge * smooth(erase / 0.6) * (1 - fade) : 0, sw = P.tallySmudgeW * P.tallyWidth * 0.5 * S;
+    const smudge = m.gone ? TALLY.smudge * smooth(erase / 0.6) * (1 - fade) : 0, sw = TALLY.smudgeW * P.tallyWidth * 0.5 * S;
     const pad = Math.max(...q.map((p) => p[3])) + (smudge > 0 ? sw * 2 : 1) + 1;
     const x0 = Math.max(0, Math.floor(Math.min(...q.map((p) => p[0])) - pad)), x1 = Math.min(W - 1, Math.ceil(Math.max(...q.map((p) => p[0])) + pad));
     const y0 = Math.max(0, Math.floor(Math.min(...q.map((p) => p[1])) - pad)), y1 = Math.min(H - 1, Math.ceil(Math.max(...q.map((p) => p[1])) + pad));
@@ -167,7 +171,7 @@ export function paintTally(surf: TallySurface, marks: Mark[], t: number, P: Tall
     }
   }
   // Graphite on tooth: light pressure catches only the high grain, heavy fills it in; the densest spots shine a little.
-  const G = [50, 50, 53], SH = [138, 140, 146], SM = [116, 112, 106], grain = P.tallyGrain, dark = P.tallyDark;
+  const G = [50, 50, 53], SH = [138, 140, 146], SM = [116, 112, 106], grain = TALLY.grain, dark = P.tallyDark;
   for (let k = 0, o = 0; k < D.length; k++, o += 4) {
     let r = base[o], g = base[o + 1], b = base[o + 2];
     const ms = M[k] * 0.55;
@@ -175,7 +179,7 @@ export function paintTally(surf: TallySurface, marks: Mark[], t: number, P: Tall
     const dn = D[k];
     if (dn > 0) {
       const tth = tooth[k], a = dark * ((1 - grain) * dn + grain * smooth((dn * 1.15 - tth + 0.16) / 0.32));
-      const sh = P.tallySheen * smooth((dn - 0.5) / 0.5) * glint[k];
+      const sh = TALLY.sheen * smooth((dn - 0.5) / 0.5) * glint[k];
       const cr = G[0] + (SH[0] - G[0]) * sh, cg = G[1] + (SH[1] - G[1]) * sh, cb = G[2] + (SH[2] - G[2]) * sh;
       r += (cr - r) * a; g += (cg - g) * a; b += (cb - b) * a;
     }
