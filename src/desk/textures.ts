@@ -2,6 +2,7 @@ import { currentDesk, type Desk } from './state.ts';
 import { TOK, CORNER } from './tunables.ts';
 import type { Card, Rect, CardBox } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
+import { STAMP, STAMP_SIZE, paintStamp } from './stamp.ts';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 
@@ -14,12 +15,12 @@ type Ctx = OffscreenCanvasRenderingContext2D;
 // A back's layout: its lines of copy, its links, and how tall it needs to be (need).
 type Link = ReturnType<Desk['linkAt']>;
 interface BackLine { t: string; f: { font: string; color: string }; y: number }
-interface BackLayout { lines: BackLine[]; links: Link[]; w: number; h: number; need: number }
+interface BackLayout { lines: BackLine[]; links: Link[]; w: number; h: number; need: number; stamp?: { x: number; y: number } | null }
 type Row = [HTMLAnchorElement, number, number][]; // a row of links: each with its x and text width
 
 export function mountTextures() {
 const desk = currentDesk();
-const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, wrapLines, hinged, sources, decked, NAMES,
+const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, hinged, sources, decked, NAMES,
   tallySetup } = desk;
 // ---------- card textures ----------
 
@@ -200,11 +201,28 @@ function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
     const links = s.backLinks!.map((a, i) => linkAt(a, pad + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), first + (i % per) * r, m.measureText(a.textContent!).width));
     return { lines: [], links, w, h: b.h, need: first + (per - 1) * r + bottom + STRIP }; // clear of the strip along its bottom
   }
+  // An inked card has its stamp in the top right when the copy still fits beside it.
+  const stamped = STAMP_SIZE[STAMP] && s.inkHex ? backText(s, b, STAMP_SIZE[STAMP]) : null;
+  return stamped && stamped.need <= b.h ? stamped : backText(s, b, null);
+}
+// A back's copy and links, wrapped beside a stamp of size [w, h] in the top right while the lines are level with it.
+function backText(s: Card, b: CardBox, stamp: [number, number] | null): BackLayout {
+  const w = b.w, m = measure(), { pad, row } = BK, st = stamp && { x: w - pad - stamp[0] + 2, y: pad - 4 }, below = st ? st.y + stamp![1] + 4 : 0;
   // No label line: it only repeated the front's caption (Clark: no redundancy).
-  // The paragraphs, 8px apart, the first 8px under the first baseline. The title is on the front only.
-  const lines: BackLine[] = [], f = TYPE.body;
+  // The paragraphs, 8px apart, the first 8px under the first baseline, narrower while level with the stamp. The title
+  // is on the front only.
+  const lines: BackLine[] = [], f = TYPE.body, narrow = st ? st.x - 8 - pad : 0;
   let y = BK.first - f.lh;
-  for (const t of s.backParas!) { y += 8; wrapLines(t, w - 2 * pad, f.font).forEach((l) => { y += f.lh; lines.push({ t: l, f, y }); }); }
+  m.font = f.font;
+  for (const t of s.backParas!) {
+    y += 8;
+    let line = '';
+    for (const word of t.split(' ')) {
+      const test = line ? line + ' ' + word : word;
+      if (line && m.measureText(test).width > (st && y + f.lh - 13 * desk.TS < below ? narrow : w - 2 * pad)) { y += f.lh; lines.push({ t: line, f, y }); line = word; } else line = test;
+    }
+    if (line) { y += f.lh; lines.push({ t: line, f, y }); }
+  }
   // Links: ink text in rows along the bottom, the last baseline 22px above the bottom edge (top, on a back with no text).
   m.font = TYPE.link.font;
   const rows: Row[] = [[]];
@@ -217,7 +235,7 @@ function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
   const need = Math.ceil((lines.length ? y : 0) + 32 + BK.bottom + (rows.length - 1) * row);
   const base0 = b.h - BK.bottom - (rows.length - 1) * row;
   const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * row, tw)));
-  return { lines, links, w, h: b.h, need };
+  return { lines, links, w, h: b.h, need: Math.max(need, Math.ceil(below + 20 + BK.bottom + (rows.length - 1) * row)), stamp: st }; // the links clear the stamp
 }
 
 // Deterministic noise, so the atlas looks the same on every build.
@@ -241,7 +259,7 @@ function penLine(x: Ctx, x0: number, x1: number, y: number, seed: number, width:
 }
 
 function drawBack(s0: Card, S0: number) {
-  const S = S0 * (s0.k || 1), s = design(s0), { lines, links, w, h } = backLayout(s), { pad } = BK; // design px
+  const S = S0 * (s0.k || 1), s = design(s0), { lines, links, w, h, stamp } = backLayout(s), { pad } = BK; // design px
   const cw = Math.ceil(s0.w * S0), chh = Math.ceil(s0.h * S0);
   const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true })!;
   x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, cw, chh);
@@ -249,6 +267,11 @@ function drawBack(s0: Card, S0: number) {
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
+  if (stamp) {
+    const title = s.titled ? s.lines!.slice(0, -1).join(' ') : s.lines?.[0] ?? ''; // as on the front
+    const pic = s.img ? (p: Ctx, pw: number, ph: number) => { const src = s.img!, iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height, [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); } : null;
+    paintStamp(x, STAMP, { ink: s.inkHex!, seed: s.id + 1, title, pic }, stamp.x, stamp.y, S);
+  }
   x.textBaseline = 'alphabetic';
   for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
   links.forEach((k, i) => {
