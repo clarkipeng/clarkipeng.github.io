@@ -4,7 +4,7 @@
 // within a step is a contact), so nothing tunnels; sweep and prune between bodies; bodies at rest sleep and cost nothing.
 // No allocation per step. Units: CSS px and seconds; x right, y down the desk, z up toward you (gravity pulls -z).
 //
-//   const world = createWorld({ hz: 480, iters: 6 });
+//   const world = createWorld({ hz: 240, iters: 4 });
 //   const b = world.add({
 //     points,          // contact points x, y, z in the body's frame, about its centre of mass (a few dozen to ~100 is plenty)
 //     bound,           // radius about the centre of mass that holds every point
@@ -114,7 +114,7 @@ export interface Shape {
   inertia: (m: number) => [number, number, number];
 }
 
-export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World {
+export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World {
   const h = 1 / hz, bodies: Body[] = [];
   let time = 0, alpha = 0, stepN = 0, order = new Int32Array(0), vel = new Float64Array(0);
   const cf = new Float64Array(MAXC * CF), ci = new Int32Array(MAXC * 4); // A, B (-1: the surface or a sleeping body), point, B's id
@@ -325,11 +325,12 @@ export function createWorld({ hz = 480, iters = 6, pushIters = 3 } = {}): World 
     const fresh = A.wstep[i] === stepN - 1 && A.wid[i] === ci[nc * 4 + 3];
     for (let r = 0; r < 3; r++) cf[o + 8 + r] = fresh ? A.warm[i * 3 + r] : 0;
     cf[o + 11] = 0;
-    // The speed it wants along the normal: a bounce if it hits in this step, or no faster than closes the gap in this step.
+    // The speed it wants along the normal: a bounce if it hits in this step faster than two steps of gravity add (so what
+    // rests never bounces, at any step rate), or no faster than closes the gap in this step.
     ia = A.id * V; ib = live ? B.id * V : -1;
     closing(o);
     const vn = RV[0], e = B ? Math.max(A.bounce, B.bounce) : A.bounce;
-    cf[o + 7] = Math.max(vn < -30 && vn * h < pd[k] + 0.5 ? -e * vn : 0, pd[k] < 0 ? pd[k] / h : 0);
+    cf[o + 7] = Math.max(vn < -2 * world.g * h && vn * h < pd[k] + 0.5 ? -e * vn : 0, pd[k] < 0 ? pd[k] / h : 0);
     if (asleep && vn < -20 - world.g * h) wake(B); // knocked: it moves from the next step
     A.touch = true; if (B) B.touch = true;
     nc++;
