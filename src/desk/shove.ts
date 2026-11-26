@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { MOTION, clamp } from './tunables.ts';
+import { MOTION, clamp, CORNER } from './tunables.ts';
 import type { Card } from './layout.ts';
 
 interface Obb { x: number; y: number; hw: number; hh: number; u: number[]; v: number[] } // a card's oriented box
@@ -43,7 +43,7 @@ function keepOut(x0: number) {
 }
 // The page corner's square, out to its hovered fold's tip, padded by p.
 function cornerBox(x0: number, p = 10 * desk.view.k): Edges {
-  const c = (2 * (T.cornerSize + T.cornerLift) - Math.PI * DOOR.R) * desk.view.k / Math.SQRT2 + p;
+  const c = (2 * (CORNER.size + CORNER.lift) - Math.PI * DOOR.R) * desk.view.k / Math.SQRT2 + p;
   return { l: x0 + desk.view.w - c, t: desk.view.h - c, r: x0 + desk.view.w, b: desk.view.h };
 }
 // A card that comes to rest over the page corner or its box slides off it (the corner would fold over it and take its

@@ -1,5 +1,5 @@
 import { currentDesk, type Desk } from './state.ts';
-import { POSTCARD, PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER } from './tunables.ts';
+import { POSTCARD, PHONE, clamp, REF_W, REF_H, TOK, smooth, lerp, lin, PAPER, CORNER } from './tunables.ts';
 import type { Patch } from './cards.ts';
 import { type Chain, NS } from './note.ts';
 import type { Body as PBody } from './physics.ts';
@@ -47,7 +47,7 @@ export type Video = HTMLVideoElement & { op?: Promise<unknown>; clipStart: numbe
 // placeDecks, buildAtlas and the like before anything reads them.
 export interface Card {
   id: number; el: HTMLElement; hit: HTMLElement; img: HTMLImageElement | null; key: string; kind: string;
-  backEl: HTMLElement | null; backTitle: string | null | undefined; backParas: string[] | null;
+  backEl: HTMLElement | null; backParas: string[] | null;
   region: number; featured: boolean; inkHex: string | undefined; emit: number; still: string | undefined;
   backLinks: HTMLAnchorElement[] | null; flip: number; flipTo: number; face: number; deck: Card | null;
   frame: number[]; baseFrame: number[]; focus: number[] | null;
@@ -113,13 +113,13 @@ const sources = [...desk.root.querySelectorAll<HTMLElement>('.src')].map((el, id
   return {
     id, el, hit: el.querySelector<HTMLElement>('.hit')!, img: el.querySelector('img'), key: d.key, kind,
     // Back of the card: optional title, paragraphs, and link buttons, straight from the DOM.
-    backEl, backTitle: backEl?.querySelector('b')?.textContent, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent!) : null, // an element's text is never null
+    backEl, backParas: backEl ? [...backEl.querySelectorAll('p')].map((x) => x.textContent!) : null, // an element's text is never null
     region: d.region === 'research' ? 1 : 0, featured: !!d.slot && !el.classList.contains('deck'),
     inkHex: d.ink, emit: 0, // the card's own ink (paper style), emitted while the card is open
     still: d.still, // an explicit still (a paper figure) that clips.json does not replace
     backLinks: backEl ? [...backEl.querySelectorAll('a')] : null, flip: 0, flipTo: 0, face: 0, deck: null, // face: 0 front up, 1 back up (one value, set by a flip, a flight, or the box's preview); deck: the box it is in (or going into)
     frame: (d.frame || '1,0.5,0.5').split(',').map(Number), // zoom, then where the crop sits (like object-position)
-    // focus: the framing option's zoom and crop on the picture's subject, for the poster and the clips alike (so the
+    // focus: the zoom and crop on the picture's subject, for the poster and the clips alike (so the
     // hover fade stays seamless)
     baseFrame: (d.frame || '1,0.5,0.5').split(',').map(Number), focus: d.focus ? d.focus.split(',').map(Number) : null,
     slot: d.slot ? { x: sx, y: sy, w: sw, r: sr } : null, baseW: sw, order: Number(d.order), more: el.classList.contains('more'), lid: el.classList.contains('lid'),
@@ -189,15 +189,19 @@ function capLines(s: Card, tw: number): { lines: string[]; titled?: boolean } {
   const title = s.el.querySelector('.cap b')!.textContent!, sub = s.el.querySelector('.cap span')!.textContent!;
   return { lines: [...wrapLines(title, tw, font(600)), sub], titled: true };
 }
+// Photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a 107 mm
+// sheet), as fractions of the cards' shared longest side.
+const FILM = { side: 0.042, top: 0.052, bottom: 0.19 };
 // The film's borders for a photo card w wide with longest side L (design px); the strip fits its page's longest caption.
 function borders(s: Card, w: number, L: number) {
-  const side = Math.round(T.frameSide * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
+  const side = Math.round(FILM.side * L), rows = sources.filter((o) => capped(o) && o.region === s.region)
     .map((o) => capLines(o, (o === s || desk.view.phone ? w : o.shape >= 1 ? L : L * o.shape) - 2 * side).lines.length);
-  return { side, top: Math.round(T.frameTop * L), bottom: Math.ceil(Math.max(T.frameBottom * L, Math.max(...rows) * CAP_LH() + 20)) };
+  return { side, top: Math.round(FILM.top * L), bottom: Math.ceil(Math.max(FILM.bottom * L, Math.max(...rows) * CAP_LH() + 20)) };
 }
-// Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (T.cardMax on the
+// Every card keeps its own shape (data-shape, width / height) with its longest side at one shared cap (CARD_MAX on the
 // reference desk), so all share one scale and sharpness; the sticky note keeps its own size. (Clark, 2026-11-23, replacing
 // the one card size.)
+const CARD_MAX = 280; // design px at 1440x900; scales with the desk
 const capped = (s: Card) => s.kind === 'photo' || s.kind === 'polaroid';
 const cappedDims = (s: Card, cap: number): [number, number] => (s.shape >= 1 ? [cap, cap / s.shape] : [cap * s.shape, cap]);
 // Each page's pile, upright: as wide as its widest card's short side and as tall as its longest long side (design px).
@@ -210,10 +214,10 @@ function pileSizes() {
 // The polaroid and the note keep their own shapes, one size for both faces: the front's own size when the back's copy
 // fits on it at the shared type scale; otherwise the polaroid becomes the smallest card (up to maxW wide) that fits it,
 // its image cropped (cover framing) to at most 25% wider or taller than its own aspect, and the note grows taller.
-function fitCard(s: Card, w0: number, maxW = Math.round(w0 * 1.5)) {
-  const box = cardBox(s, w0);
-  if (!s.backEl || desk.backLayout(s, box).need <= box.h) return box;
-  if (!s.media) return { ...box, h: desk.backLayout(s, box).need };
+function fitCard(s: Card, w0: number, maxW = Math.round(w0 * 1.5), loose = false) {
+  const box = cardBox(s, w0), need = s.backEl ? desk.backLayout(s, box, loose).need : 0;
+  if (need <= box.h) return box;
+  if (!s.media) return { ...box, h: need };
   let best: CardBox | null = null;
   for (let w = w0; w <= maxW; w += 2) {
     const b = cardBox(s, w), chrome = b.h - b.media!.h, mw = b.media!.w; // a card with media has it at every width
@@ -241,7 +245,7 @@ function wrapLines(text: string, maxW: number, font: string) {
 
 function layout() {
   desk.endFlights(); // a new layout puts every card in its place
-  for (const s of sources) s.frame = T.framing && s.focus ? s.focus : s.baseFrame;
+  for (const s of sources) s.frame = s.focus ?? s.baseFrame;
   const vw = document.documentElement.clientWidth, vh = innerHeight;
   const phone = vw < PHONE;
   body.classList.toggle('phone', phone);
@@ -254,16 +258,13 @@ function layout() {
     // Sizes are set at full scale (design px); a smaller card scale shows every card that much smaller, the same in a
     // deck and on the desk, and keeps the layout's composition (slots are fractions of the desk).
     const c = clamp(T.cardScale, 0.6, 1);
-    // The sizes are the full-scale ones with the backs as they are by default (title on, usual spacing), so the scale is
-    // always relative to the same card; the back options only change what fits on it.
-    const opts = { backTitle: T.backTitle, backTight: T.backTight };
-    Object.assign(T, { backTitle: 1, backTight: 0 }); desk.TS = 1;
-    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c))])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
-    Object.assign(T, opts); desk.TS = Math.max(1, 12 / (TOK.fs * c)); desk.view.cs = c;
+    desk.TS = 1; // the sizes are the full-scale ones
+    const fixed = new Map(sources.filter((s) => !capped(s) && s.kind !== 'deck').map((s) => [s, fitCard(s, Math.round((s.slot?.w ?? s.baseW) / c), undefined, true)])); // the note: its own small size on every window, so its words wrap the same and it stays nearly square
+    desk.TS = Math.max(1, 12 / (TOK.fs * c)); desk.view.cs = c;
     // The longest side (design px) scales with the desk like the layout, but never below the smallest at which every back fits.
     const fitsAt = (cp: number) => sources.every((s) => !capped(s) || !s.backEl || ((b: CardBox) => desk.backLayout(s, b).need <= b.h)(cardBox(s, ...cappedDims(s, cp))));
     let lo = 120, hi = 900; while (hi - lo > 0.5) { const mid = (lo + hi) / 2; if (fitsAt(mid)) hi = mid; else lo = mid; }
-    const cap = Math.max((T.cardMax * k) / c, Math.ceil(hi));
+    const cap = Math.max((CARD_MAX * k) / c, Math.ceil(hi));
     for (const s of sources) if (s.kind !== 'deck') { const box = capped(s) ? cardBox(s, ...cappedDims(s, cap)) : fixed.get(s)!; Object.assign(s, box, { k: c, w: box.w * c, h: box.h * c }); }
     pileSizes();
     for (const s of sources) {
@@ -339,21 +340,21 @@ function layout() {
 // The corner's DOM: its hit area and focus ring (a triangle over the fold, hovered or not), and without WebGPU the fold
 // itself, drawn flat: the sliver underneath, the flap, and the label on it.
 function placeDoor() {
-  const k = desk.view.k, c = T.cornerSize * k * Math.SQRT2, S = Math.ceil((2 * (T.cornerSize + T.cornerLift) - Math.PI * desk.DOOR.R + 14) * k * Math.SQRT2);
+  const k = desk.view.k, c = CORNER.size * k * Math.SQRT2, S = Math.ceil((2 * (CORNER.size + CORNER.lift) - Math.PI * desk.DOOR.R + 14) * k * Math.SQRT2);
   // The focus ring traces the folded corner at rest, 3 px out: the flap's edges out to its tip, and the page's edges.
-  const m = 3, tip = S - ((2 * T.cornerSize - Math.PI * desk.DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
+  const m = 3, tip = S - ((2 * CORNER.size - Math.PI * desk.DOOR.R) * k) / Math.SQRT2 - m * Math.SQRT2;
   const svg = doorEl.querySelector('svg')!, set = (sel: string, d: string) => svg.querySelector(sel)!.setAttribute('d', d);
   for (const [a, v] of [['width', S], ['height', S], ['viewBox', `0 0 ${S} ${S}`]]) svg.setAttribute(String(a), String(v));
-  const ch = (T.cornerSize + T.cornerLift) * k * Math.SQRT2, tipH = S - ((2 * (T.cornerSize + T.cornerLift) - Math.PI * desk.DOOR.R) * k) / Math.SQRT2;
+  const ch = (CORNER.size + CORNER.lift) * k * Math.SQRT2, tipH = S - ((2 * (CORNER.size + CORNER.lift) - Math.PI * desk.DOOR.R) * k) / Math.SQRT2;
   set('.hit', `M${S} ${S - ch}L${tipH} ${tipH}L${S - ch} ${S}H${S}Z`); // the pointer's area: the fold as drawn when hovered (the sliver and the flap), not the larger triangle
   set('.ring', `M${S - m} ${S - c - m}L${tip} ${tip}L${S - c - m} ${S - m}H${S - m}Z`);
   // Without WebGPU the fold itself, flat, from the corner's state: it lifts and leans toward the pointer like the drawn one
   // (the sliver under it, the flap reflected over the fold, the label printed on the flap).
-  const d = desk.door.d || T.cornerSize * k, a = desk.door.a, [dx, dy] = desk.dirOf(a), far = 2 * d - Math.PI * desk.DOOR.R * k;
+  const d = desk.door.d || CORNER.size * k, a = desk.door.a, [dx, dy] = desk.dirOf(a), far = 2 * d - Math.PI * desk.DOOR.R * k;
   const B = [S - d / Math.cos(a), S], Rt = [S, S - d / Math.sin(a)], tipF = [S + far * dx, S + far * dy], P = (q: number[]) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`;
   set('.sliver', `M${P(Rt)}L${S} ${S}L${P(B)}Z`); set('.flap', `M${P(Rt)}L${P(tipF)}L${P(B)}Z`);
-  const t = svg.querySelector('text')!, at = far - (T.cornerSize - Math.PI * desk.DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
-  Object.assign(t.style, { fontSize: T.cornerLabel * k + 'px' });
+  const t = svg.querySelector('text')!, at = far - (CORNER.size - Math.PI * desk.DOOR.R - 4 - 12) * k, cx = S + at * dx, cy = S + at * dy;
+  Object.assign(t.style, { fontSize: CORNER.label * k + 'px' });
   for (const [n, v] of [['x', cx], ['y', cy], ['transform', `rotate(${(-45 - (2 * (a - Math.PI / 4) * 180) / Math.PI).toFixed(2)} ${cx} ${cy})`]]) t.setAttribute(String(n), String(v));
 }
 // No frame loop without WebGPU: the flat corner runs its own while it moves.

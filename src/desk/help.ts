@@ -20,20 +20,10 @@ export const HELP: Record<string, string> = {
   ridge: 'How far outside the card edge the food band sits.',
   ridgeW: 'How wide each food band is.',
   // Cards
-  shadowSoft: 'How blurred card shadows are.',
   shadow: 'How dark card shadows are.',
   lift: 'How high a picked-up card rises.',
-  tilt: 'How far a dragged card tilts with its motion.',
   flipS: 'How long a card takes to flip open. Closing takes a bit less.',
-  paperN: 'The sticky note\'s physics: how many links the peeling part has. More bends more smoothly.',
-  paperBend: 'The sticky note\'s stiffness: how far it holds out straight before it droops.',
-  paperDrag: 'Air drag on the sticky note, which damps its swinging.',
-  paperLift: 'How hard your finger lifts the sticky note\'s free edge.',
   cardScale: 'Card size on the desk (text never goes below 12 px).',
-  cardMax: 'The longest a card side can be at 1440x900; scales with the desk.',
-  backTitle: 'Repeats the card title on its back.',
-  backTight: 'Tighter padding and link rows on card backs.',
-  framing: 'Crops each thumbnail around its subject (data-focus) instead of the center.',
   emitIn: 'How long an opened card takes to reach its full ink color in the slime.',
   emitOut: 'How long that color takes to fade after the card closes.',
   // Landing
@@ -57,14 +47,7 @@ export const HELP: Record<string, string> = {
   hold: 'Cuts each clip after this many seconds. 0 plays whole clips.',
   hoverDelay: 'How long you hover before a clip starts.',
   focusS: 'How fast a card\'s hover effect fades in. It fades out a bit faster.',
-  // Film
-  frameSide: 'The instant-film border on photo cards: the sides.',
-  frameTop: 'The instant-film border: the top.',
-  frameBottom: 'The instant-film bottom strip, where the caption is.',
   // Notebook
-  cornerSize: 'The size of the folded page corner that turns to the other page.',
-  cornerLabel: 'The size of the label on that corner.',
-  cornerLift: 'How far the corner lifts when you hover it.',
   turnS: 'How long a page turn takes.',
   // World
   gravity: 'Gravity on everything that falls: the card box a page turn throws off, chips, and the turning sticky note.',

@@ -1,5 +1,10 @@
 import { currentDesk } from './state.ts';
 import { lerp, clamp, MOTION, smooth, IMPRINT_S } from './tunables.ts';
+
+const TILT = 6; // a dragged card tilts with its motion, up to this many degrees
+// The sticky note's paper (note.ts): links from the strip to its free edge; air drag, which damps its swinging; its
+// stiffness, the px it holds out straight before it droops; and how hard a finger lifts its free edge.
+const NOTE = { n: 16, drag: 0.03, bend: 50, lift: 12000 };
 import type { Card } from './layout.ts';
 import { paperChain, stepChain } from './note.ts';
 
@@ -113,11 +118,11 @@ function flip(s: Card) {
   s.rotFrom = s.rot; s.rotTo = hinged(s) ? s.rot : desk.view.phone ? s.home : clamp(s.home + gauss * T.flipJitter, -T.maxAngle, T.maxAngle); // a phone's card nearly fills the screen's width: it lands as it lay
   if (!desk.gpu || reduced) { // the still fallback and reduced motion just swap faces
     if (!desk.gpu && s.flipTo) desk.paintDomBack(s);
-    if (hinged(s)) s.ch = s.flipTo ? paperChain(T.paperN, paperL(s), 1) : null;
+    if (hinged(s)) s.ch = s.flipTo ? paperChain(NOTE.n, paperL(s), 1) : null;
     s.flip = s.emit = s.face = s.flipTo; s.el.classList.toggle('flipped', !!s.flipTo); placeDom(s);
     if (desk.gpu) drawStill();
   } else if (hinged(s)) { // the note: a finger lifts its free edge over (or back)
-    s.ch ||= paperChain(T.paperN, paperL(s), 0);
+    s.ch ||= paperChain(NOTE.n, paperL(s), 0);
     Object.assign(s.ch, { dir: s.flipTo ? 1 : -1, push: true, slap: true, rest: false });
   }
 }
@@ -126,7 +131,7 @@ function flip(s: Card) {
 const hoverTau = (rising: boolean) => Math.max(0.01, T.focusS / 3) * (rising ? 1 : MOTION.exit);
 // Springs: lift rises while dragging, tilt leans toward velocity (max ~8 deg), released cards glide and settle.
 function stepCards(dt: number) {
-  const maxTilt = (T.tilt * Math.PI) / 180;
+  const maxTilt = (TILT * Math.PI) / 180;
   for (const s of sources) {
     if (s.shove) desk.stepShove(s, dt);
     else if (s.kb) stepKey(s, dt); // s.kb: where the keys are taking it
@@ -218,7 +223,7 @@ function stepKey(s: Card, dt: number) {
 function stepPaper(s: Card, dt: number) {
   const c = s.ch;
   if (!c || c.rest) return;
-  const v = stepChain(c, dt, { g: T.gravity, drag: T.paperDrag, bend: T.paperBend, lift: T.paperLift });
+  const v = stepChain(c, dt, { g: T.gravity, drag: NOTE.drag, bend: NOTE.bend, lift: NOTE.lift });
   if (v) land(s, Math.max(0.1, clamp(v / 600))); // the floor the old land() gave it
   s.flip = clamp(Math.atan2(c.x[2 * c.n + 1], c.x[2 * c.n]) / Math.PI);
   if (c.rest) {

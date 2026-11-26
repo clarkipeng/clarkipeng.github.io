@@ -6,7 +6,7 @@ import { RESEED, GROUPS, type ParamRow, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYL
 
 export function mountTweak() {
 const desk = currentDesk();
-const { T, reseed, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, activeAgents,
+const { T, reseed, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, activeAgents,
   addEventListener, body } = desk;
 // ---------- tweak panel (press t) ----------
 
@@ -29,9 +29,8 @@ function tweakPanel() {
   const colors = colorsGroup(desk, resetBtn); // appended last, under the other groups
   const set = (k: string, v: number) => {
     T[k] = v;
-    // card sizes rebuild the desk too (and a corner label size, the card atlas)
-    if ((RESEED.includes(k) || ['cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
-    if (k === 'cornerSize' || k === 'cornerLift' || k === 'cornerLabel') placeDoor();
+    // the card scale rebuilds the desk too
+    if ((RESEED.includes(k) || k === 'cardScale') && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); }
     if (k.startsWith('tally')) for (const d of sources) if (d.tally) d.tally.dirty = true;
   };
   for (const [name, params] of Object.entries(GROUPS)) {

@@ -1,5 +1,5 @@
 import { currentDesk } from './state.ts';
-import { clamp, smooth, MOTION, lerp, EASES } from './tunables.ts';
+import { clamp, smooth, MOTION, lerp, EASES, CORNER } from './tunables.ts';
 import type { Card } from './layout.ts';
 import type { Sim } from './gpu.ts';
 
@@ -61,14 +61,14 @@ function holdPage(sm: Sim) {
 // last frame, frozen) rolls away from the corner and off the screen, over the other page, live underneath, which then
 // deals its cards to their homes. Dragging the corner turns it by hand: let go past halfway and it completes, else it
 // falls back.
-const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are T.cornerSize and T.cornerLift)
+const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are CORNER.size and CORNER.lift)
 const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null as { x: number; y: number } | null, press: null as { x: number; y: number; d: number; moved: boolean } | null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
 const turn: Turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
 const dirOf = (a: number) => [-Math.cos(a), -Math.sin(a)]; // from the bottom-right corner, up and left
-const rollR = (d: number) => desk.view.k * clamp(DOOR.R + 0.06 * (d / desk.view.k - T.cornerSize), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
+const rollR = (d: number) => desk.view.k * clamp(DOOR.R + 0.06 * (d / desk.view.k - CORNER.size), DOOR.R, DOOR.rMax); // the roll widens as the page turns further
 const span = (a: number) => desk.view.w * Math.cos(a) + desk.view.h * Math.sin(a); // from the corner to the far corner, along the fold's direction
 const farD = (a: number) => span(a) + (Math.PI / 2) * DOOR.rMax * desk.view.k + 8; // the fold's distance once the page is all off screen
-const restD = (hover: boolean) => desk.view.k * (T.cornerSize + (hover ? T.cornerLift : 0));
+const restD = (hover: boolean) => desk.view.k * (CORNER.size + (hover ? CORNER.lift : 0));
 // The fold leans a little toward the pointer, between 25 and 65 degrees.
 const leanTo = (x: number, y: number) => clamp(Math.PI / 4 + DOOR.lean * (Math.atan2(desk.view.h - y, Math.max(desk.view.w - x, 1)) - Math.PI / 4), 0.44, 1.13);
 function stepDoor(dt: number) {

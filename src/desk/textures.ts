@@ -1,5 +1,5 @@
 import { currentDesk, type Desk } from './state.ts';
-import { TOK } from './tunables.ts';
+import { TOK, CORNER } from './tunables.ts';
 import type { Card, Rect, CardBox } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 
@@ -19,7 +19,7 @@ type Row = [HTMLAnchorElement, number, number][]; // a row of links: each with i
 
 export function mountTextures() {
 const desk = currentDesk();
-const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, T, measure, wrapLines, hinged, sources, decked, NAMES,
+const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, wrapLines, hinged, sources, decked, NAMES,
   tallySetup } = desk;
 // ---------- card textures ----------
 
@@ -174,44 +174,37 @@ function drawCard(s0: Card, S0: number) {
   return { canvas: c, mediaPx };
 }
 const STOCK = (kind: string) => ({ photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // a photo card's back is its film's stock (read when drawn: the colors are tunable)
-const lhBody = () => (T.backTight ? 19 : TOK.lhBody) * desk.TS; // tighter backs set the copy 1 px closer
 const TYPE = { // read when drawn: the type follows TS
-  get title() { return { font: font(600), lh: lhBody(), color: TOK.text }; },
-  get body() { return { font: font(400), lh: lhBody(), color: TOK.body }; },
+  get body() { return { font: font(400), lh: 19 * desk.TS, color: TOK.body }; }, // the copy sits 1 px closer than the front's
   get link() { return { font: font(500), color: TOK.inkDeep }; },
   noteHand: { font: HAND, color: TOK.text2 },
 };
-// Back spacing in design px; T.backTight (an option) takes 4 px off the padding and the space between link rows.
+// Back spacing in design px.
 const BK = {
-  get pad() { return T.backTight ? 12 : 16; }, get first() { return BK.pad + 16 * desk.TS; }, get row() { return (T.backTight ? 22 : 24) * desk.TS; },
-  get gap() { return (T.backTight ? 12 : 16) * desk.TS; }, get bottom() { return BK.pad - 7 + 13 * desk.TS; },
+  pad: 12, get first() { return BK.pad + 16 * desk.TS; }, get row() { return 22 * desk.TS; },
+  get gap() { return 12 * desk.TS; }, get bottom() { return BK.pad - 7 + 13 * desk.TS; },
 };
 
 // A link: its text at (x, base) and its hit area (a 24px row, 4px wider than the text on each side).
 const linkAt = (a: HTMLAnchorElement, x: number, base: number, tw: number, h = BK.row) => ({ a, x: x - 4, y: base - 16, w: tw + 8, h, tx: x, base, tw });
-// b: the size to lay out at (the card's own by default); nothing sets a title on it, so the title falls back to the front's lines.
-function backLayout(s: Card, b: CardBox & { title?: string } = s): BackLayout {
+// b: the size to lay out at (the card's own by default). loose: the note's list at the roomier spacing (16 px padding,
+// 24 px rows) the desk sizes the note by (layout.ts), so it stays as tall as when every back had that spacing.
+function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
   const w = b.w, m = measure(), { pad, row } = BK;
   if (s.kind === 'note') {
     // A tidy list, one link per line, from the same first baseline as every other back.
     m.font = TYPE.noteHand.font;
-    // Tighter backs set the list in two columns when one would not fit.
-    const n = s.backLinks!.length, two = T.backTight && BK.first + (n - 1) * row + BK.bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
-    const links = s.backLinks!.map((a, i) => linkAt(a, pad + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), BK.first + (i % per) * row, m.measureText(a.textContent!).width));
-    return { lines: [], links, w, h: b.h, need: BK.first + (per - 1) * row + BK.bottom + STRIP }; // clear of the strip along its bottom
+    const [first, r, bottom] = loose ? [16 + 16 * desk.TS, 24 * desk.TS, 9 + 13 * desk.TS] : [BK.first, row, BK.bottom];
+    // Two columns when one would not fit.
+    const n = s.backLinks!.length, two = !loose && first + (n - 1) * r + bottom + STRIP > b.h, per = two ? Math.ceil(n / 2) : n;
+    const links = s.backLinks!.map((a, i) => linkAt(a, pad + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), first + (i % per) * r, m.measureText(a.textContent!).width));
+    return { lines: [], links, w, h: b.h, need: first + (per - 1) * r + bottom + STRIP }; // clear of the strip along its bottom
   }
   // No label line: it only repeated the front's caption (Clark: no redundancy).
-  const title = T.backTitle ? s.backTitle ?? (b.title || b.lines?.join(' ') || '') : ''; // the title can stay on the front only
-  const lines: BackLine[] = [];
-  let y = BK.first - TYPE.title.lh, gapNext = 0;
-  const add = (t: string, kind: 'title' | 'body') => {
-    const f = TYPE[kind];
-    y += gapNext;
-    wrapLines(t, w - 2 * pad, f.font).forEach((l) => { y += f.lh; lines.push({ t: l, f, y }); });
-  };
-  if (title) add(title, 'title');
-  gapNext = 8; // paragraphs: 8px apart
-  s.backParas!.forEach((t) => add(t, 'body'));
+  // The paragraphs, 8px apart, the first 8px under the first baseline. The title is on the front only.
+  const lines: BackLine[] = [], f = TYPE.body;
+  let y = BK.first - f.lh;
+  for (const t of s.backParas!) { y += 8; wrapLines(t, w - 2 * pad, f.font).forEach((l) => { y += f.lh; lines.push({ t: l, f, y }); }); }
   // Links: ink text in rows along the bottom, the last baseline 22px above the bottom edge (top, on a back with no text).
   m.font = TYPE.link.font;
   const rows: Row[] = [[]];
@@ -318,7 +311,7 @@ async function buildAtlas(g: Gpu) {
   const backs = sources.filter((src) => src.backEl || src.lid).map((src) => ({ src, ...(src.lid ? drawLidOutside(src, S) : drawBack(src, S)) }));
   const plainFor = sources.filter(decked), plain = plainFor.map((s) => paintPlainBack(s, S)); // each card's plain deck back, at its own size
   // The corners' labels, in pen (transparent around the ink): one canvas size for both, the longer word's.
-  const lf = font(500, T.cornerLabel * desk.view.k * S, 'Caveat'), mc = measure();
+  const lf = font(500, CORNER.label * desk.view.k * S, 'Caveat'), mc = measure();
   mc.font = lf;
   const lw = Math.ceil(Math.max(...NAMES.map((t) => mc.measureText(t).width)) + 6 * S), lh = Math.ceil(24 * desk.view.k * S);
   const labels = NAMES.map((t) => {

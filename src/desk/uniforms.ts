@@ -1,5 +1,7 @@
 import { currentDesk } from './state.ts';
-import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES } from './tunables.ts';
+import { MAX, lin, clamp, hexRGB, smooth, IMPRINT_S, NAME_INK, PAGE_NAMES, CORNER } from './tunables.ts';
+
+const SHADOW_SOFT = 1.1; // how blurred card shadows are
 import type { Card } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 import { NCH } from './chips.ts';
@@ -62,12 +64,12 @@ function flipPath(s: Card) {
 // sheet and shadows fit in, from the box they can reach in its frame (the sheet up to 15% nearer the camera), turned.
 const NOTE_U = new Float32Array(24 + (NS + 1) * 4);
 function noteUniform(s: Card, x: number, y: number, th: number, z: number) {
-  const dev = desk.shared!.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * Math.max(T.shadowSoft, 1), L = s.h - STRIP * (s.k || 1);
+  const dev = desk.shared!.dev, hw = s.w / 2, hh = s.h / 2, c = Math.cos(th), n = Math.sin(th), M = 40 * SHADOW_SOFT, L = s.h - STRIP * (s.k || 1);
   const X = hw * 1.15 + M + 20, y0 = -hh - L * 1.15 - M, y1 = hh + M + 60, cy = (y0 + y1) / 2, hy = (y1 - y0) / 2;
   const ex = X * Math.abs(c) + hy * Math.abs(n), ey = X * Math.abs(n) + hy * Math.abs(c), t0 = [Math.floor((x - n * cy - ex) * dev), Math.floor((y + c * cy - ey) * dev)];
   desk.gpu!.note.size(Math.ceil(2 * ex * dev) + 2, Math.ceil(2 * ey * dev) + 2);
   NOTE_U.set([hw, hh, 3, STRIP * (s.k || 1) - hh, x, y, c, n, ...t0, desk.gpu!.note.w, desk.gpu!.note.h, dev, 1800, z, M,
-    c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), T.shadowSoft, L, 0, 0]);
+    c * LIGHT[0] + n * LIGHT[1], c * LIGHT[1] - n * LIGHT[0], LIGHT[2], Math.max(T.lift, 1), SHADOW_SOFT, L, 0, 0]);
   NOTE_U.set(noteProfile(s), 24);
   return [...t0, Math.hypot(ex, ey) + Math.abs(cy) + s.h];
 }
@@ -161,7 +163,7 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
   });
   const order = fly(sources.filter((x) => {
     if ((!desk.view.phone && x.region !== s.page) || x.gone || (desk.capturing && x.carrier)) return false;
-    const r = Math.hypot(x.w, x.h) / 2 + 100 * Math.max(T.shadowSoft, 1);
+    const r = Math.hypot(x.w, x.h) / 2 + 100 * SHADOW_SOFT;
     return x.x + r > sx && x.x - r < sx + desk.view.w && x.y + r > sy && x.y - r < sy + desk.view.h;
   }).sort((a, b) => a.z - b.z).map((x) => x.id));
   // The page you left's card box flies off over the turn, above both pages (never part of the turning page's frame).
@@ -183,7 +185,7 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     T.landBurst, T.landDecay, T.hoverE, T.cursorE,
     st.soft, st.grain, over.length, order.length,
     0, 0, 0, st.opacity,
-    T.shadowSoft, T.shadow, T.landRelease, desk.shared!.TX,
+    SHADOW_SOFT, T.shadow, T.landRelease, desk.shared!.TX,
     0, 0, 0, s.t,
     ...hexRGB(st.bg).map(lin), 0,
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,
@@ -192,7 +194,7 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     ...(turn.on && !desk.capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
     ...(desk.capturing || desk.view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
-    (desk.view.k * (T.cornerSize - Math.PI * DOOR.R - 4) - desk.shared!.label!.hh) * dev, desk.shared!.label!.hw * dev, desk.shared!.label!.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * desk.view.k)) : 1,
+    (desk.view.k * (CORNER.size - Math.PI * DOOR.R - 4) - desk.shared!.label!.hh) * dev, desk.shared!.label!.hw * dev, desk.shared!.label!.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * desk.view.k)) : 1,
     ...desk.shared!.labelUV![desk.page], ...desk.shared!.labelUV![turn.from],
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   desk.chipUniforms(s);

@@ -19,6 +19,8 @@ export const TOK = {
 // and out; physical motion (lift, tilt, squash) is springs. Exits run at `exit` times their entrance.
 export const MOTION = { quick: 0.15, respond: 0.3, settle: 0.55, travel: 1, exit: 0.7 };
 export const IMPRINT_S = 1; // a lifted card's imprint fades over this long (s)
+// Each page's folded corner, the way to the other page: its size, its label's size, and how far it lifts on hover (px).
+export const CORNER = { size: 70, label: 19, lift: 10 };
 export const NAME_INK = [30, 34, 40];
 
 // Every tunable, defaults matched to b-desk.html's CPU sim (scale 0.45, 26k agents, 1.1 sim px per step at 60 steps/s,
@@ -48,20 +50,10 @@ export const GROUPS = {
     ['ridgeW', 3.5, 1, 24, 0.5, 'width px'],
   ],
   Cards: [
-    ['shadowSoft', 1.1, 0.2, 3, 0.05, 'shadow softness'],
     ['shadow', 1.35, 0, 5, 0.05, 'shadow strength'],
     ['lift', 60, 0, 60, 1, 'lift height px'],
-    ['tilt', 6, 0, 20, 0.5, 'tilt max deg'],
     ['flipS', 0.7, 0.15, 1.5, 0.05, 'flip duration s (closing takes exit x this)'],
-    ['paperN', 16, 8, 24, 1, 'note: paper links, strip to free edge'],
-    ['paperBend', 50, 20, 120, 1, 'note: paper stiffness (px it holds out straight)'],
-    ['paperDrag', 0.03, 0, 0.1, 0.001, 'note: air drag on the paper'],
-    ['paperLift', 12000, 2000, 40000, 500, 'note: finger lift on the free edge'],
     ['cardScale', 0.75, 0.6, 1, 0.01, 'card scale (desk; type stops at 12 px)'],
-    ['cardMax', 280, 180, 400, 1, 'card max side px (desk, at 1440x900; scales with the desk)'],
-    ['backTitle', 0, 0, 1, 1, 'title on the back (it is on the front)'],
-    ['backTight', 1, 0, 1, 1, 'tighter back padding and link rows'],
-    ['framing', 1, 0, 1, 1, 'frame thumbnails on their subject (data-focus)'],
     ['emitIn', 0.8, 0.1, 4, 0.1, 'open card color in s'],
     ['emitOut', 4, 0.5, 12, 0.25, 'color fade after close s'],
   ],
@@ -90,18 +82,8 @@ export const GROUPS = {
     ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
     ['focusS', MOTION.respond, 0.05, 2, 0.05, 'hover fade s (release takes exit x this)'],
   ],
-  // Film: photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a
-  // 107 mm sheet), as fractions of the cards' shared longest side; the strip grows to fit its page's longest caption.
-  Film: [
-    ['frameSide', 0.042, 0, 0.1, 0.002, 'side borders'],
-    ['frameTop', 0.052, 0, 0.12, 0.002, 'top border'],
-    ['frameBottom', 0.19, 0.06, 0.32, 0.005, 'bottom strip'],
-  ],
-  // Notebook: each page's folded corner, the way to the other page, and the page turn.
+  // Notebook: the page turn.
   Notebook: [
-    ['cornerSize', 70, 40, 120, 1, 'corner size px'],
-    ['cornerLabel', 19, 12, 30, 0.5, 'corner label px'],
-    ['cornerLift', 10, 0, 40, 1, 'hover lift px'],
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
   ],
   // World: one physical world. The card box, the chips and the sticky note fall under the same gravity; the box and the
