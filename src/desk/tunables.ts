@@ -25,6 +25,22 @@ export const CORNER = { size: 70, label: 19, lift: 10 };
 // held under it stream out over `release` s. A landing sheds momentum: `wn` x its speed coming down plus its other motion,
 // a full burst at `p` px/s; it counts only after the card rose above `band` px.
 export const LAND = { r: 29, decay: 0.955, release: 0.15, p: 503, wn: 0.36, band: 12 };
+// Touchdown, one rule for every item that comes down part by part (a chip rocking, the note's sheet rolling down): its
+// samples (x, y, height: px, now and the step before; each stands for `a` px² of it) that have just come within `band`
+// of the desk land together. Their strength is the motion they shed there, wn x coming down + along, plus how fast the
+// contact patch spreads (its growth in area over its size), over p. Returns how many, their middle, and that strength.
+export function touchdown(at: ArrayLike<number>, was: ArrayLike<number>, band: number, dt: number, a: number) {
+  let n = 0, on = 0, had = 0, sx = 0, sy = 0, vn = 0, vt = 0;
+  for (let o = 0; o < at.length; o += 3) {
+    if (was[o + 2] <= band) had++;
+    if (at[o + 2] > band) continue;
+    on++;
+    if (was[o + 2] <= band) continue; // only a part that has just come down
+    n++; sx += at[o]; sy += at[o + 1]; vn += Math.max(0, was[o + 2] - at[o + 2]) / dt; vt += Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1]) / dt;
+  }
+  const spread = (Math.max(0, on - had) * Math.sqrt(a / on)) / dt;
+  return n ? [n, sx / n, sy / n, Math.min(1, ((LAND.wn * vn + vt) / n + spread) / LAND.p)] : null;
+}
 // A flipped or dealt card lands at its home angle plus a gaussian spread of `jitter` deg (std dev), never past `max` deg.
 export const ANGLE = { jitter: 1.5, max: 5 };
 export const NAME_INK = [30, 34, 40];

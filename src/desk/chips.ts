@@ -14,7 +14,7 @@ const RIM = 12; // directions its contact points are found in (props)
 const EAT_HZ = 15; // times a second the chips are eaten (and their eaten edge redrawn)
 
 import type { Body as PBody, World } from './physics.ts';
-import { LAND } from './tunables.ts';
+import { touchdown } from './tunables.ts';
 
 // The tunables chips read (desk.ts T); see createChips.
 type ChipKey = 'chipCurl' | 'friction' | 'bounce' | 'chipEat';
@@ -384,12 +384,10 @@ export function createChips(P: ChipTunables, world: () => World) {
     }
   }
 
-  // Contact, the cards' rule (desk.ts contact) on the part of it that has just come within CHIP.band of the desk: that patch
-  // lands with the motion it sheds there, (LAND.wn x coming down + along) / LAND.p. A rocking chip lands strip by strip as
-  // its curve rolls down; a slide or a lift brings no new part down, so it pushes no slime.
-  function touchdown(b: Body, dt: number) {
-    const R = b.R, c = b.c, band = CHIP.band, H = b.S.hf, t = b.S.t, was = b.at, at = b.at = b.atWas || new Float32Array(CN * CN * 3);
-    let n = 0, sx = 0, sy = 0, vn = 0, vt = 0;
+  // Contact (tunables.ts touchdown) on each column's lowest face: a rocking chip lands strip by strip as its curve rolls
+  // down; a slide or a lift brings no new part down, so it pushes no slime.
+  function land(b: Body, dt: number) {
+    const R = b.R, c = b.c, H = b.S.hf, t = b.S.t, was = b.at, at = b.at = b.atWas || new Float32Array(CN * CN * 3);
     b.atWas = was;
     for (let ci = 0, o = 0; ci < CN * CN; ci++, o += 3) { // each column's lowest face, if it holds, on the desk (desk px)
       if (!b.colSolid(ci)) { at[o + 2] = Infinity; continue; }
@@ -397,10 +395,9 @@ export function createChips(P: ChipTunables, world: () => World) {
       const f0 = H[ci * 3] + (b.lo0[ci] - 0.5) * t, f1 = H[ci * 3] + (b.hi0[ci] - 0.5) * t, z0 = zc + R[8] * f0, z1 = zc + R[8] * f1, lz = (z0 < z1 ? f0 : f1) - c[2];
       at[o + 2] = b.x[2] + Math.min(z0, z1);
       at[o] = b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz; at[o + 1] = b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz;
-      if (!was || at[o + 2] > band || was[o + 2] <= band) continue; // only a part that has just come down
-      n++; sx += at[o]; sy += at[o + 1]; vn += Math.max(0, was[o + 2] - at[o + 2]) / dt; vt += Math.hypot(at[o] - was[o], at[o + 1] - was[o + 1]) / dt;
     }
-    if (n) b.land = [sx / n, sy / n, Math.sqrt(n / Math.PI) * b.cell, Math.min(1, (LAND.wn * vn + vt) / n / LAND.p)]; // center, radius (desk px), strength
+    const l = was && touchdown(at, was, CHIP.band, dt, b.cell * b.cell);
+    if (l) b.land = [l[1], l[2], Math.sqrt(l[0] / Math.PI) * b.cell, l[3]]; // center, radius (desk px), strength
   }
 
   // After the sim has advanced: a chip's first touch is its landing (contact); then eating.
@@ -408,7 +405,7 @@ export function createChips(P: ChipTunables, world: () => World) {
     for (const b of bodies) {
       if (b.frozen || b.sleep) continue;
       if (b.p.touch) b.landed = true;
-      touchdown(b, dt);
+      land(b, dt);
     }
     clock += dt;
     if (eatOn) eat(dt); else for (const b of bodies) b.ate = clock; // off its page it is not eaten

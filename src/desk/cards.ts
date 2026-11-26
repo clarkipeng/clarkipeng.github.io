@@ -1,19 +1,19 @@
 import { currentDesk } from './state.ts';
-import { lerp, clamp, MOTION, smooth, IMPRINT_S, LAND, ANGLE } from './tunables.ts';
+import { lerp, clamp, MOTION, smooth, IMPRINT_S, LAND, ANGLE, touchdown } from './tunables.ts';
 
 const TILT = 6; // a dragged card tilts with its motion, up to this many degrees
 // The sticky note's paper (note.ts): links from the strip to its free edge; air drag, which damps its swinging; its
 // stiffness, the px it holds out straight before it droops; and how hard a finger lifts its free edge.
 const NOTE = { n: 16, drag: 0.03, bend: 50, lift: 12000 };
 import type { Card } from './layout.ts';
-import { paperChain, stepChain } from './note.ts';
+import { paperChain, stepChain, type Chain } from './note.ts';
 
 export type Patch = [number, number, number, number]; // center, half size: fractions of the card's half size
 
 export function mountCards() {
 const desk = currentDesk();
 const { cam, addEventListener, cursor, door, signal, sources, T, reduced, turn, next, hinged, paperL, placeDom,
-  drawStill } = desk;
+  drawStill, STRIP } = desk;
 // Pointer position on the desk (CSS px), accounting for the camera on desktop and the scroll on phones.
 const deskX = (e: MouseEvent) => (desk.view.phone ? e.pageX : e.clientX + cam.x);
 const deskY = (e: MouseEvent) => (desk.view.phone ? e.pageY : e.clientY);
@@ -123,7 +123,7 @@ function flip(s: Card) {
     if (desk.gpu) drawStill();
   } else if (hinged(s)) { // the note: a finger lifts its free edge over (or back)
     s.ch ||= paperChain(NOTE.n, paperL(s), 0);
-    Object.assign(s.ch, { dir: s.flipTo ? 1 : -1, push: true, slap: true, rest: false });
+    Object.assign(s.ch, { dir: s.flipTo ? 1 : -1, push: true, rest: false });
   }
 }
 
@@ -218,13 +218,18 @@ function stepKey(s: Card, dt: number) {
   if (!s.keyHeld && Math.hypot(k.tx - s.x, k.ty - s.y) < 0.5) Object.assign(s, { x: k.tx, y: k.ty, kb: null });
 }
 
-// The note turns as paper (note.ts): the finger lets go past upright and the sim does the rest. Its free edge slapping
-// down is its landing; it rests once it lies still, on whichever side it fell.
+// The note turns as paper (note.ts): the finger lets go past upright and the sim does the rest. The sheet lands as any
+// item that comes down part by part (touchdown), across its width; it rests once it lies still, on whichever side it fell.
 function stepPaper(s: Card, dt: number) {
   const c = s.ch;
   if (!c || c.rest) return;
-  const v = stepChain(c, dt, { g: T.gravity, drag: NOTE.drag, bend: NOTE.bend, lift: NOTE.lift });
-  if (v) land(s, Math.max(0.1, clamp(v / 600))); // the floor the old land() gave it
+  const k = s.k || 1, was = sheet(c, k);
+  stepChain(c, dt, { g: T.gravity, drag: NOTE.drag, bend: NOTE.bend, lift: NOTE.lift });
+  const l = touchdown(sheet(c, k), was, 1, dt, c.l * k * s.w);
+  if (l) { // the patch, in the frame its card is drawn in (uniforms.ts: past half way, the sheet over its strip)
+    const yh = STRIP * k - s.h / 2, lo = Math.min(yh + c.x[2 * c.n] * k, -s.h / 2), [m, h] = s.flip > 0.5 ? [(lo + yh) / 2, (yh - lo) / 2] : [0, s.h / 2];
+    land(s, l[3], [0, (yh + l[2] - m) / h, 1, (l[0] * c.l * k) / 2 / h]);
+  }
   s.flip = clamp(Math.atan2(c.x[2 * c.n + 1], c.x[2 * c.n]) / Math.PI);
   if (c.rest) {
     s.flip = s.flipTo = c.x[2 * c.n] < 0 ? 1 : 0; s.hit.setAttribute('aria-expanded', String(!!s.flipTo));
@@ -233,6 +238,13 @@ function stepPaper(s: Card, dt: number) {
   }
   s.el.classList.toggle('flipped', c.rest && !!s.flipTo);
   s.el.classList.toggle('turning', !c.rest);
+}
+
+// The sheet's joints past the strip's edge as touchdown samples (CSS px): across it, along the note from that edge, up.
+function sheet(c: Chain, k: number) {
+  const a = new Float64Array(3 * c.n);
+  for (let i = 1; i <= c.n; i++) { a[3 * i - 2] = c.x[2 * i] * k; a[3 * i - 1] = c.x[2 * i + 1] * k; }
+  return a;
 }
 
 // ---------- contact ----------
