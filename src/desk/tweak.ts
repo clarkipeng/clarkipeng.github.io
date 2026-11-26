@@ -1,7 +1,7 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
 import { HELP } from './help.ts';
-import { PRINTS, CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
+import { CARD_PRESETS, RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS, BASE, STYLE_BASE } from './tunables.ts';
 
 
 export function mountTweak() {
@@ -29,7 +29,6 @@ function tweakPanel() {
   const colors = colorsGroup(desk, resetBtn); // appended last, under the other groups
   const set = (k: string, v: number | string) => {
     T[k] = v;
-    if (k === 'print') { Object.assign(T, PRINTS[v]); sync(); } // a preset sets the print knobs
     if (k === 'cards') { Object.assign(T, CARD_PRESETS[v]); sync(); if (desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } }
     if (k === 'look') {
       const before = RESEED.map((r) => T[r]).join();

@@ -98,16 +98,6 @@ export const GROUPS = {
     ['hoverDelay', 0, 0, 800, 10, 'hover delay ms'],
     ['focusS', MOTION.respond, 0.05, 2, 0.05, 'hover fade s (release takes exit x this)'],
   ],
-  // Prints: card images treated as photos printed on the desk's paper. A preset sets the knobs below it.
-  Prints: [
-    ['print', 'as-is', 0, 0, 0, 'preset'], // as-is: K8's untreated photos
-    ['pDesat', 0, 0, 1, 0.01, 'desaturate'],
-    ['pWarm', 0, 0, 1, 0.01, 'white balance to paper'],
-    ['pBlack', 0, 0, 0.12, 0.001, 'lift blacks to ink'],
-    ['pGrain', 0, 0, 3, 0.05, 'paper grain'],
-    ['pMatte', 0, 0, 12, 0.25, 'matte edge px'],
-    ['pDuo', 0, 0, 1, 0.01, 'duotone at rest'],
-  ],
   // Film: photo cards are framed like instant film (Polaroid 600: 4.5 mm sides, about 6 mm on top and 22 mm below on a
   // 107 mm sheet), as fractions of the cards' shared longest side; the strip grows to fit its page's longest caption.
   Film: [
@@ -204,11 +194,6 @@ export const EASES = {
   sine: (u: number) => -(Math.cos(Math.PI * u) - 1) / 2,
   linear: (u: number) => u,
 };
-export const PRINTS: Record<string, Record<string, number>> = {
-  print: { pDesat: 0.22, pWarm: 0.7, pBlack: 0.03, pGrain: 1, pMatte: 1.5, pDuo: 0 },
-  duotone: { pDesat: 0.22, pWarm: 0.7, pBlack: 0.03, pGrain: 1, pMatte: 1.5, pDuo: 1 }, // full color fades in as the card plays
-  'as-is': { pDesat: 0, pWarm: 0, pBlack: 0, pGrain: 0, pMatte: 0, pDuo: 0 },
-};
 // Looks: presets for the agents and both pages' ink (the research page keeps its own project color). original: the first desk (b-desk.html: 26k agents on a 0.45x
 // grid (agents count at 0.5x, so 32.1k here), soft pale veins drawn at half opacity, big open cells); k8: Clark's K8 tuning (denser, finer olive veins).
 const LOOKS: Record<string, { T: Record<string, number>; main: Record<string, number | string> }> = {
@@ -223,7 +208,7 @@ export const CARD_PRESETS: Record<string, Record<string, number>> = {
   'as-is': { cardScale: 1, backTitle: 1, backTight: 0, framing: 0 },
   compact: { cardScale: 0.75, backTitle: 0, backTight: 1, framing: 1 },
 };
-export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), look: Object.keys(LOOKS), turnEase: Object.keys(EASES), print: Object.keys(PRINTS) };
+export const CHOICES: Record<string, readonly string[]> = { cards: Object.keys(CARD_PRESETS), look: Object.keys(LOOKS), turnEase: Object.keys(EASES) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
@@ -250,9 +235,9 @@ export const STYLE_DEFAULTS: Record<string, Style> = {
   // research: the same K8 paper, with each paper always emitting a soft wash of its own ink
   research: { bg: 'f3f1ea', ink: 'a5a970', opacity: 1, gain: 0.69, gamma: 1.47, soft: 0.3, grain: 0.16, tint: 0.8, hueMix: 0.8 },
 };
-// What the tweak panel resets to: the defaults with the default look and print laid over them (the research page keeps its tint).
+// What the tweak panel resets to: the defaults with the default look laid over them (the research page keeps its tint).
 const LOOK = LOOKS[DEFAULTS.look];
-export const BASE = { ...DEFAULTS, ...LOOK.T, ...PRINTS[DEFAULTS.print] };
+export const BASE = { ...DEFAULTS, ...LOOK.T };
 export const STYLE_BASE = Object.fromEntries(PAGE_NAMES.map((pg) => [pg,
   { ...STYLE_DEFAULTS[pg], ...Object.fromEntries(Object.entries(LOOK.main).filter(([k]) => pg === 'main' || k !== 'tint')) }])) as Record<string, Style>;
 export const hexRGB = (h: string) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
@@ -278,7 +263,6 @@ for (const k of Object.keys(DEFAULTS)) {
   T[k] = typeof DEFAULTS[k] === 'string' ? qs.get(k)! : parseFloat(qs.get(k)!);
 }
 for (const [k, list] of Object.entries(CHOICES)) if (!list.includes(T[k] as string)) T[k] = DEFAULTS[k];
-for (const [k, v] of Object.entries(PRINTS[T.print])) if (!qs.has(k)) T[k] = v;
 for (const [k, v] of Object.entries(CARD_PRESETS[T.cards])) if (!qs.has(k)) T[k] = v;
 const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => {
   const v = qs.get(`${pg}.${k}`);

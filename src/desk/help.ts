@@ -63,14 +63,6 @@ export const HELP: Record<string, string> = {
   hold: 'Cuts each clip after this many seconds. 0 plays whole clips.',
   hoverDelay: 'How long you hover before a clip starts.',
   focusS: 'How fast a card\'s hover effect fades in. It fades out a bit faster.',
-  // Prints
-  print: 'A preset that treats card images as photos printed on the desk paper. Picking one overwrites the knobs below.',
-  pDesat: 'Drains color from the images.',
-  pWarm: 'Shifts the images\' white toward the paper color.',
-  pBlack: 'Lifts the images\' blacks toward the ink, like a matte print.',
-  pGrain: 'Paper grain over the images.',
-  pMatte: 'A soft paper edge inside each image.',
-  pDuo: 'Shows resting images in two tones; full color fades in as a card plays.',
   // Film
   frameSide: 'The instant-film border on photo cards: the sides.',
   frameTop: 'The instant-film border: the top.',

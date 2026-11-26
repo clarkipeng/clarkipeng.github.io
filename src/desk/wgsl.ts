@@ -37,8 +37,7 @@ struct G {
   bg: vec4f,  // page background, linear rgb
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
   jq: vec4f,  // unused, unused; hold (1: clear the ink, hold the agents), the note drawn as paper (-1: none)
-  pr: vec4f,  // prints: desaturate, white balance to paper, black lift, duotone at rest
-  pq: vec4f,  // prints: paper grain, matte edge (CSS px); the first agent this pass runs (a warm-up step's later part), unused
+  pq: vec4f,  // unused, unused, the first agent this pass runs (a warm-up step's later part), unused
   cu: vec4f,  // page turn: the outgoing page's roll (direction from the corner xy, fold distance, roll radius; device px)
   dr: vec4f,  // the page corner of the page you see, the same way
   lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
@@ -360,19 +359,6 @@ fn layChips(col: vec3f, c: vec4f) -> vec3f { return col * (1.0 - c.a) + c.rgb; }
 const PAPER = vec3f(${PAPER.map(lin).map((x) => x.toFixed(5)).join(', ')});
 
 ${PAPER_FNS}
-// A card's image as a photo printed on the desk's paper (linear rgb): muted, its whites balanced to the paper, its blacks
-// lifted to a warm ink-dark, the paper's grain on top, and a soft matte edge. Duotone: at rest an olive-ink/paper print
-// (the page's ink), giving way to full color as color goes to 1.
-fn printed(cc: vec3f, gr: vec2f, edge: f32, color: f32) -> vec3f {
-  let lum = dot(cc, vec3f(0.2126, 0.7152, 0.0722));
-  let white = mix(vec3f(1.0), PAPER / PAPER.r, g.pr.y);
-  let dark = g.pr.z * vec3f(1.0, 0.86, 0.66);
-  var c = mix(cc, vec3f(lum), g.pr.x);
-  c = mix(c, PAPER * exp(-g.n.xyz * 4.0 * (1.0 - sqrt(lum))), g.pr.w * (1.0 - color));
-  c = dark + (white - dark) * c;
-  c *= 1.0 + ((gr.y - 0.5) * 0.09 + (gr.x - 0.5) * 0.05) * g.pq.x;
-  return mix(white, c, smoothstep(0.0, max(g.pq.y, 1e-3), edge)); // the image softens into the card's border
-}
 // Signed distance to card c's flat footprint at q from its center (sim px).
 fn footSd(c: Card, q: vec2f) -> f32 {
   let l = vec2f(c.flat.z * q.x + c.flat.w * q.y, -c.flat.w * q.x + c.flat.z * q.y) / c.misc.x / max(vec2f(c.bound.w, fract(c.obj.w * 0.25) * 4.0), vec2f(0.05)); // squashed as the card turns
@@ -534,9 +520,6 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
     if (!back && c.media.z > 0.0 && all(mu >= vec2f(0.0)) && all(mu <= vec2f(1.0))) {
       let ms = (c.media.zw - c.media.xy) * c.geo.xy * 2.0 / s; // media size, CSS px
       let edge = min(min(mu.x, 1.0 - mu.x) * ms.x, min(mu.y, 1.0 - mu.y) * ms.y);
-      // Full color: while the card's clip shows (a card with clips), or while hovered (a still).
-      let color = select(c.misc.y, select(0.0, g.v.y, f32(k) == g.v.x), c.inv0.w > 0.5);
-      cc = printed(cc, gr, edge, color);
       // The picture lies under the frame's glossy window: a hairline of shadow where the frame's edge overlaps it, and a
       // faint sheen that holds still as the card turns and slides toward the top as it lifts.
       cc *= 1.0 - 0.09 * (1.0 - smoothstep(0.0, 1.5, edge));

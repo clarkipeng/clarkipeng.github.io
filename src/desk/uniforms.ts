@@ -14,7 +14,7 @@ const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launc
 // ---------- uniforms ----------
 
 // Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 25, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
+const G_HEAD = 24, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
 const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
 const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
 function invert3(m: number[]) {
@@ -188,8 +188,7 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     ...hexRGB(st.bg).map(lin), 0,
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,
     0, 0, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
-    T.pDesat, T.pWarm, T.pBlack, T.pDuo,
-    T.pGrain, T.pMatte, 0, 0,
+    0, 0, 0, 0,
     ...(turn.on && !desk.capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
     ...(desk.capturing || desk.view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
