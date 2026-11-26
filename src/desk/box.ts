@@ -128,7 +128,7 @@ function stepThrow(d: Card, dt: number) {
   L.t = at ?? L.t + dt; L.wt = at ?? L.wt + dt;
   if (turn.on && turn.from === d.region) { // the paper under it, as the turn moves it
     if (turn.mode === 'drag') L.keys.push(L.t, turn.d, turn.a);
-    else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES[T.turnEase as keyof typeof EASES] : easeOutCubic };
+    else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES.glide : easeOutCubic };
     L.mode = turn.mode;
   } else L.end ??= L.mode === 'back' ? 'back' : 'done';
   if (at != null && at < world.time - 1e-9) world.load(L.sv); // held earlier: the same throw again from its start

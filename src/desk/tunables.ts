@@ -25,8 +25,7 @@ export const NAME_INK = [30, 34, 40];
 // Every tunable, defaults matched to b-desk.html's CPU sim (scale 0.45, 26k agents, 1.1 sim px per step at 60 steps/s,
 // about 147 CSS px/s). Distances are CSS px, speed is CSS px per second. Each one is a URL parameter and a slider in the
 // tweak panel (press t), and all of them apply live; only the agent count re-seeds the sim.
-// Groups of [key, default, min, max, step, label]. A string default makes a select (options in CHOICES) or, for ink, a
-// color picker; a 0/1 default with step 1 is a checkbox.
+// Groups of [key, default, min, max, step, label]. A 0/1 default with step 1 is a checkbox.
 export const GROUPS = {
   Performance: [
     ['auto', 1, 0, 1, 1, 'auto quality'],
@@ -109,7 +108,6 @@ export const GROUPS = {
     ['cornerLabel', 19, 12, 30, 0.5, 'corner label px'],
     ['cornerLift', 10, 0, 40, 1, 'hover lift px'],
     ['turnS', 1.3, 0.3, 2.5, 0.05, 'page turn s'],
-    ['turnEase', 'glide', 0, 0, 0, 'page turn easing'],
   ],
   // Throw: the card box as a rigid body the turning page throws off (physics.ts, curl.ts).
   Throw: [
@@ -172,11 +170,11 @@ export const GROUPS = {
     ['chipStain', 0.4, 0, 1, 0.01, 'slime stain'],
   ],
 } as const;
-// Every tunable's current value: a number, or a string for the selects and the ink color.
+// Every tunable's current value.
 type Param = (typeof GROUPS)[keyof typeof GROUPS][number];
 // A panel row as the panel reads it: key, default, min, max, step, label.
-export type ParamRow = readonly [string, number | string, number, number, number, string];
-type Tunables = { [P in Param as P[0]]: P[1] extends string ? string : number } & Record<string, number | string>;
+export type ParamRow = readonly [string, number, number, number, number, string];
+type Tunables = { [P in Param as P[0]]: number } & Record<string, number>;
 // glide: one page turn whose speed rises gently (as u^1.5) and settles long and soft (as (1 - u)^3): the integral of
 // that speed profile, tabulated. No linear stretch, no corner.
 const glide = (() => {
@@ -188,11 +186,7 @@ const glide = (() => {
 export const EASES = {
   glide,
   cubic: (u: number) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2),
-  quint: (u: number) => (u < 0.5 ? 16 * u ** 5 : 1 - (-2 * u + 2) ** 5 / 2),
-  sine: (u: number) => -(Math.cos(Math.PI * u) - 1) / 2,
-  linear: (u: number) => u,
 };
-export const CHOICES: Record<string, readonly string[]> = { turnEase: Object.keys(EASES) };
 const PARAMS = Object.values(GROUPS).flat();
 export const DEFAULTS = Object.fromEntries(PARAMS.map(([k, d]) => [k, d]));
 export const RESEED = ['agents', 'res', 'auto']; // the only settings that rebuild the sim
@@ -239,9 +233,8 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || qs.has
 const T = { ...DEFAULTS } as Tunables;
 for (const k of Object.keys(DEFAULTS)) {
   if (!qs.has(k)) continue;
-  T[k] = typeof DEFAULTS[k] === 'string' ? qs.get(k)! : parseFloat(qs.get(k)!);
+  T[k] = parseFloat(qs.get(k)!);
 }
-for (const [k, list] of Object.entries(CHOICES)) if (!list.includes(T[k] as string)) T[k] = DEFAULTS[k];
 const STYLE: Record<string, Style> = Object.fromEntries(PAGE_NAMES.map((pg) => [pg, Object.fromEntries(Object.entries(STYLE_DEFAULTS[pg]).map(([k, d]) => {
   const v = qs.get(`${pg}.${k}`);
   return [k, v == null ? d : typeof d === 'string' ? v : parseFloat(v)];

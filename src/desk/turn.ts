@@ -118,7 +118,7 @@ function stepTurn(dt: number) {
   if (turn.mode === 'drag') turn.d += (turn.target - turn.d) * (1 - Math.exp(-dt / 0.03));
   else {
     turn.t = Math.min(1, window.__j?.at != null ? window.__j.at / turn.dur : turn.t + dt / turn.dur); // test hook: hold the turn at one moment
-    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES[T.turnEase as keyof typeof EASES](turn.t) : 1 - (1 - turn.t) ** 3);
+    turn.d = lerp(turn.d0, turn.d1, turn.mode === 'auto' ? EASES.glide(turn.t) : 1 - (1 - turn.t) ** 3);
   }
   if (turn.mode === 'drag' || turn.t < 1) return;
   turn.on = false;

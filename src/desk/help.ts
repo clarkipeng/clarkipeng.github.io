@@ -70,7 +70,6 @@ export const HELP: Record<string, string> = {
   cornerLabel: 'The size of the label on that corner.',
   cornerLift: 'How far the corner lifts when you hover it.',
   turnS: 'How long a page turn takes.',
-  turnEase: 'The page turn\'s speed curve.',
   // Throw
   throwG: 'Gravity on the card box when a page turn throws it off.',
   throwMass: 'The card box\'s mass, against what it hits.',

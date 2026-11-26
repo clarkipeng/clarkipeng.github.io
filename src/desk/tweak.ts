@@ -1,7 +1,7 @@
 import { currentDesk } from './state.ts';
 import { colorsGroup } from './colors.ts';
 import { HELP } from './help.ts';
-import { RESEED, GROUPS, type ParamRow, CHOICES, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
+import { RESEED, GROUPS, type ParamRow, PAGE_NAMES, STYLE_PARAMS, DEFAULTS, STYLE_DEFAULTS } from './tunables.ts';
 
 
 export function mountTweak() {
@@ -10,10 +10,10 @@ const { T, reseed, placeDoor, sources, STYLE, drawFrom, INTRO_DELAY, stats, Q, a
   addEventListener, body } = desk;
 // ---------- tweak panel (press t) ----------
 
-// A quiet corner panel with a slider per tunable, the edge mode, the ink color, every card's colors, a copy-link and a reset button.
+// A quiet corner panel with a slider per tunable, each page's paper and ink, every card's colors, a copy-link and a reset button.
 function tweakPanel() {
   const panel = Object.assign(document.createElement('div'), { className: 'tweak' });
-  type TweakInput = (HTMLInputElement | HTMLSelectElement) & { out?: HTMLOutputElement };
+  type TweakInput = HTMLInputElement & { out?: HTMLOutputElement };
   const inputs: Record<string, TweakInput> = {};
   let reseedTimer = 0;
   // Every row ends in a small reset to its own default, shown only while the value differs from it.
@@ -27,7 +27,7 @@ function tweakPanel() {
   };
   panel.addEventListener('input', refresh);
   const colors = colorsGroup(desk, resetBtn); // appended last, under the other groups
-  const set = (k: string, v: number | string) => {
+  const set = (k: string, v: number) => {
     T[k] = v;
     // card sizes rebuild the desk too (and a corner label size, the card atlas)
     if ((RESEED.includes(k) || ['cardScale', 'cardMax', 'backTitle', 'backTight', 'framing', 'cornerLabel', 'frameSide', 'frameTop', 'frameBottom'].includes(k)) && desk.gpu) { clearTimeout(reseedTimer); reseedTimer = setTimeout(reseed, 300); } // the label is in the atlas
@@ -40,16 +40,9 @@ function tweakPanel() {
     if (name === 'Performance') group.append(Object.assign(document.createElement('div'), { className: 'tweak-perf' }));
     for (const [k, , min, max, step, label] of params as readonly ParamRow[]) {
       let input: TweakInput, out: HTMLOutputElement | undefined;
-      if (CHOICES[k]) {
-        input = document.createElement('select');
-        for (const m of CHOICES[k]) input.append(new Option(m, m));
-        input.oninput = () => set(k, input.value);
-      } else if (k === 'ink') {
-        input = Object.assign(document.createElement('input'), { type: 'color' });
-        input.oninput = () => set(k, input.value.slice(1));
-      } else if (step === 1 && max === 1) {
+      if (step === 1 && max === 1) {
         input = Object.assign(document.createElement('input'), { type: 'checkbox' });
-        input.oninput = () => set(k, (input as HTMLInputElement).checked ? 1 : 0);
+        input.oninput = () => set(k, input.checked ? 1 : 0);
       } else {
         input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
         out = document.createElement('output');
@@ -91,8 +84,8 @@ function tweakPanel() {
   panel.prepend(styleGroup);
   const sync = () => {
     for (const [k, el] of Object.entries(inputs)) {
-      if (el.type === 'checkbox') (el as HTMLInputElement).checked = !!T[k];
-      else el.value = k === 'ink' ? '#' + T[k] : String(T[k]);
+      if (el.type === 'checkbox') el.checked = !!T[k];
+      else el.value = String(T[k]);
       if (el.out) el.out.value = String(T[k]);
     }
     styleTitle.textContent = `Style (${PAGE_NAMES[desk.page]} page)`;
