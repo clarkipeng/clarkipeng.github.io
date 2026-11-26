@@ -1,4 +1,4 @@
-// Drawing the chips (chips.ts): each one as a fine mesh of its curved surface, posed in 3D, so its voxels never show and
+// Drawing the chips (chips.ts): each one as a fine mesh of its curved surface, posed in 3D, so its columns never show and
 // its curl shows in its shading and its shadow. A small pass draws each chip that changed, with its shadow, into its own
 // layer of a small texture array, with the height of what it shows at each pixel; the desk's render lays the tiles over
 // the resting cards (at each pixel, the lowest chip first) and under any lifted one, so a frame costs only what changed.
@@ -92,7 +92,7 @@ fn rimSd(p: vec2f) -> f32 {
   let r = b.s0.x * (1.0 + b.h0.x * cos(2.0 * th + b.h0.y) + b.h0.z * cos(3.0 * th + b.h0.w) + b.h1.x * cos(4.0 * th + b.h1.y) + b.h1.z * cos(5.0 * th + b.h1.w));
   return r - length(p);
 }
-// What is left of it over p: r how much of its thickness, g the slime's stain, b how far past it (chips.js maskBytes). A cubic B-spline through the voxel columns
+// What is left of it over p: r how much of its thickness, g the slime's stain, b how far past it (chips.js maskBytes). A cubic B-spline through the columns
 // (four bilinear taps), so the eaten edge is a smooth curve, never the grid.
 fn field(p: vec2f) -> vec3f {
   let b = &u.b[bi];
