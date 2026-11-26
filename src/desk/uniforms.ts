@@ -123,7 +123,7 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, tint = 0, bas
   } else if (s.carrier) { // riding in it: seen by the box's eye
     const d = s.carrier, P = launchPose(d), i = d.pile.indexOf(s), a = (d.rot * Math.PI) / 180;
     if (i >= 0) { const inn = P.w * (2 + i * BOX_STEP + 3) * desk.view.k; sx += Math.cos(a) * inn; sy += Math.sin(a) * inn; } // in all the way
-    const r = carried(d, { sx, sy, z, mu, mv }, P);
+    const r = carried(d, s, { sx, sy, z, mu, mv }, P);
     ({ mu, mv } = r); z = P.C[2] + r.dc[2]; lv = looks(mv);
     H = s.flyH = boxH(P, r.dc, mu, mv, dpr, originX);
     fade = i >= 0 ? Math.max(P.fade, P.w) : P.fade;

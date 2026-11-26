@@ -282,10 +282,11 @@ const boxTurn = ({ M }: { M: number[] }) => (v: number[]) => [M[0] * v[0] + M[1]
 // Something riding in the flying box (its lid, the cards in it), from where it lies at rest: where it is relative to the
 // box's middle (dc) and its axes, turned with the box. At rest each is drawn from straight above, not by the box's eye,
 // so it starts where that eye sees it there and settles into the box as its perspective eases in (a card in it slides all the way in).
-function carried(d: Card, { sx, sy, z, mu, mv }: { sx: number; sy: number; z: number; mu: V3; mv: V3 }, P: ThrowPose) {
-  const L = d.launch!, A = BOX3D.a, u = 1 - P.w, { D } = boxDims(d), s0 = A * (D / 2 - u * z), turn = boxTurn(P);
+// z is its height above the box's base; the lid lies on the box's top, D above it.
+function carried(d: Card, s: Card, { sx, sy, z, mu, mv }: { sx: number; sy: number; z: number; mu: V3; mv: V3 }, P: ThrowPose) {
+  const L = d.launch!, A = BOX3D.a, u = 1 - P.w, { D } = boxDims(d), top = s.lid ? D : 0, s0 = A * (D / 2 - top - u * z), turn = boxTurn(P);
   const lean = (m: V3) => [m[0] - u * A * m[2], m[1] + u * A * m[2], m[2]];
-  return { dc: turn([sx - L.x + s0, sy - L.y - s0, z - D / 2]), mu: turn(lean(mu)), mv: turn(lean(mv)) };
+  return { dc: turn([sx - L.x + s0, sy - L.y - s0, top + z - D / 2]), mu: turn(lean(mu)), mv: turn(lean(mv)) };
 }
 // The box's eye: the homography (sim px) from a plane through the box's middle plus dc (CSS px), with axes mu and mv,
 // to the page (page-local sim px).
