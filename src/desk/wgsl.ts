@@ -615,7 +615,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
   col = laid(sheet(1u, pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.la));
   // A page turn: the page you left (its frozen last frame) rolls away over this one. What it uncovers fades from the bare
   // paper the resting corner shows to this page as the fold opens (the same 250 px as the stacked edges), so the sliver
-  // never switches in one frame, at the start or when a turn by hand falls back.
+  // never switches in one frame.
   // What it threw (cards and chips) lies over both pages, except what has fallen below its roll's axis: the turned-over
   // paper covers that.
   let over = tm.x & ~pageBits;

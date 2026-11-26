@@ -59,8 +59,7 @@ function holdPage(sm: Sim) {
 // edges of the pages below, and on the fold, in pen, the other page's name. Hovering lifts it a little more, leaning
 // toward the pointer. Click (or Enter) turns the page: the whole page (its last frame, frozen, cards and all) rolls away
 // from the corner and off the screen, over the other page, live underneath, which then deals its cards to their homes;
-// the cards it took go back in its pile. Dragging the corner turns it by hand: let go past halfway and it completes, else it
-// falls back.
+// the cards it took go back in its pile. Dragging the corner turns it by hand; let go and it completes.
 const DOOR = { R: 3.5, lean: 0.3, rMax: 60 }; // CSS px at k = 1: the roll's radius at rest; how far the fold leans toward the pointer; the roll's radius late in a turn (the fold's distance from the corner at rest and the hover lift are CORNER.size and CORNER.lift)
 const door = { amt: 0, d: 0, a: Math.PI / 4, hover: false, at: null as { x: number; y: number } | null, press: null as { x: number; y: number; d: number; moved: boolean } | null }; // a: the fold's direction from the corner (rad above the bottom edge); amt: 0 to 1 as a page's corner folds back
 const turn: Turn = { on: false, mode: '', t: 0, dur: 1, d0: 0, d1: 0, d: 0, start: 0, target: 0, a: Math.PI / 4, from: 0, to: 0 };
@@ -101,7 +100,7 @@ function show(region: number) {
   desk.adminSync?.();
 }
 // The turn starts from the corner as it is (hovered, leaning). The other page comes up under it from bare paper, its
-// cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go past halfway).
+// cards in its pile; they are dealt as the turn settles (a turn by hand: once it is let go).
 function startTurn(to: number, mode: string) {
   desk.launch(desk.page); // what lies on the page is not part of it: it is thrown off as the page turns
   freeze();
@@ -111,7 +110,7 @@ function startTurn(to: number, mode: string) {
   turn.links = { left: r.left + (to ? desk.view.w : 0), top: r.top, width: r.width, height: r.height };
   Object.assign(door, { amt: 0, d: 0, a: Math.PI / 4 }); // the new page's corner lies flat until the turn is over
   desk.arriveDeck(to, mode === 'drag' ? 0 : ARRIVE_AT * T.turnS, MOTION.respond);
-  if (mode !== 'drag') desk.drawFrom(to, { delay: ARRIVE_AT * T.turnS + MOTION.respond, hold: false }); // a turn by hand deals once let go past halfway
+  if (mode !== 'drag') desk.drawFrom(to, { delay: ARRIVE_AT * T.turnS + MOTION.respond, hold: false }); // a turn by hand deals once let go
 }
 function stepTurn(dt: number) {
   if (!turn.on) return;
@@ -122,12 +121,7 @@ function stepTurn(dt: number) {
   }
   if (turn.mode === 'drag' || turn.t < 1) return;
   turn.on = false;
-  if (turn.mode === 'back') { // fell back: the page you were on comes back to life as it was
-    for (const s of sources) if (s.region === turn.to && s.rel < 0) s.rel = 1e3; // the other page's held agents let go
-    show(turn.from);
-    if (!desk.pageDeck(turn.from)?.launch) desk.arriveDeck(turn.from, 0); // its box comes back in (once it has flown off)
-    Object.assign(door, { amt: 1, d: turn.d, a: turn.a });
-  } else desk.pileUp(turn.from); // a turned page leaves its cards on its pile
+  desk.pileUp(turn.from); // a turned page leaves its cards on its pile
   next();
 }
 const clipPoly = (poly: Poly, f: (p: Pt) => number) => { // a convex polygon cut by a line, keeping f >= 0 (Sutherland-Hodgman, one plane)
@@ -212,12 +206,10 @@ const letGo = () => {
   door.press = null;
   if (!pr?.moved) return;
   doorEl.dataset.dragged = '1'; // the click that follows is not a turn
-  if (2 * turn.target - Math.PI * rollR(turn.target) > span(turn.a) / 2) { // the corner is past halfway: complete the turn
-    const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
-    Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
-    desk.drawFrom(turn.to, { delay: DEAL_AT * dur, hold: false });
-    desk.dest = turn.to; record(turn.to);
-  } else Object.assign(turn, { mode: 'back', t: 0, d0: turn.d, d1: restD(hitEl.matches(':hover')), dur: 0.4 });
+  const d1 = farD(turn.a), dur = clamp(T.turnS * (d1 - turn.d) / (d1 - turn.start), 0.3, T.turnS);
+  Object.assign(turn, { mode: 'finish', t: 0, d0: turn.d, d1, dur });
+  desk.drawFrom(turn.to, { delay: DEAL_AT * dur, hold: false });
+  desk.dest = turn.to; record(turn.to);
 };
 hitEl.addEventListener('pointerup', letGo);
 hitEl.addEventListener('pointercancel', letGo);

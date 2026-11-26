@@ -74,8 +74,8 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 // onto the page, settle, and ease home. Once off the frame the box slides in again when its page next shows, the cards in
 // it.
 // fadeZ: CSS px up by which a shadow has faded; out: s one left at rest on screen after a turn takes to slide off; limit:
-// s at most in the air; persp: s the box takes to ease into its 3D view; home: s one that fell back takes to ease home
-const THROW = { fadeZ: 180, out: 0.6, limit: 6, persp: 0.25, home: 0.5 };
+// s at most in the air; persp: s the box takes to ease into its 3D view
+const THROW = { fadeZ: 180, out: 0.6, limit: 6, persp: 0.25 };
 const LID_WAIT = 0.3; // the flap waits this long before it shuts (s)
 const easeOutCubic = (u: number) => 1 - (1 - u) ** 3;
 const POS = new Float64Array(3), ROT = new Float64Array(9), SURF = new Float64Array(7), F0 = new Float64Array(2), F1 = new Float64Array(2);
@@ -100,10 +100,11 @@ function throwWorld() {
 // step the paper first moves a body, the body takes the page's spin and the speed of the paper where it lies (omega x r:
 // straight up, as the paper there is only starting to lift, and more the further it is from the spine), and the roll
 // pushes it on along the turn at half the fold's speed, so it comes down clear of the page. Box, cards and chips alike,
-// once each turn.
+// once each turn, whatever the page model: nothing rides the lifting paper (it would slide down to the crease and be
+// swept along with it).
 function toss() {
   const { world, L } = desk.phys!;
-  if (!L || L.end || T.pageModel) return; // the other page models move what they lift themselves
+  if (!L || L.end) return;
   const t = world.time;
   turnAt(L, t, F0); turnAt(L, t + 0.01, F1);
   const a = F0[1], c = Math.cos(a), s = Math.sin(a), v = (F1[0] - F0[0]) / 0.01, om = (Math.PI * v) / span(a);
@@ -179,7 +180,7 @@ function under(x: number, y: number, r: number) {
   return -(x - (L.region + 1) * desk.view.w) * c - (y - desk.view.h) * s - r > F0[0];
 }
 // The turn starts: what lies on the page is let go where it lies (asleep, so exactly as painted until the paper reaches
-// it); the box's lid and cards ride with the box. One still settling from a turn that fell back is thrown from where it is.
+// it); the box's lid and cards ride with the box.
 function launch(region: number) {
   const d = pageDeck(region);
   if (!d || desk.view.phone || !desk.dealing) return;
@@ -189,9 +190,8 @@ function launch(region: number) {
   sheet.page(region * desk.view.w, desk.view.w, desk.view.h, k); sheet.prepare(0);
   syncBodies();
   for (const s of sources) if (thrown(s, region) && s.body) {
-    if (s.launch) { Object.assign(s.launch, { home: null, out: null }); continue; }
     s.body.held = false; // asleep until the paper moves under it
-    s.launch = { x: s.x, y: s.y, wt: 0, home: null, out: null, P: null!, hull: null }; // P: just below
+    s.launch = { x: s.x, y: s.y, wt: 0, out: null, P: null!, hull: null }; // P: just below
   }
   P.L.sv = world.save();
   const lid = lidOf(d);
@@ -210,7 +210,7 @@ function stepThrows(dt: number) {
       if (turn.mode === 'drag') L.keys.push(L.t, turn.d, turn.a);
       else if (L.seg?.mode !== turn.mode) L.seg = { mode: turn.mode, t0: L.t - turn.t * turn.dur, d0: turn.d0, d1: turn.d1, dur: turn.dur, a: turn.a, ease: turn.mode === 'auto' ? EASES.glide : easeOutCubic };
       L.mode = turn.mode;
-    } else L.end ??= L.mode === 'back' ? 'back' : 'done';
+    } else L.end ??= 'done';
     if (at != null && at < world.time - 1e-9) { world.load(L.sv!); L.tossed.clear(); } // held earlier: the same throw again from its start
     world.advance(L.t);
   } else { const t = world.time + P.rem + dt; world.advance(t); P.rem = t - world.time; }
@@ -221,24 +221,19 @@ function stepThrows(dt: number) {
 function stepThrow(s: Card, dt: number, L: Turn | null) {
   const B = s.launch!, drawn = B.hull;
   B.wt = window.__j?.at ?? B.wt + dt;
-  if (B.home) B.home.t += dt;
-  else if (B.out) B.out.t += dt;
-  // At rest after the turn: home if the page fell back; off to the right if a finished turn left it on screen.
-  else if (L?.end && (s.body!.sleep || L.t > THROW.limit)) { if (L.end === 'back') B.home = { t: 0, q: [...s.body!.q] }; else B.out = { t: 0 }; }
+  if (B.out) B.out.t += dt;
+  else if (L?.end && (s.body!.sleep || L.t > THROW.limit)) B.out = { t: 0 }; // at rest after the turn, on screen: off to the right
   poseThrow(s);
-  if (B.home ? B.home.t >= THROW.home : offFrame(s, drawn)) endThrow(s, !B.home);
+  if (offFrame(s, drawn)) endThrow(s, true);
 }
-const quatMat = ([w, x, y, z]: number[]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
-const nlerp = (p: number[], q: number[], u: number) => { const s = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3] < 0 ? -1 : 1, r = p.map((v, i) => lerp(v, s * q[i], u)), l = Math.hypot(...r); return r.map((v) => v / l); };
 // A thrown body this frame: its axes at rest on the desk (X, Y); where its middle is (C, CSS px, z above the desk) and
 // how it is turned from rest (M, row major); how far the box's perspective has eased in (w); how high its lowest point is
 // over the paper under it (low); its shadow's footprint from above (foot: angle, half sizes), and how far it has faded.
 function poseThrow(d: Card) {
   const L = d.launch!, { W, H, D } = dims(d), a = (d.rot * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   desk.phys!.world.pose(d.body!, POS, ROT); L.hull = null; // where it shows, once drawn
-  let C = [...POS], R = [...ROT], w = easeOutCubic(clamp(L.wt / THROW.persp));
-  if (L.home) { const u = smooth(L.home.t / THROW.home), q0 = [Math.cos(a / 2), 0, 0, Math.sin(a / 2)]; C = C.map((v, i) => lerp(v, [L.x, L.y, D / 2][i], u)); R = quatMat(nlerp(L.home.q, q0, u)); w *= 1 - u; }
-  else if (L.out) C[0] += 1.2 * desk.view.w * clamp(L.out.t / THROW.out) ** 3;
+  const C = [...POS], R = ROT, w = easeOutCubic(clamp(L.wt / THROW.persp));
+  if (L.out) C[0] += 1.2 * desk.view.w * clamp(L.out.t / THROW.out) ** 3;
   const M = [0, 3, 6].flatMap((r) => [R[r] * c - R[r + 1] * s, R[r] * s + R[r + 1] * c, R[r + 2]]); // R times rest's transpose
   // Its shadow: the body seen from straight above, as the smallest rectangle along one of its edges that holds it.
   const reach = (x: number, y: number) => (W * Math.abs(x * R[0] + y * R[3]) + H * Math.abs(x * R[1] + y * R[4]) + D * Math.abs(x * R[2] + y * R[5])) / 2;
@@ -247,8 +242,9 @@ function poseThrow(d: Card) {
     const l = Math.hypot(R[i], R[3 + i]), x = R[i] / l, y = R[3 + i] / l, f = l > 1e-3 && [Math.atan2(y, x), reach(x, y), reach(-y, x)];
     if (f && (!foot || f[1] * f[2] < foot[1] * foot[2])) foot = f;
   }
-  SURF[0] = C[0]; SURF[1] = C[1]; desk.phys!.sheet.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
-  const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2 - SURF[0];
+  const bot = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2;
+  SURF[0] = C[0]; SURF[1] = C[1]; desk.phys!.sheet.at(SURF, false, bot); // how high its lowest point is over the paper under it (the flap or the desk)
+  const low = bot - SURF[0];
   C[2] = Math.min(C[2], 1200); // never up at the eye
   L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * desk.view.k)) };
 }
@@ -256,8 +252,7 @@ const launchPose = (d: Card) => d.launch!.P;
 // Wholly past an edge of the screen: a rectangle (page-local CSS px). What a turn threw and the chips end there alike.
 const outside = (x0: number, y0: number, x1: number, y1: number) => x0 > desk.view.w || x1 < 0 || y1 < 0 || y0 > (desk.view.phone ? desk.view.docH : desk.view.h);
 // Off the frame: everything it could draw (it, the box's lid, as the eye sees them) is past an edge of its page; or what
-// it drew last frame (drawn: its outline, page-local) and its shadow are. Once out it is gone, so one that falls back
-// never shows again.
+// it drew last frame (drawn: its outline, page-local) and its shadow are. Once out it is gone.
 function offFrame(d: Card, drawn: number[][] | null) {
   const P = d.launch!.P, lid = lidOf(d), { W, H, D } = dims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
   const r = (r0 * (1 + BOX3D.a) * F) / Math.max(F - r0, 1), x = P.C[0] - d.region * desk.view.w, y = P.C[1];
@@ -266,7 +261,7 @@ function offFrame(d: Card, drawn: number[][] | null) {
   const xs = drawn.map((p) => p[0]), ys = drawn.map((p) => p[1]), s = Math.hypot(P.foot![1], P.foot![2]) + THROW.fadeZ * desk.view.k;
   return outside(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)) && (P.fade >= 1 || outside(x - s, y - s, x + s, y + s));
 }
-// Gone: the box comes back in from off the right edge when its page next shows (or now, if a turn by hand fell back); a
+// Gone: the box comes back in from off the right edge when its page next shows; a
 // card goes in it. Its body is held again where it next shows (syncBodies), or goes with it.
 function endThrow(d: Card, arrive: boolean) {
   d.launch = null; d.dirty = true;

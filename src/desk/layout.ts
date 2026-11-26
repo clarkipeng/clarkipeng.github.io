@@ -36,7 +36,7 @@ export interface ThrowPose { X: V3; Y: V3; w: number; C: V3; M: number[]; low: n
 // pose, and its outline as last drawn (page-local CSS px).
 export interface Launch {
   x: number; y: number; wt: number;
-  home: { t: number; q: number[] } | null; out: { t: number } | null; P: ThrowPose; hull: number[][] | null;
+  out: { t: number } | null; P: ThrowPose; hull: number[][] | null;
 }
 // The card box's pencil tally (tallySetup).
 interface Tally { t: number; free: number; gen: number; marks: Mark[]; shown: boolean; surf?: TallySurface; dirty?: boolean }

@@ -7,11 +7,13 @@
 //   board (1): a stiff page, swung over about the spine (the line across the turn through the far corner, which stays
 //     down), as the fold goes from where the turn began to the spine (progress p, 0 to 1).
 //   bend (2): the same, bending in one arc that rises off the spine as it swings over.
-//   paper (3): the note's sheet (note.ts stepChain) pinned at the spine: a hand carries the corner from where it lay up
-//     over the spine (lift: how high, of the way to the spine) and lays it down on the other side; the rest is the sim.
-// Things on it rest on the topmost paper. The curl's turned-over free edge sags to the paper under it, so it slides
-// under what lies ahead of it instead of meeting it as a wall (the physics only; the other models turn their free edge
-// over the spine, through the air, and a sagging one would sweep the desk at the hand's speed).
+//   paper (3): the note's sheet (note.ts stepChain) pinned at the spine: a hand carries the corner from where it lay
+//     over the spine, just above the page (lift: how high, of the way to the spine), folding it over flat, and lays it
+//     down on the other side; the rest is the sim.
+// Things on it rest on the highest paper under them, never on paper passing over them. The curl's turned-over free
+// edge sags to the paper under it, so it slides under what lies ahead of it instead of meeting it as a wall (the physics
+// only; the other models turn their free edge over the spine, through the air, and a sagging one would sweep the desk
+// at the hand's speed).
 //
 //   const sheet = createSheet({ state(t, out) { out[0] = d; out[1] = a; out[2] = d0; }, rollR, model: () => 0 });
 //   sheet.page(ox, w, h, k); // where the page is (world CSS px: its left edge, its size) and its scale
@@ -39,7 +41,7 @@ export interface Sheet extends Surface {
   low: number; // the nearest any is (along dir)
   R: number; // the roll's radius (curl)
   page(x: number, w: number, h: number, k: number): void;
-  at(out: Float64Array, vel?: boolean): void;
+  at(out: Float64Array, vel?: boolean, z?: number): void;
 }
 
 export function createSheet({ state, rollR, model, gravity = () => 0, lift = () => 0.15 }: SheetOptions): Sheet {
@@ -126,8 +128,8 @@ export function createSheet({ state, rollR, model, gravity = () => 0, lift = () 
   // A turned-over point's height, the curl's free edge (the row's paper from m0) sagging to the paper under it.
   const sag = (j: number, m0: number) => (sagL ? Z[j] * (1 - Math.min(1, Math.max(0, 1 - (M[j] - m0) / sagL)) * Math.max(0, -Math.cos(TH[j]))) : Z[j]);
   const lerp = (a: number, b: number, f: number) => a + (b - a) * f;
-  // At world (out[0], out[1]): out = height, normal (3), and if vel, velocity (3): the topmost paper over it.
-  sh.at = (out, vel) => {
+  // At world (out[0], out[1]): out = height, normal (3), and if vel, velocity (3): the highest paper there at most z up.
+  sh.at = (out, vel, zq = Infinity) => {
     const x = out[0] - ox - W, y = out[1] - H, dx = sh.dx, dy = sh.dy, Xp = x * dx + y * dy, yN = y * dx - x * dy;
     out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; out[4] = 0; out[5] = 0; out[6] = 0;
     if (sh.top <= 1 || Xp > sh.reach) return;
@@ -141,7 +143,7 @@ export function createSheet({ state, rollR, model, gravity = () => 0, lift = () 
       const f = x1 === x0 ? 0.5 : (Xp - x0) / (x1 - x0), m = lerp(M[j], M[j + 1], f);
       if (m < m0 || m > m1) continue;
       const z = lerp(sag(j, m0), sag(j + 1, m0), f), key = z - 1e-4 * m; // level: the paper nearer the corner lies on top
-      if (key > bk) { bk = key; best = j; bz = z; bf = f; }
+      if (z <= zq && key > bk) { bk = key; best = j; bz = z; bf = f; }
     }
     if (best < 0) return;
     let tu = X[best + 1] - X[best], tz = sag(best + 1, m0) - sag(best, m0);

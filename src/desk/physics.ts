@@ -19,9 +19,10 @@
 //     render,          // optional (b) => void, after each advance it moved in: read world.pose(b, pos, rot)
 //   });
 //   world.surface = { top, speed, prepare(t), at(io, vel), moving(x, y, r) }: what everything rests on (the desk and the
-//     turning page, curl.ts). top: its highest point; speed: its fastest; prepare(t): set it to time t; at: io[0..1] x, y
-//     in; out, its height and normal (io[0..3]) there and, if vel, its velocity (io[4..6]); moving: whether it moves under
-//     a circle (a body asleep there wakes).
+//     turning page, sheet.ts). top: its highest point; speed: its fastest; prepare(t): set it to time t; at: io[0..1] x, y
+//     in; out, the height and normal (io[0..3]) of the highest paper there at most z up (a point rests on what is under
+//     it, not on paper passing over it) and, if vel, its velocity (io[4..6]); moving: whether it moves under a circle (a
+//     body asleep there wakes).
 //   Floats cross these calls in arrays, not as arguments or return values: V8 allocates for those (and for Math.hypot).
 //   world.g = 9000;    // gravity, px/s²
 //   world.advance(t);  // fixed steps up to time t (s); world.pose(b, pos, rot) is interpolated between the last two
@@ -45,7 +46,7 @@ export interface Surface {
   top: number;
   speed: number;
   prepare(t: number): void;
-  at(io: Float64Array, vel: boolean): void;
+  at(io: Float64Array, vel: boolean, z?: number): void;
   moving(x: number, y: number, r: number): boolean;
 }
 export interface BodyOptions {
@@ -258,7 +259,7 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
       const rz = R[6] * lx + R[7] * ly + R[8] * lz, pz = x[2] + rz;
       if (pz > top + fast) continue;
       const rx = R[0] * lx + R[1] * ly + R[2] * lz, ry = R[3] * lx + R[4] * ly + R[5] * lz;
-      so[0] = x[0] + rx; so[1] = x[1] + ry; S.at(so, false);
+      so[0] = x[0] + rx; so[1] = x[1] + ry; S.at(so, false, pz + fast);
       const nx = so[1], ny = so[2], nz = so[3], gap = (pz - so[0]) * nz;
       if (gap > fast) continue;
       const vn = (vx0 + wy * rz - wz * ry) * nx + (vy0 + wz * rx - wx * rz) * ny + (vz0 + wx * ry - wy * rx) * nz;
@@ -267,7 +268,7 @@ export function createWorld({ hz = 240, iters = 4, pushIters = 2 } = {}): World 
     }
     for (let k = 0; k < SEC; k++) if (pick[k] >= 0) {
       const p = k * 6;
-      so[0] = x[0] + pk[p]; so[1] = x[1] + pk[p + 1]; S.at(so, true);
+      so[0] = x[0] + pk[p]; so[1] = x[1] + pk[p + 1]; S.at(so, true, x[2] + pk[p + 2] + fast);
       emit(b, null, k);
     }
   }
