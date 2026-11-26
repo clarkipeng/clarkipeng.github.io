@@ -4,26 +4,11 @@
 // the resting cards (at each pixel, the lowest chip first) and under any lifted one, so a frame costs only what changed.
 // A second small pass reads the slime under each chip back to the physics, which eats only where it is.
 
-import { CN, NCH, FEED, DIST, CHIP, type Body, type Chips } from './chips.ts';
+import { CN, NCH, FEED, DIST, type Body, type Chips } from './chips.ts';
 
 // The tunables the chips' look reads (desk.ts T).
-type LookKey = 'chipGold' | 'chipShadow' | 'chipSize';
-// The chips' fixed look; the panel tunes their gold and their shadow.
-const LOOK = {
-  crisp: 0.8, // browning along the rim
-  salt: 0.6, // salt flecks
-  edge: 1.5, // how much of its thickness shows along a tilted edge
-  light: 2.5, // how strongly light falls across the curl
-  fill: 0.6, // the darkest the side turned away from the light gets
-  relief: 0.3, // bright crests and dark troughs
-  gloss: 0.8, // the broad shine
-  cam: 1200, // the camera's height, px (lower looks nearer and larger)
-  soft: 0.5, // the shadow blurs this much per px of height
-  shadowH: 80, // the shadow fades out by this height, px
-  contact: 1, // the dark shadow right where it touches
-  nibble: 0.6, // how ragged the eaten edges look
-  stain: 0.4, // the slime stain left on it
-};
+type LookKey = 'chipGold' | 'chipCrisp' | 'chipSalt' | 'chipEdge' | 'chipShadow' | 'chipNibble' | 'chipStain' | 'chipLight' | 'chipRelief' | 'chipGloss' |
+  'chipCam' | 'chipSoft' | 'chipContact' | 'chipBend' | 'chipFill' | 'chipSize' | 'chipShadowH';
 // A body's tile this frame (place): its pose's height span, tile corner and size (device px), and its origin in the world.
 interface Box { b: Body; lo: number; hi: number; c: number[]; o: number[]; size: number }
 // A body as last drawn: origin, orientation, tile corner and size.
@@ -289,13 +274,13 @@ export async function createChipRenderer(device: GPUDevice) {
   // each tile: its corner and size on the canvas (device px), its layer. A chip is redrawn only when it shows: it moved by
   // a tenth of a px, or was eaten, or the look changed. A pile lying still costs nothing.
   function place(world: Chips, { x0, dev, T }: { x0: number; dev: number; T: Record<LookKey, number> }) {
-    const look = [T.chipGold, LOOK.crisp, LOOK.salt, LOOK.edge, T.chipShadow, LOOK.nibble, LOOK.stain, LOOK.light,
-      LOOK.relief, LOOK.gloss, LOOK.cam, LOOK.soft, LOOK.contact, CHIP.bend, LOOK.fill, 0, 0, 0];
+    const look = [T.chipGold, T.chipCrisp, T.chipSalt, T.chipEdge, T.chipShadow, T.chipNibble, T.chipStain, T.chipLight,
+      T.chipRelief, T.chipGloss, T.chipCam, T.chipSoft, T.chipContact, T.chipBend, T.chipFill, 0, 0, 0];
     const bodies = world.bodies.filter((b) => b.m > 0 && b.box);
     assign(bodies);
     for (const id of drawn.keys()) if (!slots.has(id)) drawn.delete(id);
-    const F = LOOK.cam, M = 3 + T.chipSize * 0.3; // the camera's height, the shadow's margin past the rim
-    const HS = LOOK.shadowH; // the shadow fades out by this height, so a chip high in the air needs no larger tile
+    const F = T.chipCam, M = 3 + T.chipSize * 0.3; // the camera's height, the shadow's margin past the rim
+    const HS = T.chipShadowH; // the shadow fades out by this height, so a chip high in the air needs no larger tile
     const boxes = bodies.map((b): Box => {
       const [rx0, ry0, rx1, ry1] = world.rect(b), [lo, hi] = world.zspan(b), m = F / Math.max(F - hi, F * 0.25), pad = 2;
       const r = [b.x[0] + (rx0 - b.x[0]) * m - x0 - pad, b.x[1] + (ry0 - b.x[1]) * m - pad, b.x[0] + (rx1 - b.x[0]) * m - x0 + pad, b.x[1] + (ry1 - b.x[1]) * m + pad];
