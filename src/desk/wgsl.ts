@@ -331,8 +331,8 @@ ${video ? '@group(0) @binding(7) var vidA: texture_external;\n@group(0) @binding
 @group(0) @binding(11) var chipZ: texture_2d_array<f32>;
 @group(0) @binding(12) var noteTex: texture_2d<f32>; // the turning note, drawn as paper (note.js)
 // The chips, drawn on their own (chip-render.ts) as premultiplied linear color, over the desk and the resting cards: at
-// each pixel, the lowest of what they show there first.
-fn chipsAt(ip: vec2i, near: u32) -> vec4f {
+// each pixel, the lowest of what they show there first; only what shows from lo up to hi high (CSS px).
+fn chipsAt(ip: vec2i, near: u32, lo: f32, hi: f32) -> vec4f {
   var cs: array<vec4f, ${NCH}>; var zs: array<f32, ${NCH}>; var n = 0u; var m = near;
   while (m != 0u) { // the chips whose tiles reach this screen tile, in order of height here
     let i = firstTrailingBit(m); m &= m - 1u;
@@ -341,6 +341,7 @@ fn chipsAt(ip: vec2i, near: u32) -> vec4f {
     let c = textureLoad(chipTex, vec2i(p), i32(t.w), 0);
     if (c.a <= 0.0) { continue; }
     let z = textureLoad(chipZ, vec2i(p), i32(t.w), 0).r;
+    if (z < lo || z >= hi) { continue; }
     var k = n;
     while (k > 0u && zs[k - 1u] > z) { cs[k] = cs[k - 1u]; zs[k] = zs[k - 1u]; k--; }
     cs[k] = c; zs[k] = z; n++;
@@ -401,13 +402,16 @@ fn rollLight(dir: vec2f, th: f32, back: bool) -> f32 {
 // the sheet's front at p (from the frozen frame when turning, sampled where the paper came from); below is what it
 // uncovers. The back is the paper's back, with the label written on it near the corner: printed on the sheet, in the
 // paper's own axes (the fold's rest direction), so it turns, foreshortens and curls with the paper however the fold
-// leans, and takes the roll's light and shade like the paper under it. Device px; antialiased edges.
-fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec4f) -> vec3f {
+// leans, and takes the roll's light and shade like the paper under it. Device px; antialiased edges. Returned in two
+// layers, so what lies under the turned-over part can go between them: c, the page (uncovered or not) with the front of
+// the sheet; b, its back (the roll's far half and the flap) and how much of it shows.
+struct Roll { c: vec3f, b: vec4f };
+fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec4f) -> Roll {
   let dir = cu.xy; let d = cu.z; let R = max(cu.w, 0.5);
-  if (d <= 0.0) { return top; }
+  if (d <= 0.0) { return Roll(top, vec4f(0.0)); }
   let C = g.pg.xy; let N = vec2f(-dir.y, dir.x);
   let x = dot(p - C, dir); let y = dot(p - C, N);
-  if (x > max(2.0 * d - PI * R, d) + 6.0 + 2.0 * R) { return top; } // past the flap and its shadow: untouched
+  if (x > max(2.0 * d - PI * R, d) + 6.0 + 2.0 * R) { return Roll(top, vec4f(0.0)); } // past the flap and its shadow: untouched
   // What it uncovers, in the roll's shadow where the page still rolls up at this point of the fold.
   let rolls = clamp(0.5 - pageSd(C + d * dir + y * N) / (1.0 + R), 0.0, 1.0);
   var c = below * (1.0 - 0.3 * rolls * exp(-max(d - R - x, 0.0) / (3.0 * g.v.w + 0.8 * R)));
@@ -438,9 +442,22 @@ fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec
     let lx = dot(bp - C, D0); let ly = dot(bp - C, N0);
     let lu = vec2f(ly / (2.0 * g.lb.y) + 0.5, (lx - g.lb.x) / (2.0 * g.lb.z) + 0.5);
     if (all(lu > vec2f(0.0)) && all(lu < vec2f(1.0))) { bc = inked(bc, DARK, 0.92 * textureSampleLevel(atlas, samp, mix(lab.xy, lab.zw, lu), 0.0).a); }
-    c = mix(c, bc * rollLight(dir, bth, true), ba);
+    return Roll(c, vec4f(bc * rollLight(dir, bth, true), ba));
   }
-  return c;
+  return Roll(c, vec4f(0.0));
+}
+fn laid(r: Roll) -> vec3f { return mix(r.c, r.b.rgb, r.b.a); }
+// Card k's height at p (sim px): where its plane meets the eye's ray there, from the eye 1800 CSS px up (uniforms.ts).
+fn cardZ(k: u32, p: vec2f) -> f32 { return 1800.0 * g.a.w - 1.0 / dot(g.cards[k].inv2.xyz, vec3f(p, 1.0)); }
+// The cards the page you left threw (over: their bits) whose height at p is in [lo, hi), bottom to top.
+fn layOver(col0: vec3f, over: u32, p: vec2f, gr: vec2f, conc: f32, lo: f32, hi: f32) -> vec3f {
+  var col = col0; var m = over;
+  while (m != 0u) {
+    let j = firstTrailingBit(m); m &= m - 1u;
+    let k = u32(g.ord[j / 4u][j % 4u]); let z = cardZ(k, p);
+    if (z >= lo && z < hi) { col = layCard(col, k, p, gr, conc); }
+  }
+  return col;
 }
 
 // One card over col at p (sim px): its soft shadow, then the card. gr, conc: the paper and ink under it.
@@ -572,7 +589,8 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
   let pageBits = select((1u << nPage) - 1u, 0xffffffffu, nPage >= 32u);
   var cards = tm.x & pageBits;
   var chipsLaid = g.ch.y < 0.5 || g.ch.w > 0.5;
-  let chip = chipsAt(ip, tm.z);
+  var chip = vec4f(0.0);
+  if (!chipsLaid) { chip = chipsAt(ip, tm.z, -1e9, 1e9); }
   while (cards != 0u) { // on-screen cards that can reach this tile, bottom to top
     let j = firstTrailingBit(cards); cards &= cards - 1u;
     let k = u32(g.ord[j / 4u][j % 4u]);
@@ -581,17 +599,23 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
   }
   if (!chipsLaid) { col = layChips(col, chip); }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
-  col = rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la);
+  col = laid(rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la));
   // A page turn: the page you left (its frozen last frame) rolls away over this one. What it uncovers fades from the bare
   // paper the resting corner shows to this page as the fold opens (the same 250 px as the stacked edges), so the sliver
   // never switches in one frame, at the start or when a turn by hand falls back.
-  if (g.pg.w > 0.5) { col = rolled(pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt); }
-  if (g.ch.w > 0.5) { col = layChips(col, chip); } // the chips the turn throws off the page you left, over it
-  var over = tm.x & ~pageBits; // the box you left, above both pages
-  while (over != 0u) {
-    let j = firstTrailingBit(over); over &= over - 1u;
-    col = layCard(col, u32(g.ord[j / 4u][j % 4u]), p, gr, conc);
+  // What it threw (cards and chips) lies over both pages, except what has fallen below its roll's axis: the turned-over
+  // paper covers that.
+  let over = tm.x & ~pageBits;
+  var low = -1e9;
+  if (g.pg.w > 0.5) {
+    let r = rolled(pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt);
+    low = max(g.cu.w, 0.5) * q;
+    var below = layOver(r.c, over, p, gr, conc, -1e9, low);
+    if (g.ch.w > 0.5) { below = layChips(below, chipsAt(ip, tm.z, -1e9, low / g.a.w)); }
+    col = mix(below, r.b.rgb, r.b.a);
   }
+  if (g.ch.w > 0.5) { col = layChips(col, chipsAt(ip, tm.z, low / g.a.w, 1e9)); } // the chips the turn throws off the page you left, over it
+  col = layOver(col, over, p, gr, conc, low, 1e9);
   var outc = vec4f(pow(clamp(col, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), 1.0);
   if (g.pg.z > 0.0) { outc = mix(outc, textureLoad(frozen, ip, 0), g.pg.z); } // crossfade from the frame before a sim resolution change
   return outc;
