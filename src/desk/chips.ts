@@ -10,6 +10,7 @@ const NX = [-1, 0, -1, 1, 1, 0, 1, -1], NY = [0, -1, -1, -1, 0, 1, 1, 1], NW = [
 const SOLID = 0.07; // a column holds (and is a contact point) while more than this share of its thickness is left
 const STEP = 1 / 3; // its shape is remade each time a column loses this share of its thickness (or gives way)
 const BITE = 0.375; // the share of its thickness a face loses per second at eating speed 1 on full slime
+const RIM = 12; // directions its contact points are found in (props)
 const EAT_HZ = 15; // times a second the chips are eaten (and their eaten edge redrawn)
 
 import type { Body as PBody, World } from './physics.ts';
@@ -130,7 +131,7 @@ export class Body {
   declare feed: Feed | null;
   declare m: number;
   declare foot: number;
-  declare edge: Float32Array;
+  declare mid: number; declare half: number; // its slabs' live bounds through, about its mid-surface: middle, half thickness (sdf)
   declare box: [number[], number[]];
   declare frozen?: boolean;
   declare gone?: boolean;
@@ -175,46 +176,53 @@ export class Body {
       if (w > SOLID) foot = Math.max(foot, rx * rx + ry * ry);
     }
     this.foot = Math.sqrt(foot) + this.cell * 0.5;
-    // Contact points: both faces of the rim's columns, and of every third column inside it.
-    const solid = Uint8Array.from({ length: n }, (_, ci) => +this.colSolid(ci));
-    // Its rim, for what hits it side on: each column's distance out past the edge of the solid ones (inside: negative), px.
-    const din = chamfer(Float32Array.from(solid, (s) => (s ? 1e9 : 0))), dout = chamfer(Float32Array.from(solid, (s) => (s ? 0 : 1e9)));
-    this.edge = Float32Array.from(solid, (s, ci) => (s ? 0.5 - din[ci] : dout[ci] - 0.5) * this.cell);
-    const col = (i: number, j: number) => i >= 0 && j >= 0 && i < CN && j < CN && solid[j * CN + i];
-    const pts: number[] = [], blo = [Infinity, Infinity, Infinity], bhi = [-Infinity, -Infinity, -Infinity];
-    for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
-      if (!col(i, j)) continue;
-      const ci = j * CN + i, rim = !col(i - 1, j) || !col(i + 1, j) || !col(i, j - 1) || !col(i, j + 1);
-      const z0 = H[ci * 3] + (lo[ci] - 0.5) * t, z1 = H[ci * 3] + (hi[ci] - 0.5) * t; // its underside and top
-      if (rim || (i % 3 === 0 && j % 3 === 0)) pts.push(px[ci] - c[0], py[ci] - c[1], z0 - c[2], px[ci] - c[0], py[ci] - c[1], z1 - c[2]);
+    // What hits it meets a thin cylinder about its centre of mass, its foot across and its slabs' live bounds through (sdf).
+    // What it stands on meets its real surface at a few points: the solid column furthest out in each of RIM directions and
+    // the one nearest its centre, each at its underside and top, so a saddle still rocks on its curve as it is eaten.
+    let slo = 1, shi = 0;
+    const blo = [Infinity, Infinity, Infinity], bhi = [-Infinity, -Infinity, -Infinity], far = new Float64Array(RIM + 1).fill(-Infinity), at = new Int32Array(RIM + 1).fill(-1);
+    for (let ci = 0; ci < n; ci++) {
+      if (!this.colSolid(ci)) continue;
+      const z0 = H[ci * 3] + (lo[ci] - 0.5) * t, z1 = H[ci * 3] + (hi[ci] - 0.5) * t, rx = px[ci] - c[0], ry = py[ci] - c[1]; // its underside and top
       blo[0] = Math.min(blo[0], px[ci]); blo[1] = Math.min(blo[1], py[ci]); blo[2] = Math.min(blo[2], z0);
       bhi[0] = Math.max(bhi[0], px[ci]); bhi[1] = Math.max(bhi[1], py[ci]); bhi[2] = Math.max(bhi[2], z1);
+      slo = Math.min(slo, lo[ci]); shi = Math.max(shi, hi[ci]);
+      for (let k = 0; k <= RIM; k++) {
+        const f = k < RIM ? rx * Math.cos((2 * Math.PI * k) / RIM) + ry * Math.sin((2 * Math.PI * k) / RIM) : -(rx * rx + ry * ry);
+        if (f > far[k]) { far[k] = f; at[k] = ci; }
+      }
     }
+    const pts: number[] = [];
+    for (const ci of new Set(at)) if (ci >= 0) for (const f of [lo[ci], hi[ci]]) pts.push(px[ci] - c[0], py[ci] - c[1], H[ci * 3] + (f - 0.5) * t - c[2]);
+    this.mid = ((slo + shi) / 2 - 0.5) * t; this.half = ((shi - slo) / 2) * t;
     if (!pts.length) return this.freeze(world); // nothing left to stand on: it stays put while the last of it goes
     this.box = [blo, bhi]; this.dirty = true;
     const R = from.R, dc = c.map((v, i) => v - this.c[i]), x = R ? [0, 3, 6].map((r, i) => from.x[i] + R[r] * dc[0] + R[r + 1] * dc[1] + R[r + 2] * dc[2]) : from.x;
     if (this.p) world.remove(this.p);
     this.c = c;
     const s = CHIP_MASS / this.mass0, e = (m * this.cell * this.cell) / 6; // e: each column's own spread across
-    this.p = world.add({ points: pts, bound: Math.hypot(...[0, 1, 2].map((i) => Math.max(Math.abs(blo[i] - c[i]), Math.abs(bhi[i] - c[i])))) + this.cell, sdf: (io: Float64Array) => this.sdf(io),
+    this.p = world.add({ points: pts, bound: Math.hypot(this.foot, Math.max(c[2] - blo[2], bhi[2] - c[2])), sdf: (io: Float64Array) => this.sdf(io),
       mass: m * s, inertia: [(yy + zz + e) * s, (xx + zz + e) * s, (xx + yy + 2 * e) * s], friction: P.friction, bounce: P.bounce, damp: CHIP.damp, x, q: from.q, v: from.v, w: from.w });
   }
   // Out of the sim: it stays where it is while the last of it is eaten.
   freeze(world: World) { if (this.p && !this.frozen) { this.p.v.fill(0); this.p.w.fill(0); this.p.sleep = true; world.remove(this.p); } this.frozen = true; }
-  // Its shell, for what hits it: a point in its body's frame in, out its normal and distance (physics.ts's sdf). Its
-  // surface and rim between the columns' centres, bilinear (it is called for every point near it, every step); a point
-  // nearer the rim than either face goes out through the rim, so what comes at it edge on meets the edge.
+  // What hits it meets a thin cylinder (physics.ts's sdf), its faces bent to its surface: out to its foot, and through
+  // its slabs' live bounds about its mid-surface (bilinear between the columns' centres). A point in its body's frame in,
+  // out its normal and distance. Through a face, the side it came from (io[3]) holds, so a point pushed in past the
+  // middle goes back out its own side.
   sdf(io: Float64Array) {
-    const S = this.S, u = (io[0] + this.c[0] + S.B) / this.cell - 0.5, v = (io[1] + this.c[1] + S.B) / this.cell - 0.5;
-    if (u < -0.5 || v < -0.5 || u >= CN - 0.5 || v >= CN - 0.5) { io[3] = Infinity; return; }
-    const i = Math.min(CN - 2, Math.max(0, Math.floor(u))), j = Math.min(CN - 2, Math.max(0, Math.floor(v))), a = clamp01(u - i), b = clamp01(v - j);
-    const w0 = (1 - a) * (1 - b), w1 = a * (1 - b), w2 = (1 - a) * b, w3 = a * b, n = j * CN + i, E = this.edge, e0 = E[n], e1 = E[n + 1], e2 = E[n + CN], e3 = E[n + CN + 1];
-    const H = S.hf, k = n * 3, k1 = k + 3, k2 = k + CN * 3, k3 = k2 + 3;
+    const S = this.S, H = S.hf, x = io[0], y = io[1], r = Math.sqrt(x * x + y * y), ux = r ? x / r : 1, uy = r ? y / r : 0;
+    const u = Math.min(CN - 1, Math.max(0, (x + this.c[0] + S.B) / this.cell - 0.5)), v = Math.min(CN - 1, Math.max(0, (y + this.c[1] + S.B) / this.cell - 0.5));
+    const i = Math.min(CN - 2, Math.floor(u)), j = Math.min(CN - 2, Math.floor(v)), a = u - i, b = v - j;
+    const w0 = (1 - a) * (1 - b), w1 = a * (1 - b), w2 = (1 - a) * b, w3 = a * b, k = (j * CN + i) * 3, k1 = k + 3, k2 = k + CN * 3, k3 = k2 + 3;
     const hx = w0 * H[k + 1] + w1 * H[k1 + 1] + w2 * H[k2 + 1] + w3 * H[k3 + 1], hy = w0 * H[k + 2] + w1 * H[k1 + 2] + w2 * H[k2 + 2] + w3 * H[k3 + 2];
-    const dz = io[2] + this.c[2] - (w0 * H[k] + w1 * H[k1] + w2 * H[k2] + w3 * H[k3]), s = io[3] || (dz < 0 ? -1 : 1), l = Math.sqrt(hx * hx + hy * hy + 1), d = (s * dz) / l - S.t / 2;
-    const e = w0 * e0 + w1 * e1 + w2 * e2 + w3 * e3;
-    if (e > d) { const ex = (1 - b) * (e1 - e0) + b * (e3 - e2), ey = (1 - a) * (e2 - e0) + a * (e3 - e1), el = Math.hypot(ex, ey) || 1; io[0] = ex / el; io[1] = ey / el; io[2] = 0; io[3] = e; return; }
-    io[0] = (-hx / l) * s; io[1] = (-hy / l) * s; io[2] = s / l; io[3] = d;
+    const dz = io[2] + this.c[2] - (w0 * H[k] + w1 * H[k1] + w2 * H[k2] + w3 * H[k3]) - this.mid, l = Math.sqrt(hx * hx + hy * hy + 1);
+    const s = io[3] || (dz < 0 ? -1 : 1), qr = r - this.foot, qz = (s * dz) / l - this.half, fx = (-hx / l) * s, fy = (-hy / l) * s, fz = s / l;
+    if (qr > 0 || qz > 0) {
+      const p = Math.max(qr, 0), q = Math.max(qz, 0), d = Math.sqrt(p * p + q * q);
+      io[0] = (p * ux + q * fx) / d; io[1] = (p * uy + q * fy) / d; io[2] = (q * fz) / d; io[3] = d;
+    } else if (qr > qz) { io[0] = ux; io[1] = uy; io[2] = 0; io[3] = qr; }
+    else { io[0] = fx; io[1] = fy; io[2] = fz; io[3] = qz; }
   }
   colSolid(ci: number) { return this.hi[ci] - this.lo[ci] > SOLID; }
   get solidCols() { let n = 0; for (let ci = 0; ci < CN * CN; ci++) if (this.colSolid(ci)) n++; return n; }
