@@ -62,7 +62,6 @@ export const HELP: Record<string, string> = {
   hueMix: 'How far that color moves from the shared olive toward the card\'s open ink.',
   // Colors
   'tok.stock': 'The card box, and card faces without a film border.',
-  'tok.stockWarm': 'The back of the polaroid card.',
   'tok.film': 'Photo cards\' instant-film paper, front and back.',
   'tok.note': 'The sticky note.',
   'tok.noteStrip': 'The sticky note\'s darker adhesive strip.',

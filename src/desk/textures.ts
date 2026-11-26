@@ -2,24 +2,24 @@ import { currentDesk, type Desk } from './state.ts';
 import { TOK, CORNER } from './tunables.ts';
 import type { Card, Rect, CardBox } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
+import { STAMP_SIZE, paintStamp, develop } from './stamp.ts';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 
 // ---------- card backs ----------
 // The back of a card: type alone, with a hand-drawn underline under each link; the sticky note's links are handwritten in
 // Caveat. Every back uses one type scale and an 8px spacing grid, and its first baseline sits 32px below its top edge.
-// Material follows the front: paper cards stay paper, the polaroid's back is matte photo-paper stock, the note stays
-// yellow. Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
+// Material follows the front: paper cards stay paper, photo cards their film's stock, the note stays yellow. Layout is in CSS px, so the DOM can put the real links (hit areas) in the same places.
 
 // A back's layout: its lines of copy, its links, and how tall it needs to be (need).
 type Link = ReturnType<Desk['linkAt']>;
 interface BackLine { t: string; f: { font: string; color: string }; y: number }
-interface BackLayout { lines: BackLine[]; links: Link[]; w: number; h: number; need: number }
+interface BackLayout { lines: BackLine[]; links: Link[]; w: number; h: number; need: number; stamp?: { x: number; y: number } | null }
 type Row = [HTMLAnchorElement, number, number][]; // a row of links: each with its x and text width
 
 export function mountTextures() {
 const desk = currentDesk();
-const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, wrapLines, hinged, sources, decked, NAMES,
+const { BOX_T, font, BOX3D, capped, STRIP, CAP_LH, HAND, measure, hinged, sources, decked, NAMES,
   tallySetup } = desk;
 // ---------- card textures ----------
 
@@ -139,7 +139,7 @@ function paintLid(x: Ctx, s: Card, S: number, outside: boolean) {
 function drawCard(s0: Card, S0: number) {
   const cw = Math.ceil(s0.w * S0), ch = Math.ceil(s0.h * S0), S = S0 * (s0.k || 1), s = design(s0); // drawn in design px
   const c = new OffscreenCanvas(cw, ch), x = c.getContext('2d')!;
-  x.fillStyle = s.kind === 'note' ? TOK.note : capped(s) ? TOK.film : TOK.stock; // photo cards on their film's stock
+  x.fillStyle = STOCK(s.kind);
   x.fillRect(0, 0, cw, ch);
   if (s.kind === 'deck') (s.lid ? paintLid : paintBox)(x, s, S, false); // the card box's front, or its lid's inside
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, 0, cw, STRIP * S); } // the sticky strip is a touch darker
@@ -156,7 +156,7 @@ function drawCard(s0: Card, S0: number) {
   }
   x.scale(S, S);
   x.textBaseline = 'alphabetic';
-  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or the polaroid's line centered
+  if (capped(s)) { // the caption in the film's bottom strip: the title over its line, or its one line centered
     s.lines!.forEach((l, i) => {
       const last = i === s.lines!.length - 1;
       x.font = font(s.titled ? (last ? 400 : 600) : 500); x.fillStyle = s.titled ? (last ? TOK.muted : TOK.text) : TOK.body;
@@ -175,7 +175,7 @@ function drawCard(s0: Card, S0: number) {
   }
   return { canvas: c, mediaPx };
 }
-const STOCK = (kind: string) => ({ photo: TOK.film, paper: TOK.stock, polaroid: TOK.stockWarm, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // a photo card's back is its film's stock (read when drawn: the colors are tunable)
+const STOCK = (kind: string) => ({ photo: TOK.film, note: TOK.note } as Record<string, string>)[kind] ?? TOK.stock; // both faces (read when drawn: the colors are tunable)
 const TYPE = { // read when drawn: the type follows TS
   get body() { return { font: font(400), lh: 19 * desk.TS, color: TOK.body }; }, // the copy sits 1 px closer than the front's
   get link() { return { font: font(500), color: TOK.inkDeep }; },
@@ -202,11 +202,28 @@ function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
     const links = s.backLinks!.map((a, i) => linkAt(a, pad + (i >= per ? Math.round((w - 2 * pad) / 2) : 0), first + (i % per) * r, m.measureText(a.textContent!).width));
     return { lines: [], links, w, h: b.h, need: first + (per - 1) * r + bottom + STRIP }; // clear of the strip along its bottom
   }
+  // An inked card has its stamp in the top right when the copy still fits beside it.
+  const stamped = s.inkHex && s.img ? backText(s, b, STAMP_SIZE) : null;
+  return stamped && stamped.need <= b.h ? stamped : backText(s, b, null);
+}
+// A back's copy and links, wrapped beside a stamp of size [w, h] in the top right while the lines are level with it.
+function backText(s: Card, b: CardBox, stamp: [number, number] | null): BackLayout {
+  const w = b.w, m = measure(), { pad, row } = BK, st = stamp && { x: w - pad - stamp[0] + 2, y: pad - 4 }, below = st ? st.y + stamp![1] + 4 : 0;
   // No label line: it only repeated the front's caption (Clark: no redundancy).
-  // The paragraphs, 8px apart, the first 8px under the first baseline. The title is on the front only.
-  const lines: BackLine[] = [], f = TYPE.body;
+  // The paragraphs, 8px apart, the first 8px under the first baseline, narrower while level with the stamp. The title
+  // is on the front only.
+  const lines: BackLine[] = [], f = TYPE.body, narrow = st ? st.x - 8 - pad : 0;
   let y = BK.first - f.lh;
-  for (const t of s.backParas!) { y += 8; wrapLines(t, w - 2 * pad, f.font).forEach((l) => { y += f.lh; lines.push({ t: l, f, y }); }); }
+  m.font = f.font;
+  for (const t of s.backParas!) {
+    y += 8;
+    let line = '';
+    for (const word of t.split(' ')) {
+      const test = line ? line + ' ' + word : word;
+      if (line && m.measureText(test).width > (st && y + f.lh - 13 * desk.TS < below ? narrow : w - 2 * pad)) { y += f.lh; lines.push({ t: line, f, y }); line = word; } else line = test;
+    }
+    if (line) { y += f.lh; lines.push({ t: line, f, y }); }
+  }
   // Links: ink text in rows along the bottom, the last baseline 22px above the bottom edge (top, on a back with no text).
   m.font = TYPE.link.font;
   const rows: Row[] = [[]];
@@ -219,12 +236,12 @@ function backLayout(s: Card, b: CardBox = s, loose = false): BackLayout {
   const need = Math.ceil((lines.length ? y : 0) + 32 + BK.bottom + (rows.length - 1) * row);
   const base0 = b.h - BK.bottom - (rows.length - 1) * row;
   const links = rows.flatMap((r, i) => r.map(([a, lx, tw]) => linkAt(a, lx, base0 + i * row, tw)));
-  return { lines, links, w, h: b.h, need };
+  return { lines, links, w, h: b.h, need: Math.max(need, Math.ceil(below + 20 + BK.bottom + (rows.length - 1) * row)), stamp: st }; // the links clear the stamp
 }
 
 // Deterministic noise, so the atlas looks the same on every build.
 function rng(seed: number) { let t = seed >>> 0; return () => ((t = (t * 1664525 + 1013904223) >>> 0) / 4294967296); }
-// Matte stock: a faint, fine grain (photo-paper backs and the note).
+// Matte stock: a faint, fine grain (the note).
 function grain(x: Ctx, cw: number, ch: number, amt: number, seed: number) {
   const img = x.getImageData(0, 0, cw, ch), d = img.data, r = rng(seed);
   for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * amt; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
@@ -243,14 +260,18 @@ function penLine(x: Ctx, x0: number, x1: number, y: number, seed: number, width:
 }
 
 function drawBack(s0: Card, S0: number) {
-  const S = S0 * (s0.k || 1), s = design(s0), { lines, links, w, h } = backLayout(s), { pad } = BK; // design px
+  const S = S0 * (s0.k || 1), s = design(s0), { lines, links, w, h, stamp } = backLayout(s), { pad } = BK; // design px
   const cw = Math.ceil(s0.w * S0), chh = Math.ceil(s0.h * S0);
   const c = new OffscreenCanvas(cw, chh), x = c.getContext('2d', { willReadFrequently: true })!;
   x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, cw, chh);
-  if (s.kind === 'polaroid') grain(x, cw, chh, 9, 7); // the photo paper's back: warmer, matte, a little toothy
   if (s.kind === 'note') grain(x, cw, chh, 5, 11);
   x.scale(S, S);
   if (s.kind === 'note') { x.fillStyle = TOK.noteStrip; x.fillRect(0, h - STRIP, w, STRIP); } // the strip's back, along the bottom: the note turns over its top edge
+  let print = null;
+  if (stamp) { // its picture, framed as on its front
+    const src = s.img!, iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+    print = paintStamp(x, s.inkHex!, (p, pw, ph) => { const [fx, fy, fw, fh] = coverRect(iw / ih, pw / ph, s.frame); p.imageSmoothingQuality = 'high'; p.drawImage(src, fx * iw, fy * ih, fw * iw, fh * ih, 0, 0, pw, ph); }, stamp.x, stamp.y, S);
+  }
   x.textBaseline = 'alphabetic';
   for (const l of lines) { x.font = l.f.font; x.fillStyle = l.f.color; x.fillText(l.t, pad, l.y); }
   links.forEach((k, i) => {
@@ -263,12 +284,18 @@ function drawBack(s0: Card, S0: number) {
     x.font = TYPE.link.font; x.fillStyle = TYPE.link.color; x.fillText(t, k.tx, k.base);
     x.strokeStyle = TOK.inkLine; penLine(x, k.tx, k.tx + k.tw, k.base + 4, s.id * 13 + i, 1.15);
   });
-  return { canvas: c, links, w, h };
+  return { canvas: c, links, w, h, print };
+}
+// The stamp's print, as far as it has developed, over its spot in the atlas.
+function developStamp(s: Card) {
+  const p = s.print!;
+  desk.gpu!.device.queue.writeTexture({ texture: desk.shared!.atlas!, origin: [p.x, p.y] }, develop(p, s.dev), { bytesPerRow: p.w * 4 }, [p.w, p.h]);
+  desk.redraw = true;
 }
 function drawLidOutside(s: Card, S: number) {
   const c = new OffscreenCanvas(Math.ceil(s.w * S), Math.ceil(s.h * S));
   paintLid(c.getContext('2d')!, design(s), S * (s.k || 1), true);
-  return { canvas: c, links: [], w: s.w, h: s.h };
+  return { canvas: c, links: [], w: s.w, h: s.h, print: null };
 }
 // A card at its design size (what it is drawn and laid out in; the desk shows it at its card scale).
 const design = (s: Card): Card => (s.k && s.k !== 1 ? { ...s, w: s.w / s.k, h: s.h / s.k } : s);
@@ -297,7 +324,7 @@ function renderEntries(g: Gpu, sm: Sim, extra: GPUBindGroupEntry[] = []) {
 function paintPlainBack(s: Card, S: number) {
   const cs = desk.view.cs || 1, region = s.region, portrait = s.w <= s.h, w = s.w, h = s.h;
   const c = new OffscreenCanvas(Math.ceil(w * S), Math.ceil(h * S)), x = c.getContext('2d')!;
-  x.scale(S, S); x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, w, h); // the polaroid's warmer stock, the note's yellow
+  x.scale(S, S); x.fillStyle = STOCK(s.kind); x.fillRect(0, 0, w, h); // the note's yellow
   if (hinged(s)) { x.translate(w, h); x.rotate(Math.PI); } // the note is seen turned over its top edge, not its side
   x.font = font(500, 26 * cs, 'Caveat'); x.fillStyle = TOK.text2; x.textAlign = 'center'; x.textBaseline = 'middle';
   // Upright in the pile a landscape card is turned a quarter turn clockwise, so its back's lower part is the part that
@@ -342,8 +369,9 @@ async function buildAtlas(g: Gpu) {
     src.uv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     src.mediaUV = mediaPx ? [mediaPx.x / (src.w * S), mediaPx.y / (src.h * S), (mediaPx.x + mediaPx.w) / (src.w * S), (mediaPx.y + mediaPx.h) / (src.h * S)] : [0, 0, 0, 0];
   });
-  backs.forEach(({ src, canvas: c, links }, i) => {
+  backs.forEach(({ src, canvas: c, links, print }, i) => {
     const p = places[drawn.length + i];
+    src.print = print && { ...print, x: p.x + print.x, y: p.y + print.y };
     g.device.queue.copyExternalImageToTexture({ source: c }, { texture: atlas, origin: p }, [c.width, c.height]);
     src.buv = [p.x / AW, p.y / AH, (p.x + src.w * S) / AW, (p.y + src.h * S) / AH];
     placeBackLinks(src, links);
@@ -365,7 +393,8 @@ async function buildAtlas(g: Gpu) {
   });
   desk.shared!.labelUV = labelUV;
   desk.shared!.atlas = atlas;
+  for (const src of sources) if (src.print && src.dev < 1) developStamp(src); // as far as it has got
   for (const src of sources) if (src.more) tallySetup(src);
 }
-return { backLayout, paintDomBack, design, BOX_NAMES, linkAt, coverRect, renderEntries, buildAtlas, drawBack, drawCard };
+return { backLayout, paintDomBack, design, BOX_NAMES, linkAt, coverRect, renderEntries, buildAtlas, drawBack, drawCard, developStamp };
 }

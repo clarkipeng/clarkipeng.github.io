@@ -3,13 +3,12 @@ import { TALLY_PARAMS } from './tally.ts';
 
 export const MAX = 32; // cards and decks the uniforms hold (room for overflow projects)
 export const REF_W = 1440, REF_H = 900, PHONE = 700;
-export const POSTCARD = 3 / 2; // every project card is one landscape postcard, 3:2, the same size on the desk and in a deck
 export const STEP = 1 / 60;
 export const PAPER = [0xf3, 0xf1, 0xea];
 // Design tokens: the colors, type, and spacing every card face and back is drawn with. The stylesheet mirrors them as
 // custom properties (--paper, --stock, ...), so the DOM still and no-WebGPU fallback match the GPU drawing.
 export const TOK = {
-  paper: '#f3f1ea', stock: '#fffdf8', stockWarm: '#f5f0e4', film: '#fbf8f0', note: '#fff4a8', noteStrip: '#f7ea98',
+  paper: '#f3f1ea', stock: '#fffdf8', film: '#fbf8f0', note: '#fff4a8', noteStrip: '#f7ea98',
   text: '#1d1d1b', text2: '#2b2b28', body: '#3d3c38', muted: '#6f6d66', // muted is AA (4.5:1) on paper and every stock
   ink: '#a5a970', inkDeep: '#5c5f4a', inkLine: '#85895c', // inkLine: drawn link underlines, 3:1 on every stock
   fs: 13, fsHand: 23, lhBody: 20, radius: 3,
