@@ -17,7 +17,7 @@ import type { Body as PBody, World } from './physics.ts';
 import { touchdown } from './tunables.ts';
 
 // The tunables chips read (desk.ts T); see createChips.
-type ChipKey = 'chipCurl' | 'friction' | 'bounce' | 'chipEat';
+type ChipKey = 'chipCurl' | 'friction' | 'bounce' | 'chipEat' | 'chipBand';
 export type ChipTunables = Record<ChipKey, number>;
 const CHIP_MASS = 0.05; // a chip's mass, against the card box's 1 (box.ts)
 // A chip's fixed shape and feel; the panel tunes its size, curl and eating speed. Lengths are for a chip of radius 31.
@@ -28,7 +28,6 @@ export const CHIP = {
   drop: 150, // the height it falls from, px
   spin: 10, // how fast it tumbles as it falls, rad/s
   damp: 16, // its rocking dies at x/s on the desk
-  band: 1, // a face within this many px of the desk is eaten
   crumbs: 30, // a broken-off piece under this many columns is crumbs
   crumbS: 0.6, // crumbs are eaten in s
 };
@@ -275,7 +274,7 @@ export function createChips(P: ChipTunables, world: () => World) {
   }
 
   // ---------- eating ----------
-  // Faces within CHIP.band of the desk are eaten where the slime is; a column that wears down or gives way changes the
+  // Faces within chipBand of the desk are eaten where the slime is; a column that wears down or gives way changes the
   // body's mass, centre and support, so it tips and settles lower. A body that comes apart becomes two (the crumbs are just
   // eaten up). Each body is eaten EAT_HZ times a second, in steps too small to see, so the edge creeps; the bodies take
   // turns, so no frame eats them all. Remaking a body (props, split) is the costly part, so one body a frame is remade, the
@@ -297,11 +296,11 @@ export function createChips(P: ChipTunables, world: () => World) {
           if (!b.landed) continue;
           const zc = base + R[6] * b.px[ci] + R[7] * b.py[ci], z0 = zc + R[8] * (H[ci * 3] + (lo0[ci] - 0.5) * t), z1 = zc + R[8] * (H[ci * 3] + (hi0[ci] - 0.5) * t);
           const z = Math.min(z0, z1); // the faces it stands on, until it settles on what is left
-          if (z > CHIP.band) continue;
+          if (z > P.chipBand) continue;
           under = z0 <= z1;
           const lx = b.px[ci] - c[0], ly = b.py[ci] - c[1], lz = H[ci * 3] - c[2];
           const sl = Math.max(b.slime(b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz, b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz), b.chip.hurry > 1 ? 0.6 : 0);
-          dd = rate * sl * (1 - 0.5 * clamp01(z / Math.max(CHIP.band, 1e-3))); // the parts lowest down go first
+          dd = rate * sl * (1 - 0.5 * clamp01(z / Math.max(P.chipBand, 1e-3))); // the parts lowest down go first
           if (dd > 0) b.stain[ci] = Math.min(1, b.stain[ci] + (dd / BITE) * 2);
         }
         if (dd <= 0) continue;
@@ -396,7 +395,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       at[o + 2] = b.x[2] + Math.min(z0, z1);
       at[o] = b.x[0] + R[0] * lx + R[1] * ly + R[2] * lz; at[o + 1] = b.x[1] + R[3] * lx + R[4] * ly + R[5] * lz;
     }
-    const l = was && touchdown(at, was, CHIP.band, dt, (CHIP_MASS * b.m) / b.mass0, true);
+    const l = was && touchdown(at, was, P.chipBand, dt, (CHIP_MASS * b.m) / b.mass0, true);
     if (l) b.land = [l[1], l[2], Math.sqrt(l[0] / Math.PI) * b.cell, l[3]]; // center, radius (desk px), strength
   }
 

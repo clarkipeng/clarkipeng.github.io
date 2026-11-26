@@ -48,6 +48,7 @@ export const HELP: Record<string, string> = {
   chipSize: 'Chip size.',
   chipCurl: 'How much the chip curves overall.',
   chipEat: 'How fast the slime eats chips.',
+  chipBand: 'How close to the desk a chip must be to be eaten, and to count as touching it. Lower parts are eaten faster.',
   chipGold: 'Chip color, pale to deep gold.',
   chipShadow: 'How dark the chip\'s shadow is.',
   // Page style

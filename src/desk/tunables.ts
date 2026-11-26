@@ -82,6 +82,7 @@ export const GROUPS = {
     ['chipSize', 31, 15, 60, 0.5, 'Size'],
     ['chipCurl', 1.4, 0, 2, 0.05, 'Curl'],
     ['chipEat', 1.2, 0.05, 3, 0.01, 'Eating speed'],
+    ['chipBand', 1, 0.1, 6, 0.1, 'Eaten within (px)'],
     ['chipGold', 0.35, 0, 1, 0.01, 'Gold'],
     ['chipShadow', 0.6, 0, 1.5, 0.01, 'Shadow'],
   ],
