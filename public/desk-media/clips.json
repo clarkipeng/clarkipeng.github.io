@@ -57,8 +57,7 @@
     "cover": "sine-cover.jpg",
     "clips": [
       "sine-01.mp4",
-      "sine-02.mp4",
-      "sine-03.mp4"
+      "sine-02.mp4"
     ]
   }
 }
