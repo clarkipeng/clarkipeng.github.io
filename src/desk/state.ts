@@ -105,7 +105,7 @@ interface Parts {
   BOX_STEP: FlightsPart['BOX_STEP']; stepFlights: FlightsPart['stepFlights']; INTRO_DELAY: FlightsPart['INTRO_DELAY'];
   // box.ts
   placeDecks: BoxPart['placeDecks']; launch: BoxPart['launch']; arriveDeck: BoxPart['arriveDeck'];
-  throwWorld: BoxPart['throwWorld']; BOX: BoxPart['BOX']; resetBox: BoxPart['resetBox']; moveDeck: BoxPart['moveDeck'];
+  throwWorld: BoxPart['throwWorld']; outside: BoxPart['outside']; BOX: BoxPart['BOX']; resetBox: BoxPart['resetBox']; moveDeck: BoxPart['moveDeck'];
   BOX3D: BoxPart['BOX3D']; tallySetup: BoxPart['tallySetup']; LIGHT: BoxPart['LIGHT'];
   launchPose: BoxPart['launchPose']; carried: BoxPart['carried']; boxH: BoxPart['boxH']; cross: BoxPart['cross'];
   facing: BoxPart['facing']; FAR: BoxPart['FAR']; projR: BoxPart['projR']; flyingOrder: BoxPart['flyingOrder'];

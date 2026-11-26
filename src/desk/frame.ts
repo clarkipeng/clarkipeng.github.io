@@ -7,7 +7,7 @@ import { createChips, NCH } from './chips.ts';
 
 export function mountFrame() {
 const desk = currentDesk();
-const { T, throwWorld, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, reduced, drawStill, addEventListener,
+const { T, throwWorld, outside, U, CHIP_OFF, CHIP_VEC4, turn, sources, shown, clock, reduced, drawStill, addEventListener,
   flights, deskX, deskY, cornerBox, deckRect, Q, renderEntries, noteMesh, NOTE_U, qs, simRes, writeUniforms,
   createSim, WARM_STEPS, trans, stepDecks, stepFlights, syncInert, syncHover, stepCards, stepTurn, stepThrows,
   stepDoor, stepMedia, cursor, clipLinks, stepWarm, placeDom, body, hud, layout, createShared, buildAtlas,
@@ -46,12 +46,12 @@ function stepChips(dt: number) {
     const dx = desk.view.phone ? 0 : (desk.page - chipRegion()) * desk.view.w;
     for (const b of chips.bodies) { b.p.x[0] += dx; b.p.px[0] += dx; b.chip.region = desk.page; }
   }
-  const x0 = chipX0(), own = chipRegion() === desk.page, H = desk.view.phone ? desk.view.docH : desk.view.h;
+  const x0 = chipX0(), own = chipRegion() === desk.page;
   if (own) chips.push(sources.filter((c) => (desk.view.phone || c.region === desk.page) && !c.gone && !c.deck && !c.carrier && !c.launch && c.w).map((c) => {
     const [x, y, r] = shown(c), th = (r * Math.PI) / 180;
     return { x, y, hw: c.w / 2, hh: c.h / 2, c: Math.cos(th), s: Math.sin(th), vx: c.vx, vy: c.vy };
   }));
-  for (const b of chips.bodies.filter((b) => b.x[0] + b.p.bound < x0 || b.x[0] - b.p.bound > x0 + desk.view.w || b.x[1] + b.p.bound < 0 || b.x[1] - b.p.bound > H)) chips.remove(b);
+  for (const b of chips.bodies.filter((b) => outside(b.x[0] - x0 - b.p.bound, b.x[1] - b.p.bound, b.x[0] - x0 + b.p.bound, b.x[1] + b.p.bound))) chips.remove(b);
   chips.step(dt, own);
   if (chips.bodies.some((b) => !b.sleep || b.dirty)) desk.redraw = true;
   if (own && clock.t > chipFeedAt) { chipFeedAt = clock.t + 0.3; desk.gpu!.chipR.feed(chips, desk.sim!.trail[desk.sim!.parity], { x0: desk.sim!.origin, dpr: desk.sim!.dpr, gain: TASTE }); }

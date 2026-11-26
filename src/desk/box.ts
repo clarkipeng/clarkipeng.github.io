@@ -208,17 +208,18 @@ function poseThrow(d: Card) {
   L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * desk.view.k)) };
 }
 const launchPose = (d: Card) => d.launch!.P;
+// Wholly past an edge of the screen: a rectangle (page-local CSS px). What a turn threw and the chips end there alike.
+const outside = (x0: number, y0: number, x1: number, y1: number) => x0 > desk.view.w || x1 < 0 || y1 < 0 || y0 > (desk.view.phone ? desk.view.docH : desk.view.h);
 // Off the frame: everything it could draw (it, the box's lid, as the eye sees them) is past an edge of its page; or what
 // it drew last frame (drawn: its outline, page-local) and its shadow are. Once out it is gone, so one that falls back
 // never shows again.
 function offFrame(d: Card, drawn: number[][] | null) {
   const P = d.launch!.P, lid = lidOf(d), { W, H, D } = dims(d), r0 = Math.hypot(W, H, D) / 2 + (lid ? lid.w : 0), F = 1800 - P.C[2];
   const r = (r0 * (1 + BOX3D.a) * F) / Math.max(F - r0, 1), x = P.C[0] - d.region * desk.view.w, y = P.C[1];
-  const out = (x0: number, y0: number, x1: number, y1: number) => x0 > desk.view.w || x1 < 0 || y1 < 0 || y0 > desk.view.h;
-  if (out(x - r, y - r, x + r, y + r)) return true;
+  if (outside(x - r, y - r, x + r, y + r)) return true;
   if (!drawn) return false;
   const xs = drawn.map((p) => p[0]), ys = drawn.map((p) => p[1]), s = Math.hypot(P.foot![1], P.foot![2]) + THROW.fadeZ * desk.view.k;
-  return out(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)) && (P.fade >= 1 || out(x - s, y - s, x + s, y + s));
+  return outside(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)) && (P.fade >= 1 || outside(x - s, y - s, x + s, y + s));
 }
 // Gone: the box comes back in from off the right edge when its page next shows (or now, if a turn by hand fell back); a
 // card goes in it.
@@ -404,6 +405,6 @@ function stepTally(d: Card, dt: number) {
   desk.gpu!.device.queue.writeTexture({ texture: desk.shared!.atlas!, origin: [d.atlasAt.x + rect.x, d.atlasAt.y + rect.y] }, paintTally(tl.surf, kept, tl.t, T), { bytesPerRow: rect.w * 4 }, [rect.w, rect.h]);
   desk.redraw = true;
 }
-return { placeDecks, launch, arriveDeck, throwWorld, BOX, resetBox, moveDeck, BOX3D, tallySetup, LIGHT, launchPose,
+return { placeDecks, launch, arriveDeck, throwWorld, outside, BOX, resetBox, moveDeck, BOX3D, tallySetup, LIGHT, launchPose,
   carried, boxH, cross, facing, FAR, projR, flyingOrder, FACE_SLOTS, stepDecks, stepThrows };
 }
