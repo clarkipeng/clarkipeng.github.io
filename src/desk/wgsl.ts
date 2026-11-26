@@ -1,5 +1,6 @@
 import { MAX, PAPER, lin, dbg } from './tunables.ts';
 import { NCH } from './chips.ts';
+import { NODES } from './sheet.ts';
 
 // ---------- WGSL ----------
 
@@ -17,6 +18,10 @@ struct Card { inv0: vec4f, inv1: vec4f, inv2: vec4f, geo: vec4f, flat: vec4f, mi
 // pat: the patch that just came into contact, in the card's frame as fractions of its half size: center, half size
 // buv: back atlas rect | off: w = off the desk (no outline food), xyz unused
 // ink: the card's own ink as absorbance, w = how strongly it emits it now (open card: 1, fading after close)
+// A sheet of paper (sheet.ts), device px. h0: dir from the corner, its point count (0: none), how far along dir any is
+// lifted; h1: how far its shadow falls, the nearest any is lifted, the roll's radius; nd: its points (along dir, up,
+// material from the corner, angle).
+struct Sheet { h0: vec4f, h1: vec4f, nd: array<vec4f, ${NODES}> };
 struct G {
   a: vec4f,   // sim W, H, active agent count, sim px per CSS px
   b: vec4f,   // speed, deposit, decay, diffuse
@@ -37,8 +42,6 @@ struct G {
   pg: vec4f,  // canvas size (device px), crossfade from the frozen frame (a sim resolution change), page turn on
   jq: vec4f,  // unused, unused; hold (1: clear the ink, hold the agents), the note drawn as paper (-1: none)
   pq: vec4f,  // unused, unused, the first agent this pass runs (a warm-up step's later part), unused
-  cu: vec4f,  // page turn: the outgoing page's roll (direction from the corner xy, fold distance, roll radius; device px)
-  dr: vec4f,  // the page corner of the page you see, the same way
   lb: vec4f,  // the corner's label on the back of the paper: center along the fold's axis, half width, half height (device px); stacked edges during a turn
   la: vec4f,  // the corner label's atlas rect
   lt: vec4f,  // the turning page's label's atlas rect
@@ -48,6 +51,7 @@ struct G {
   ch: vec4f,  // chips on this page (food count), chip layer drawn, tile count, chips thrown off the page you left
   chipf: array<vec4f, ${NCH * 2}>, // per chip: center, food radius, food strength (sim px); then per chip: the patch that just came down (contact): center, radius, strength
   chipt: array<vec4f, ${NCH}>, // each chip's tile: its corner and size on the canvas (device px), its layer in chipTex
+  sh: array<Sheet, 2>, // the page turning (sheet.ts), and the corner of the page you see
 };
 @group(0) @binding(0) var<uniform> g: G;
 
@@ -397,56 +401,63 @@ fn rollLight(dir: vec2f, th: f32, back: bool) -> f32 {
   if (back) { n = -n; }
   let nl = n.x * dot(L.xy, dir) + n.y * L.z;
   let nh = n.x * dot(H.xy, dir) + n.y * H.z;
-  return 1.0 + 0.55 * (nl - L.z) + 0.07 * pow(max(nh, 0.0), 60.0) - 0.07 * pow(H.z, 60.0);
+  return 1.0 + 0.3 * (nl - L.z) + 0.07 * pow(max(nh, 0.0), 60.0) - 0.07 * pow(H.z, 60.0);
 }
-// One sheet rolling up off the page from its bottom-right corner, like a notebook page: it wraps around a cylinder of
-// radius R whose foot (the fold) lies d from the corner along dir, and lies flipped over beyond it, back side up. top is
-// the sheet's front at p (from the frozen frame when turning, sampled where the paper came from); below is what it
-// uncovers. The back is the paper's back, with the label written on it near the corner: printed on the sheet, in the
-// paper's own axes (the fold's rest direction), so it turns, foreshortens and curls with the paper however the fold
-// leans, and takes the roll's light and shade like the paper under it. Device px; antialiased edges. Returned in two
-// layers, so what lies under the turned-over part can go between them: c, the page (uncovered or not) with the front of
-// the sheet; b, its back (the roll's far half and the flap) and how much of it shows.
-struct Roll { c: vec3f, b: vec4f };
-fn rolled(p: vec2f, below: vec3f, top: vec3f, turning: bool, cu: vec4f, lab: vec4f) -> Roll {
-  let dir = cu.xy; let d = cu.z; let R = max(cu.w, 0.5);
-  if (d <= 0.0) { return Roll(top, vec4f(0.0)); }
-  let C = g.pg.xy; let N = vec2f(-dir.y, dir.x);
+// The turning page as paper (sheet.ts): its profile along dir from the page's bottom-right corner C, swept across the
+// turn and cut to the page (device px). hit: the topmost paper lifted off the desk over p (its height z, its material m
+// from the corner, its angle th, how much of p it covers a), and how much of p the page covers lying where it was (flat).
+// lim: how far past the page's edge (signed distance) paper still counts, for a soft edge.
+struct Hit { z: f32, m: f32, th: f32, a: f32, flat: f32 };
+fn sheetHit(k: u32, p: vec2f, lim: f32) -> Hit {
+  var h = Hit(-1e9, 0.0, 0.0, 0.0, 0.0);
+  let dir = g.sh[k].h0.xy; let C = g.pg.xy; let N = vec2f(-dir.y, dir.x);
   let x = dot(p - C, dir); let y = dot(p - C, N);
-  if (x > max(2.0 * d - PI * R, d) + 6.0 + 2.0 * R) { return Roll(top, vec4f(0.0)); } // past the flap and its shadow: untouched
-  // What it uncovers, in the roll's shadow where the page still rolls up at this point of the fold.
-  let rolls = clamp(0.5 - pageSd(C + d * dir + y * N) / (1.0 + R), 0.0, 1.0);
-  var c = below * (1.0 - 0.3 * rolls * exp(-max(d - R - x, 0.0) / (3.0 * g.v.w + 0.8 * R)));
-  // The front: flat past the fold, or rolling up on the near half of the cylinder.
-  var fa = 0.0; var fp = p; var fth = 0.0;
-  if (x >= d) { fa = 1.0; }
-  else if (x > d - R) { fth = asin(clamp((d - x) / R, 0.0, 1.0)); fp = C + (d - R * fth) * dir + y * N; fa = clamp(x - d + R + 0.5, 0.0, 1.0); }
-  fa *= clamp(0.5 - pageSd(fp), 0.0, 1.0);
-  // The back: the far half of the cylinder, or the flap lying flipped over past the fold.
-  var ba = 0.0; var bp = p; var bth = PI;
-  if (x >= d) { bp = C + (2.0 * d - PI * R - x) * dir + y * N; ba = 1.0; }
-  else if (x > d - R) { bth = PI - asin(clamp((d - x) / R, 0.0, 1.0)); bp = C + (d - R * bth) * dir + y * N; ba = clamp(x - d + R + 0.5, 0.0, 1.0); }
-  ba *= clamp(0.5 - pageSd(bp), 0.0, 1.0);
-  if (fa > 0.0) {
-    var fc = top;
-    if (turning && fth > 0.0) { fc = pow(textureLoad(frozen, clamp(vec2i(fp), vec2i(0), vec2i(g.pg.xy) - 1), 0).rgb, vec3f(2.2)); }
-    fc *= rollLight(dir, fth, false);
-    // The flap's soft shadow on the flat page, cast a little down and right.
-    let ps = p - vec2f(0.4, 1.0) * (1.0 + 0.6 * R); let xs = dot(ps - C, dir);
-    let sd = pageSd(C + (2.0 * d - PI * R - xs) * dir + dot(ps - C, N) * N);
-    fc *= 1.0 - 0.2 * step(d, xs) * (1.0 - smoothstep(-1.0, 2.0 + 1.2 * R, sd));
-    c = mix(c, fc, fa);
+  if (x > g.sh[k].h0.w) { h.flat = 1.0; return h; } // past all lifted paper
+  var best = -1e9;
+  for (var j = 0u; j + 1u < u32(g.sh[k].h0.z); j++) {
+    let a = g.sh[k].nd[j]; let b = g.sh[k].nd[j + 1u];
+    if (x < min(a.x, b.x) - 0.5 || x > max(a.x, b.x) + 0.5) { continue; }
+    let s = mix(a, b, select(0.5, clamp((x - a.x) / (b.x - a.x), 0.0, 1.0), abs(b.x - a.x) > 1e-3));
+    let sd = pageSd(C + s.z * dir + y * N);
+    if (sd > lim) { continue; }
+    let al = clamp((lim - sd) / (2.0 * lim), 0.0, 1.0);
+    if (s.y < 0.5 && abs(s.x - s.z) < 0.5) { h.flat = max(h.flat, al); continue; } // the page itself, where it lay
+    let key = s.y - 1e-4 * s.z; // level: the paper nearer the corner lies on top
+    if (key > best) { best = key; h.z = s.y; h.m = s.z; h.th = s.w; h.a = al; }
   }
-  if (ba > 0.0) {
-    let bg2 = grainAt(bp);
-    var bc = g.bg.rgb * (1.0 + ((bg2.x - 0.5) * 0.06 + (bg2.y - 0.5) * 0.045) * g.z.y / 0.16) * 0.97;
+  return h;
+}
+// Sheet k at p over below (what it uncovers): c, the page where it lies flat (top) or what it uncovers, in the lifted
+// paper's shade; b, the lifted paper over it and how much of p it covers; z, its height (what lies lower goes under
+// it). The lifted paper's front is the page where that paper came from (the frozen frame when turning), its back the
+// paper's back with the label written on it near the corner (in the paper's own axes, so it turns with it); both take
+// the light by their angle.
+struct Roll { c: vec3f, b: vec4f, z: f32 };
+fn sheet(k: u32, p: vec2f, below: vec3f, top: vec3f, turning: bool, lab: vec4f) -> Roll {
+  let dir = g.sh[k].h0.xy; let C = g.pg.xy; let N = vec2f(-dir.y, dir.x);
+  let x = dot(p - C, dir); let y = dot(p - C, N);
+  if (g.sh[k].h0.z < 2.0 || x > g.sh[k].h0.w) { return Roll(top, vec4f(0.0), -1e9); }
+  let h = sheetHit(k, p, 0.5); let R = max(g.sh[k].h1.z, 0.5);
+  // Uncovered: shaded under and just before the lifted paper, less the higher it is; the lifted paper's shadow on both,
+  // cast a little down and right.
+  var c = mix(below * (1.0 - 0.3 * exp(-(max(g.sh[k].h1.y - x, 0.0) + 0.25 * max(h.z, 0.0)) / (3.0 * g.v.w + 0.8 * R))), top, h.flat);
+  if (h.a < 1.0) {
+    let o = sheetHit(k, p - vec2f(0.4, 1.0) * g.sh[k].h1.x, 2.0 + 1.2 * R);
+    c *= 1.0 - 0.2 * o.a * step(0.5, o.z);
+  }
+  if (h.a <= 0.0) { return Roll(c, vec4f(0.0), -1e9); }
+  let mp = C + h.m * dir + y * N; let front = cos(h.th) > 0.0;
+  var bc = top;
+  if (front && turning) { bc = pow(textureLoad(frozen, clamp(vec2i(mp), vec2i(0), vec2i(g.pg.xy) - 1), 0).rgb, vec3f(2.2)); }
+  if (!front) {
+    let gr = grainAt(mp);
+    bc = g.bg.rgb * (1.0 + ((gr.x - 0.5) * 0.06 + (gr.y - 0.5) * 0.045) * g.z.y / 0.16) * 0.97;
     let D0 = vec2f(-0.70710678, -0.70710678); let N0 = vec2f(0.70710678, -0.70710678); // the fold's direction at rest, fixed on the paper
-    let lx = dot(bp - C, D0); let ly = dot(bp - C, N0);
+    let lx = dot(mp - C, D0); let ly = dot(mp - C, N0);
     let lu = vec2f(ly / (2.0 * g.lb.y) + 0.5, (lx - g.lb.x) / (2.0 * g.lb.z) + 0.5);
     if (all(lu > vec2f(0.0)) && all(lu < vec2f(1.0))) { bc = inked(bc, DARK, 0.92 * textureSampleLevel(atlas, samp, mix(lab.xy, lab.zw, lu), 0.0).a); }
-    return Roll(c, vec4f(bc * rollLight(dir, bth, true), ba));
   }
-  return Roll(c, vec4f(0.0));
+  return Roll(c, vec4f(bc * rollLight(dir, h.th, !front), h.a), h.z);
 }
 fn laid(r: Roll) -> vec3f { return mix(r.c, r.b.rgb, r.b.a); }
 // Card k's height at p (sim px): where its plane meets the eye's ray there, from the eye 1800 CSS px up (uniforms.ts).
@@ -601,7 +612,7 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
   }
   if (!chipsLaid) { col = layChips(col, chip); }
   // This page's folded corner, over a sliver of the next page and the edges of the pages below.
-  col = laid(rolled(pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.dr, g.la));
+  col = laid(sheet(1u, pd, bare(gr, vq) * stacked(pd, 1.0), col, false, g.la));
   // A page turn: the page you left (its frozen last frame) rolls away over this one. What it uncovers fades from the bare
   // paper the resting corner shows to this page as the fold opens (the same 250 px as the stacked edges), so the sliver
   // never switches in one frame, at the start or when a turn by hand falls back.
@@ -610,8 +621,8 @@ fn layCard(col0: vec3f, k: u32, p: vec2f, gr: vec2f, conc: f32) -> vec3f {
   let over = tm.x & ~pageBits;
   var low = -1e9;
   if (g.pg.w > 0.5) {
-    let r = rolled(pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.cu, g.lt);
-    low = max(g.cu.w, 0.5) * q;
+    let r = sheet(0u, pd, mix(col, bare(gr, vq), g.lb.w) * stacked(pd, g.lb.w), pow(textureLoad(frozen, ip, 0).rgb, vec3f(2.2)), true, g.lt);
+    low = r.z * q;
     var below = layOver(r.c, over, p, gr, conc, -1e9, low);
     if (g.ch.w > 0.5) { below = layChips(below, chipsAt(ip, tm.z, -1e9, low / g.a.w)); }
     col = mix(below, r.b.rgb, r.b.a);

@@ -36,10 +36,10 @@ export function showColliders(chips: Chips) {
     return [C[0] - x0 + q * (rx + a * rz), C[1] + q * (ry - a * rz)];
   };
   // The paper's height on a coarse grid, then each level's contour (marching squares, one segment per crossed cell).
-  const paper = (x0: number, curl: { at(o: Float64Array): void }) => {
+  const paper = (x0: number, sheet: { at(o: Float64Array): void }) => {
     const nx = Math.ceil(desk.view.w / GRID) + 1, ny = Math.ceil(desk.view.h / GRID) + 1;
     if (zs.length !== nx * ny) zs = new Float64Array(nx * ny);
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { io[0] = x0 + i * GRID; io[1] = j * GRID; curl.at(io); zs[j * nx + i] = io[0]; }
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { io[0] = x0 + i * GRID; io[1] = j * GRID; sheet.at(io); zs[j * nx + i] = io[0]; }
     LEVELS.forEach((lv, li) => {
       g.strokeStyle = `rgba(${PAPER},${0.35 + (0.5 * li) / (LEVELS.length - 1)})`;
       g.beginPath();
@@ -71,12 +71,12 @@ export function showColliders(chips: Chips) {
     return [iv.width / devicePixelRatio / 2 + s * q * ax, iv.height / devicePixelRatio / 2 + s * q * by];
   };
   // The page's top surface (flat at rest), rows then columns.
-  const mesh = (x0: number, curl: { at(o: Float64Array): void } | null) => {
+  const mesh = (x0: number, sheet: { at(o: Float64Array): void } | null) => {
     const { w, h } = desk.view, nx = Math.ceil(w / MESH), ny = Math.ceil(h / MESH);
     gi.strokeStyle = `rgba(${PAPER},0.6)`; gi.beginPath();
     for (const rows of [true, false]) for (let a = 0; a <= (rows ? ny : nx); a++) for (let b = 0; b <= (rows ? nx : ny); b++) {
       const x = x0 + Math.min(w, (rows ? b : a) * MESH), y = Math.min(h, (rows ? a : b) * MESH);
-      io[0] = x; io[1] = y; if (curl) curl.at(io); else io[0] = 0;
+      io[0] = x; io[1] = y; if (sheet) sheet.at(io); else io[0] = 0;
       const [px, py] = cam(x, y, io[0]);
       if (b) gi.lineTo(px, py); else gi.moveTo(px, py);
     }
@@ -94,11 +94,11 @@ export function showColliders(chips: Chips) {
     if (iv.width !== iw * dpr) { iv.width = iw * dpr; iv.height = ih * dpr; iv.style.width = iw + 'px'; iv.style.height = ih + 'px'; }
     gi.setTransform(dpr, 0, 0, dpr, 0, 0); gi.clearRect(0, 0, iw, ih); gi.lineWidth = 1;
     if (!P) return;
-    const { world, curl, L } = P;
-    if (L) paper(L.region * desk.view.w, curl);
+    const { world, sheet, L } = P;
+    if (L) paper(L.region * desk.view.w, sheet);
     const W = desk.view.phone ? 0 : desk.view.w, x0 = (L ? L.region : desk.page) * W, rest = { x0, a: 0, w: 1 }; // the bodies' frame (box.ts syncBodies)
     O[0] = x0 + desk.view.w / 2; O[1] = desk.view.h / 2;
-    mesh(x0, L ? curl : null);
+    mesh(x0, L ? sheet : null);
     eyes.clear();
     for (const s of desk.sources) if (s.body && s.more) eyes.set(s.body, { x0, a: A, w: s.launch ? s.launch.P.w : 0 }); // at rest the box is its painting
     for (const c of chips.bodies) eyes.set(c.p, { x0: c.chip.region * W, a: 0, w: -1 });

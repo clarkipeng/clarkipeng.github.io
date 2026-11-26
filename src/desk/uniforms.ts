@@ -6,19 +6,42 @@ import type { Card } from './layout.ts';
 import type { Gpu, Sim } from './gpu.ts';
 import { NCH } from './chips.ts';
 import { NS } from './note.ts';
+import { createSheet, NODES, type Sheet } from './sheet.ts';
 
 
 export function mountUniforms() {
 const desk = currentDesk();
 const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launchPose, BOX_STEP, carried, boxH,
   cross, facing, FAR, capped, projR, FULL, BOX_T, STYLE, cam, sources, flyingOrder, FACE_SLOTS, coverRect, Q, cursor,
-  turn, dirOf, rollR, door, DOOR } = desk;
+  turn, rollR, door, DOOR } = desk;
 // ---------- uniforms ----------
 
-// Uniform layout: 25 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
-const G_HEAD = 24, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
+// Uniform layout: 22 vec4 of globals, MAX / 4 of draw order, 1 of video uv, then the cards (CARD_VEC4 vec4 each).
+const G_HEAD = 22, VU_OFF = (G_HEAD + MAX / 4) * 4, CARD0 = G_HEAD + MAX / 4 + 1, CARD_VEC4 = 16;
 const CHIP_OFF = (CARD0 + MAX * CARD_VEC4) * 4, CHIP_VEC4 = 1 + NCH * 3; // then the chips: one vec4, and three per chip
-const U = new Float32Array(CHIP_OFF + CHIP_VEC4 * 4);
+const SHEET_OFF = CHIP_OFF + CHIP_VEC4 * 4, SHEET_F = (2 + NODES) * 4; // then the two sheets (wgsl.ts Sheet)
+const U = new Float32Array(SHEET_OFF + 2 * SHEET_F);
+// The sheets drawn: the turning page (the physics' paper while it throws from this page, else its own, on the render's
+// clock) and the page's corner (curled at rest).
+const turnSheet = createSheet({ state: (_, out) => { out[0] = turn.d; out[1] = turn.a; out[2] = turn.start; }, rollR, model: () => T.pageModel, gravity: () => T.gravity * desk.view.k, lift: () => T.pageLift });
+const doorSheet = createSheet({ state: (_, out) => { out[0] = door.d; out[1] = door.a; out[2] = door.d; }, rollR, model: () => 0 });
+function writeSheet(k: number, sh: Sheet | null, dev: number) {
+  const o = SHEET_OFF + k * SHEET_F;
+  if (!sh || sh.reach < 0) { U[o + 2] = 0; return; }
+  U.set([sh.dx, sh.dy, NODES, sh.reach * dev + 1, (1 + 0.6 * sh.R) * dev, sh.low < 1e5 ? sh.low * dev : 1e6, sh.R * dev, 0], o);
+  for (let j = 0; j < NODES; j++) U.set([sh.X[j] * dev, sh.Z[j] * dev, sh.M[j] * dev, sh.TH[j]], o + 8 + 4 * j);
+}
+function writeSheets(dev: number) {
+  const P = desk.phys, k = desk.view.k, w = desk.view.w, h = desk.view.h;
+  let a: Sheet | null = null;
+  if (turn.on && !desk.capturing) {
+    if (P?.L && P.L.region === turn.from) a = P.sheet;
+    else { turnSheet.page(0, w, h, k); turnSheet.prepare(performance.now() / 1000); a = turnSheet; }
+  }
+  writeSheet(0, a, dev);
+  if (desk.capturing || desk.view.phone) writeSheet(1, null, dev);
+  else { doorSheet.page(0, w, h, k); doorSheet.prepare(0); writeSheet(1, doorSheet, dev); }
+}
 function invert3(m: number[]) {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
@@ -198,13 +221,12 @@ function writeUniforms(g: Gpu, sm: Sim = desk.sim!, hold = false) {
     desk.shared!.CW, desk.shared!.CH, trans.fade, turn.on && !desk.capturing ? 1 : 0,
     0, 0, hold ? 1 : 0, sources.find(noteMesh)?.id ?? -1,
     0, 0, 0, 0,
-    ...(turn.on && !desk.capturing ? [...dirOf(turn.a), turn.d * dev, rollR(turn.d) * dev] : [0, 0, 0, 0]),
-    ...(desk.capturing || desk.view.phone ? [0, 0, 0, 0] : [...dirOf(door.a), door.d * dev, rollR(door.d) * dev]),
     // the label sits on the flap at rest, its foot a few px from the fold
     (desk.view.k * (CORNER.size - Math.PI * DOOR.R - 4) - desk.shared!.label!.hh) * dev, desk.shared!.label!.hw * dev, desk.shared!.label!.hh * dev, turn.on ? 1 - smooth((turn.d - turn.start) / (250 * desk.view.k)) : 1,
     ...desk.shared!.labelUV![desk.page], ...desk.shared!.labelUV![turn.from],
     ...order, ...over, ...Array(MAX - order.length - over.length).fill(0), ...vu], 0);
   desk.chipUniforms(s);
+  writeSheets(dev);
   g.device.queue.writeBuffer(g.uniform, 0, U);
 }
 return { writeUniforms, easeFlip, CARD0, CARD_VEC4, U, invert3, flipPath, CHIP_OFF, CHIP_VEC4,

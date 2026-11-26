@@ -1,15 +1,14 @@
 import { currentDesk } from './state.ts';
 import { MOTION, EASES, STEP, lerp, clamp, smooth, MAX } from './tunables.ts';
 import type { Seg, V3, Card, Slide, Ease, ThrowPose } from './layout.ts';
-import type { Curl } from './curl.ts';
-import { createPage } from './profile.ts';
+import { createSheet, type Sheet } from './sheet.ts';
 import { type World, type Body, createWorld, boxShape } from './physics.ts';
 import { TALLY, tallySurface, type Mark, paintTally } from './tally.ts';
 
 // The turn under what a page threw (turnAt): its page, its curve (a click's) or frames (by hand), its clock, how it ended,
 // the world as it began (sv), and the bodies it has tossed.
 export interface Turn { region: number; seg: Seg | null; keys: number[]; kj: number; t: number; mode: string; end: string | null; sv: Float64Array | null; tossed: Set<Body> }
-export interface Phys { world: World; curl: Curl; L: Turn | null; rem: number } // rem: sim time not yet stepped
+export interface Phys { world: World; sheet: Sheet; L: Turn | null; rem: number } // rem: sim time not yet stepped
 // The six faces in the box's frame: middle, axes (mu x mv points out), half sizes, and the normal its texture is lit for
 // (the shaded wall facing down the page is painted in its shade; the rest as if lit from straight above).
 type Face = [V3, V3, V3, number, number, V3 | null]; // middle, axes, half sizes, the normal its texture is lit for
@@ -69,7 +68,7 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 }
 // ---------- the page throws off what lies on it ----------
 // A page that turns throws off what rests on it: its card box (its lid and the cards in it riding along) and its cards.
-// Nothing is printed on the page: each is a rigid body (physics.ts) on the turning paper (curl.ts, the same curl the page
+// Nothing is printed on the page: each is a rigid body (physics.ts) on the turning paper (sheet.ts, the same paper the page
 // is drawn with). The roll lifts each as it reaches it and the page's turn tosses it (toss), so it arcs and tumbles off
 // the frame. A corner turned by hand moves the paper under them the same way: let go before halfway and they drop back
 // onto the page, settle, and ease home. Once off the frame the box slides in again when its page next shows, the cards in
@@ -85,13 +84,13 @@ const newTurn = (region: number): Turn => ({ region, seg: null, keys: [0, door.d
 // Made, and its code warmed by a throw nobody sees, before the first turn needs it (else the first frames stall).
 function throwWorld() {
   if (desk.phys) return desk.phys;
-  const world = createWorld(), curl = createPage({ state: (t, out) => (desk.phys!.L ? turnAt(desk.phys!.L, t, out) : out.fill(0)), rollR }, () => T.pageModel, () => world.g); // no turn: flat
-  world.surface = curl; world.stepped = toss;
+  const world = createWorld(), sheet = createSheet({ state: (t, out) => { const L = desk.phys!.L; if (!L) out.fill(0); else { turnAt(L, t, out); out[2] = L.keys[1]; } }, rollR, model: () => T.pageModel, gravity: () => world.g, lift: () => T.pageLift }); // no turn: flat
+  world.surface = sheet; world.stepped = toss;
   const L = newTurn(0);
   L.seg = { t0: 0, d0: restD(false), d1: farD(Math.PI / 4), dur: T.turnS, a: Math.PI / 4, ease: EASES.glide };
-  desk.phys = { world, curl, L, rem: 0 };
+  desk.phys = { world, sheet, L, rem: 0 };
   const k = desk.view.k, sh = boxShape(160 * k, 210 * k, 65 * k, 24 * k);
-  curl.page(0, desk.view.w, desk.view.h, k); world.g = T.gravity * k;
+  sheet.page(0, desk.view.w, desk.view.h, k); world.g = T.gravity * k;
   const b = world.add({ points: sh.points, bound: sh.bound, sdf: sh.sdf, mass: 1, inertia: sh.inertia(1), x: [desk.view.w, 0.36 * desk.view.h, 32.5 * k] });
   for (let t = 0; t < T.turnS; t += STEP) world.advance(t);
   world.remove(b); desk.phys.L = null; world.time = 0;
@@ -184,10 +183,10 @@ function under(x: number, y: number, r: number) {
 function launch(region: number) {
   const d = pageDeck(region);
   if (!d || desk.view.phone || !desk.dealing) return;
-  const P = throwWorld(), { world, curl } = P, k = desk.view.k;
+  const P = throwWorld(), { world, sheet } = P, k = desk.view.k;
   for (const s of sources) if (s.launch && s.region !== region) endThrow(s, true); // one turn at a time: what the last one threw is long off the frame
   P.L = newTurn(region); world.time = 0; world.g = T.gravity * k;
-  curl.page(region * desk.view.w, desk.view.w, desk.view.h, k); curl.prepare(0);
+  sheet.page(region * desk.view.w, desk.view.w, desk.view.h, k); sheet.prepare(0);
   syncBodies();
   for (const s of sources) if (thrown(s, region) && s.body) {
     if (s.launch) { Object.assign(s.launch, { home: null, out: null }); continue; }
@@ -248,7 +247,7 @@ function poseThrow(d: Card) {
     const l = Math.hypot(R[i], R[3 + i]), x = R[i] / l, y = R[3 + i] / l, f = l > 1e-3 && [Math.atan2(y, x), reach(x, y), reach(-y, x)];
     if (f && (!foot || f[1] * f[2] < foot[1] * foot[2])) foot = f;
   }
-  SURF[0] = C[0]; SURF[1] = C[1]; desk.phys!.curl.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
+  SURF[0] = C[0]; SURF[1] = C[1]; desk.phys!.sheet.at(SURF); // how high its lowest point is over the paper under it (the flap or the desk)
   const low = C[2] - (W * Math.abs(R[6]) + H * Math.abs(R[7]) + D * Math.abs(R[8])) / 2 - SURF[0];
   C[2] = Math.min(C[2], 1200); // never up at the eye
   L.P = { X: [c, s, 0], Y: [-s, c, 0], w, C, M, low, foot, fade: smooth(low / (THROW.fadeZ * desk.view.k)) };
