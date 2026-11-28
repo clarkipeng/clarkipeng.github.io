@@ -28,7 +28,7 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 - Catapult pivoted from multiplayer games (the first part) to Music Arena (https://musicarena.io), where AI models produce music in FL Studio and people vote. Clark built the first version (producer-arena), the FL Studio plugin/MCP engine, and flpkit (on PyPI); Alan Song wrote most of the current musicarena.io app - do not claim it.
 - Catapult benchmark (Clark built the game API it ran on): 19 frontier LLMs from 7 labs, ~1K agent games, 257M tokens of reproducible gameplay data; Clark started June 2026
 - Catapult multiplayer platform: 30 games; idempotent moves for safe retries and reconnection. Clark started and wrote most of the core packages (room runtime, Cloudflare Durable Objects hosting, Postgres hosting, game test harness) and built the CI pipeline himself (runs only the checks a change affects: sharded unit, Postgres, per-game simulation, Playwright browser tests) plus the reviewed squash-merge flow. Production usage (read-only query 2026-11-15): 100 player accounts (Jul 6 - Oct 12), 525 game rooms across 12 games, 171 ranked matches; small and partly team testing, so kept off resumes. musicarena.io votes (250) and flpkit downloads are also not resume-worthy.
-- Catapult hover clip (2026-11-26): one real AI-benchmark Imposter match, then 30 more replaying side by side, from the 31 matches the public benchmark API publishes (6 models from 3 labs, Nov 2026). They were separate matches, not run at the same time, so never caption it as concurrent games or attach a count.
+- Catapult hover clip (2026-11-28): Coop, then a pull-back to a wall of all 30 games and back in. Each game is one seeded bot match recorded offline and replayed in the real game client; the wall tiles start at different points of those recordings. They are separate matches, not run at the same time, so never caption it as concurrent games or attach a count. The card still rests on its Imposter benchmark cover.
 - Catapult platform stack: TypeScript, React, Bun/Node.js, PostgreSQL, Cloudflare Workers/Durable Objects. Verified from local `catapult-games` manifests and `docs/ARCHITECTURE.md`. The current platform focuses on human multiplayer games; model research lives separately in `catapult-research`. Present the benchmark as past work, not the current product definition.
 - UCLA CS B.S., expected June 2028, GPA 3.95/4.00 (per transcript, 2026-11-14)
 - Work authorization: U.S. citizen (per the July 2026 YC application).
@@ -70,6 +70,23 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 - Theme transition: WebGPU slime-agent diffusion shader (agents steer toward target color, monotonic scalar field, toroidal wrapping), WebGL fallback; theme icon sits mid-right, borderless.
 - Smoke nav link is white/transparent and non-clickable in light mode; visible only once the shader field reaches it in dark mode.
 - Resume page (`/resume`) embeds only the PDF from `siteConfig.resumeUrl`, no text; on phones it shows a single link to the PDF instead, since mobile browsers render PDF iframes as one page.
+
+## Desk clips
+
+- Hover clips live in `public/desk-media/`, listed per card in `clips.json`. `npm run check:clips` enforces the format below, and CI runs it before every deploy.
+- Format: 1200x800, 30 fps (60 for fast motion), 5 to 8 s, H.264 High `yuv420p`, BT.709 tagged, no audio, at most 2 MB. A card rests on its cover, a composed still, or without one on its poster, frame 0 of its first clip; `desk.html` shows the same image. Paper figures (vp2, pdfr) keep their own size, frame rate and length.
+- Encode with `-an -c:v libx264 -profile:v high -preset slow -crf 23 -maxrate 2M -bufsize 4M -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv -movflags +faststart`, and end the filter chain with `setparams=color_primaries=bt709:color_trc=bt709` (ffmpeg 8 leaves primaries and transfer untagged otherwise).
+- Real footage only. Shots are joined by 250 ms dissolves, never hard cuts. The first and last half second stay calm. No text or UI in frame.
+- Every clip comes from committed code in its project's repo, run with one command that resumes where it stopped:
+
+| Card | Repo | Command |
+| --- | --- | --- |
+| ray | RayTraceModel | `desk/clip.sh accum` (`bounces` for the alternate) |
+| arena | producer-arena | `uv run --with-editable <fl-studio-mcp>/mcp-server tools/hover-clip/hover_clip.py <run id> out/` |
+| suika | 4dsuika | `make build && make site-clips` |
+| sine | FiatLudum | `Tools/Capture/site-clips.sh` |
+| rl | RLHandTargetProject | `tools/showcase/site-clips.sh` |
+| catapult | catapult-games | `bun scripts/trailer/launch.ts all` (also cuts the launch trailer) |
 
 ## Visual quality bar
 
