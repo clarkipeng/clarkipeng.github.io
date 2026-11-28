@@ -367,13 +367,16 @@ export function createChips(P: ChipTunables, world: () => World) {
   function remove(b: Body) { world().remove(b.p); bodies.splice(bodies.indexOf(b), 1); }
 
   // Cards (pushers: { x, y, hw, hh, c, s, vx, vy } in desk px) shove the chips down on the desk out from under them, at least
-  // as fast as the card moves, toward the nearest spot clear of every card and of the other chips there: a chip wedged
-  // between two cards goes out along the gap, and chips pushed together come to rest side by side, not in a pile. It
-  // starts only a little further in than where it ends, so a chip whose shape shifts as it is eaten does not creep.
+  // as fast as the card moves, toward the nearest spot clear of every card, of the other chips there and of the spots
+  // they head for: a chip wedged between two cards goes out along the gap, and chips pushed together come to rest side by
+  // side, not in a pile. It starts only a little further in than where it ends, so a chip whose shape shifts as it is
+  // eaten does not creep.
   function push(pushers: Pusher[]) {
     const low = bodies.filter((b) => !b.frozen && b.x[2] - b.S.hb <= b.foot * 0.5), reach = (b: Body) => b.foot * 0.92;
+    const taken: [number, number, number][] = []; // spots other chips are already heading for this step
+    const apart = (b: Body, x: number, y: number, ox: number, oy: number, r: number) => (x - ox) ** 2 + (y - oy) ** 2 >= (0.85 * (reach(b) + r)) ** 2;
     const clear = (b: Body, x: number, y: number) => pushers.every((p) => cardSd(p, x, y) >= reach(b))
-      && low.every((o) => o === b || (x - o.x[0]) ** 2 + (y - o.x[1]) ** 2 >= (0.85 * (reach(b) + reach(o))) ** 2);
+      && low.every((o) => o === b || apart(b, x, y, o.x[0], o.x[1], reach(o))) && taken.every(([X, Y, r]) => apart(b, x, y, X, Y, r));
     for (const b of low) {
       const r = reach(b), x = b.x[0], y = b.x[1], on = pushers.filter((p) => cardSd(p, x, y) < r * 0.85); // hysteresis: an eaten chip's foot grows
       if (!on.length) continue;
@@ -385,6 +388,7 @@ export function createChips(P: ChipTunables, world: () => World) {
       }
       for (let k = 1; k <= 16 && (k * r) / 2 < Math.sqrt(best); k++) for (let a = 0; a < 24; a++) tryAt(x + ((k * r) / 2) * Math.cos(a * Math.PI / 12), y + ((k * r) / 2) * Math.sin(a * Math.PI / 12));
       if (best === Infinity) continue;
+      taken.push([tx, ty, r]);
       const d = Math.sqrt(best), nx = (tx - x) / d, ny = (ty - y) / d;
       const want = Math.max(Math.min(d * 10, 260), ...on.map((p) => p.vx * nx + p.vy * ny)), dv = want - (b.v[0] * nx + b.v[1] * ny);
       if (dv <= 0) continue;

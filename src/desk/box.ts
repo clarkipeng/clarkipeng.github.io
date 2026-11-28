@@ -70,9 +70,8 @@ function arriveDeck(region: number, delay: number, dur = MOTION.settle) {
 // A page that turns throws off what rests on it: its card box (its lid and the cards in it riding along) and its cards.
 // Nothing is printed on the page: each is a rigid body (physics.ts) on the turning paper (sheet.ts, the same paper the page
 // is drawn with). The roll lifts each as it reaches it and the page's turn tosses it (toss), so it arcs and tumbles off
-// the frame. A corner turned by hand moves the paper under them the same way: let go before halfway and they drop back
-// onto the page, settle, and ease home. Once off the frame the box slides in again when its page next shows, the cards in
-// it.
+// the frame. A corner turned by hand moves the paper under them the same way, and once let go the turn completes. Once off
+// the frame the box slides in again when its page next shows, the cards in it.
 // fadeZ: CSS px up by which a shadow has faded; out: s one left at rest on screen after a turn takes to slide off; eat: s
 // the slime takes to eat one instead (T.leftover); limit:
 // s at most in the air; persp: s the box takes to ease into its 3D view
