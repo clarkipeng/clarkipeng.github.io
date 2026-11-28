@@ -71,6 +71,22 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 - Smoke nav link is white/transparent and non-clickable in light mode; visible only once the shader field reaches it in dark mode.
 - Resume page (`/resume`) embeds only the PDF from `siteConfig.resumeUrl`, no text; on phones it shows a single link to the PDF instead, since mobile browsers render PDF iframes as one page.
 
+## Desk clips
+
+- Hover clips live in `public/desk-media/`, listed per card in `clips.json`. `npm run check:clips` enforces the format below, and CI runs it before every deploy.
+- Format: 1200x800, 30 fps (60 for fast motion), 5 to 8 s, H.264 High `yuv420p`, BT.709 tagged, no audio, at most 2 MB. The poster is frame 0 of the first clip. Paper figures (vp2, pdfr) keep their own size, frame rate and length.
+- Encode with `-an -c:v libx264 -profile:v high -preset slow -crf 23 -maxrate 2M -bufsize 4M -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv -movflags +faststart`, and end the filter chain with `setparams=color_primaries=bt709:color_trc=bt709` (ffmpeg 8 leaves primaries and transfer untagged otherwise).
+- Real footage only. Shots are joined by 250 ms dissolves, never hard cuts. The first and last half second stay calm. No text or UI in frame.
+- Every clip comes from committed code in its project's repo, run with one command that resumes where it stopped:
+
+| Card | Repo | Command |
+| --- | --- | --- |
+| ray | RayTraceModel | `desk/clip.sh accum` (`bounces` for the alternate) |
+| arena | producer-arena | `uv run --with-editable <fl-studio-mcp>/mcp-server tools/hover-clip/hover_clip.py <run id> out/` |
+| suika | 4dsuika | `make build && make site-clips` |
+| sine | FiatLudum | `Tools/Capture/site-clips.sh` |
+| rl | RLHandTargetProject | `tools/showcase/site-clips.sh` |
+
 ## Visual quality bar
 
 - Smoothness over cleverness. Choppy trails, flicker, dark bars, mistimed transitions, cursor-aligned artifacts = broken; fix or revert.
