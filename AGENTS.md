@@ -74,7 +74,7 @@ Taste, verified facts, and workflow rules for Clark's personal site and resume. 
 ## Desk clips
 
 - Hover clips live in `public/desk-media/`, listed per card in `clips.json`. `npm run check:clips` enforces the format below, and CI runs it before every deploy.
-- Format: 1200x800, 30 fps (60 for fast motion), 5 to 8 s, H.264 High `yuv420p`, BT.709 tagged, no audio, at most 2 MB. The poster is frame 0 of the first clip. Paper figures (vp2, pdfr) keep their own size, frame rate and length.
+- Format: 1200x800, 30 fps (60 for fast motion), 5 to 8 s, H.264 High `yuv420p`, BT.709 tagged, no audio, at most 2 MB. A card rests on its cover, a composed still, or without one on its poster, frame 0 of its first clip; `desk.html` shows the same image. Paper figures (vp2, pdfr) keep their own size, frame rate and length.
 - Encode with `-an -c:v libx264 -profile:v high -preset slow -crf 23 -maxrate 2M -bufsize 4M -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv -movflags +faststart`, and end the filter chain with `setparams=color_primaries=bt709:color_trc=bt709` (ffmpeg 8 leaves primaries and transfer untagged otherwise).
 - Real footage only. Shots are joined by 250 ms dissolves, never hard cuts. The first and last half second stay calm. No text or UI in frame.
 - Every clip comes from committed code in its project's repo, run with one command that resumes where it stopped:
