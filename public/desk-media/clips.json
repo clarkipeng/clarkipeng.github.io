@@ -62,7 +62,6 @@
   },
   "arena": {
     "poster": "arena-poster.jpg",
-    "cover": "arena-cover.jpg",
     "clips": [
       "arena-01.mp4"
     ]
