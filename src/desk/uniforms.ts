@@ -11,7 +11,7 @@ import { createSheet, NODES, BINS, type Sheet } from './sheet.ts';
 
 export function mountUniforms() {
 const desk = currentDesk();
-const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launchPose, BOX_STEP, carried, boxH,
+const { absorbance, hinged, T, STRIP, LIGHT, noteProfile, shown, noteMesh, launchPose, eaten, BOX_STEP, carried, boxH,
   cross, facing, FAR, capped, projR, FULL, BOX_T, STYLE, cam, sources, flyingOrder, FACE_SLOTS, coverRect, Q, cursor,
   turn, rollR, door, DOOR } = desk;
 // ---------- uniforms ----------
@@ -126,6 +126,7 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, tint = 0, bas
   const phi = Math.hypot(s.tilt[0], s.tilt[1]);
   if (phi > 1e-5) { const ax = [-s.tilt[1] / phi, s.tilt[0] / phi, 0]; mu = rodrigues(mu, ax, phi); mv = rodrigues(mv, ax, phi); }
   let z = lift * T.lift, fade = 0, H = null, flags = hz ? 1 : 0;
+  const eat = eaten(s), swarm = Math.min(1, 4 * eat); // being eaten: the slime swarms it and carries its full ink off
   const looks = (m: number[]) => Math.hypot(m[0], m[1]) / Math.hypot(...m); // how long an axis looks from above: its shadow and light squash with it
   let lv = looks(mv), shd = boxShadow(s, dpr, (s.w * dpr) / 2, (s.h * dpr) / 2).slice(0, 7);
   if (s.carrier === s) { // the flying box itself: only its shadow on what is under it (its faces are drawn on their own)
@@ -154,12 +155,12 @@ function cardUniform(s: Card, dpr: number, o: number, originX = 0, tint = 0, bas
   if (eyed) { cx = H[2] / H[8]; cy = H[5] / H[8]; }
   if (s.launch && !s.carrier) s.launch.hull = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const q = (H[6] * u * hw + H[7] * v * hh + H[8]) * dpr; return [(H[0] * u * hw + H[1] * v * hh + H[2]) / q, (H[3] * u * hw + H[4] * v * hh + H[5]) / q]; }); // where it shows (CSS px)
   const v = [inv[0], inv[1], inv[2], s.playlist ? 1 : 0, inv[3], inv[4], inv[5], s.rel, inv[6], inv[7], inv[8], s.landS,
-    hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, s.hover, s.burst, zh,
+    hw, hh, capped(s) ? 0.032 * Math.max(hw, hh) : 3 * dpr, clamp(z / T.lift), cx, cy, Math.cos(th), Math.sin(th), sc, Math.max(s.hover, swarm), s.burst, zh,
     ...s.uv, ...s.mediaUV, eyed ? projR(H, hw, hh) + 2 : Math.hypot(hw, hh) * sc * 1.04 + 2, fh < 0 ? -1 : 1, s.landK ? 1 : 0, looks(mu),
-    ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), 0, 0, 0, s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
+    ...((s.fly?.out || (s.deck && !s.fly?.open) || (!s.deck && !s.fly && !s.flip && s.face > 0)) && s.puv ? s.puv : s.buv || s.uv), eat, 0, 0, s.flip !== s.flipTo || s.landK || s.flying ? 1 : 0, // in or out of its box, or turning to go in, its plain back; an open card keeps its own until it is in
     // Every inked card emits a mild share of its ink (tint) and the full ink while open.
-    ...(s.inkHex ? inkOn(s, tint, base, hueMix) : [0, 0, 0, 0]),
-    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), fade,
+    ...(s.inkHex ? inkOn(Math.max(s.emit, swarm), s.inkHex, tint, base, hueMix) : [0, 0, 0, 0]),
+    ...(s.imp ? [(s.imp.x - originX) * dpr, s.imp.y * dpr, (1 - s.imp.t / IMPRINT_S) ** 2] : [0, 0, 0]), Math.max(fade, eat),
     ...shd, 4 * flags + lv, ...(s.patch || FULL)];
   if (v.length !== CARD_VEC4 * 4) throw new Error(`card uniform has ${v.length} floats, not ${CARD_VEC4 * 4}`); // a field lost or added shifts every one after it
   if (tile) { v[52] = tile[0]; v[53] = tile[1]; v[32] = tile[2] * dpr; } // shd.xy: its tile's corner; bound.x: all of it
@@ -174,10 +175,10 @@ function boxShadow(s: Card, dpr: number, hw: number, hh: number) {
   return s.lid ? [0, t, hw, hh - t, 1, 0.04, 0, 0] : [-t, t, hw - t, hh - t, 1, 0.12, 9, 0]; // obj.z: how much higher than a card its far shadow falls from (CSS px)
 }
 // Paper: an open card emits its full ink; a closed one a tint share of its mild ink. Blends between them as it opens.
-function inkOn(s: Card, tint: number, base: string | null, hueMix = 1) {
-  const full = absorbance(hexRGB(s.inkHex!)); // called only for an inked card
-  if (!tint || !base) return [...full, s.emit];
-  const mild = mildInk(s.inkHex!, base, hueMix), w = Math.max(s.emit, tint), u = s.emit / w;
+function inkOn(emit: number, hex: string, tint: number, base: string | null, hueMix = 1) {
+  const full = absorbance(hexRGB(hex));
+  if (!tint || !base) return [...full, emit];
+  const mild = mildInk(hex, base, hueMix), w = Math.max(emit, tint), u = emit / w;
   return [...mild.map((m, i) => m + (full[i] - m) * u), w];
 }
 

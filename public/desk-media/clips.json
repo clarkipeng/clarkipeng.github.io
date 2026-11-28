@@ -49,8 +49,7 @@
     "poster": "catapult-poster.jpg",
     "cover": "catapult-cover.jpg",
     "clips": [
-      "catapult-01.mp4",
-      "catapult-02.mp4"
+      "catapult-01.mp4"
     ]
   },
   "sine": {
@@ -63,7 +62,6 @@
   },
   "arena": {
     "poster": "arena-poster.jpg",
-    "cover": "arena-cover.jpg",
     "clips": [
       "arena-01.mp4"
     ]
